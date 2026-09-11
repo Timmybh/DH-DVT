@@ -9,6 +9,15 @@ export default {
           dark: "#1e1b4b",
         },
       },
+      keyframes: {
+        blink: {
+          "0%, 100%": { opacity: "1" },
+          "50%": { opacity: "0.35" },
+        },
+      },
+      animation: {
+        blink: "blink 1.2s ease-in-out infinite",
+      },
     },
   },
   plugins: [],

@@ -17,12 +17,12 @@ export default function Sidebar({ indicators, onSelect, selectedKey }: SidebarPr
             key={ind.indicator_key}
             onClick={() => onSelect(ind)}
             className={`w-full rounded-xl border-2 p-4 text-left transition ${
-              isGreen ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"
+              isGreen ? "border-green-200 bg-green-50" : "border-red-300 bg-red-50 animate-blink"
             } ${isSelected ? "ring-2 ring-brand" : ""}`}
           >
             <div className="flex items-center justify-between">
               <span className="text-sm font-semibold text-slate-700">{ind.label}</span>
-              <span className={`h-3 w-3 rounded-full ${isGreen ? "bg-green-500" : "bg-red-500"}`} />
+              <span className={`h-3 w-3 rounded-full ${isGreen ? "bg-green-500" : "bg-red-500 animate-blink"}`} />
             </div>
             <p className="mt-1 text-2xl font-bold text-slate-900">
               {ind.value ?? "-"}

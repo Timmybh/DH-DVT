@@ -1,10 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, ImportJobConfigOut, ImportJobOut } from "../../api/client";
 
 export default function ImportJob() {
   const [jobs, setJobs] = useState<ImportJobOut[]>([]);
   const [config, setConfig] = useState<ImportJobConfigOut | null>(null);
   const [running, setRunning] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadMessage, setUploadMessage] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function load() {
     const [jobsRes, cfgRes] = await Promise.all([
@@ -35,11 +38,37 @@ export default function ImportJob() {
     await load();
   }
 
+  async function uploadExcel() {
+    const file = fileInputRef.current?.files?.[0];
+    if (!file) return;
+
+    setUploading(true);
+    setUploadMessage("");
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const { data } = await api.post<ImportJobOut>("/admin/etl/import-excel", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      setUploadMessage(
+        data.status === "SUCCESS"
+          ? `Đã nhập ${data.rows_imported} dòng, bỏ qua ${data.rows_skipped} dòng.`
+          : `Lỗi: ${data.error_message}`,
+      );
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      await load();
+    } catch {
+      setUploadMessage("Import thất bại, kiểm tra lại định dạng file.");
+    } finally {
+      setUploading(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <h1 className="text-xl font-bold text-slate-900">Đồng bộ dữ liệu (SQL Server → Postgres)</h1>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="rounded-xl border border-slate-200 bg-white p-5">
           <h2 className="text-sm font-semibold text-slate-700">Đồng bộ thủ công</h2>
           <p className="mt-1 text-xs text-slate-500">
@@ -52,6 +81,28 @@ export default function ImportJob() {
           >
             {running ? "Đang đồng bộ..." : "Đồng bộ ngay"}
           </button>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-5">
+          <h2 className="text-sm font-semibold text-slate-700">Đồng bộ Excel kế hoạch</h2>
+          <p className="mt-1 text-xs text-slate-500">
+            Chọn file Excel kế hoạch để import thủ công. Cột bắt buộc: <b>Xí nghiệp</b> (mã XN1/XN2/XN3/TONG),{" "}
+            <b>Ngày</b>, <b>Kế hoạch</b>. Cột <b>Thực hiện</b> tùy chọn.
+          </p>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx,.xlsm"
+            className="mt-4 w-full rounded-lg border border-dashed border-slate-300 p-2 text-xs text-slate-600"
+          />
+          <button
+            onClick={uploadExcel}
+            disabled={uploading}
+            className="mt-3 w-full rounded-lg bg-brand py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
+          >
+            {uploading ? "Đang import..." : "Import ngay"}
+          </button>
+          {uploadMessage && <p className="mt-2 text-xs text-slate-500">{uploadMessage}</p>}
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-white p-5">

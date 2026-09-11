@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_admin
@@ -6,7 +6,7 @@ from app.db.session import get_db
 from app.models.importjob import ImportJob, ImportJobConfig
 from app.models.user import User
 from app.schemas.importjob import ImportJobConfigOut, ImportJobConfigUpdate, ImportJobOut
-from app.services.etl import run_sync
+from app.services.etl import import_excel_plan, run_sync
 
 router = APIRouter(prefix="/admin/etl", tags=["admin-etl"], dependencies=[Depends(require_admin)])
 
@@ -24,6 +24,20 @@ def _get_or_create_config(db: Session) -> ImportJobConfig:
 @router.post("/run", response_model=ImportJobOut)
 def run_now(db: Session = Depends(get_db), user: User = Depends(require_admin)):
     job = run_sync(db, triggered_by=user.username, job_type="MANUAL")
+    return job
+
+
+@router.post("/import-excel", response_model=ImportJobOut)
+async def import_excel(
+    file: UploadFile,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    if not file.filename or not file.filename.lower().endswith((".xlsx", ".xlsm")):
+        raise HTTPException(status_code=400, detail="Chỉ hỗ trợ file .xlsx/.xlsm")
+
+    file_bytes = await file.read()
+    job = import_excel_plan(db, file_bytes=file_bytes, triggered_by=user.username)
     return job
 
 

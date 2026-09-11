@@ -52,7 +52,7 @@ def _seed_kpi_configs(db: Session) -> None:
             KpiConfig(
                 key=f"gauge_{slot}",
                 label=f"Gauge {slot}",
-                unit="",
+                unit="%",
                 target_value=100,
                 gauge_slot=slot,
                 display_order=100 + slot,

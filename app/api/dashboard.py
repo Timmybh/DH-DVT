@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, require_admin
 from app.db.session import get_db
 from app.models.factory import Factory
+from app.models.importjob import ImportJob
 from app.models.indicator import IndicatorStatus, IssueItem
 from app.models.kpi import GaugeMetric, KpiConfig
 from app.models.plan import PlanProgress
@@ -17,6 +18,7 @@ from app.schemas.dashboard import (
     KpiConfigOut,
     KpiConfigUpdate,
 )
+from app.schemas.importjob import ImportJobOut
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"], dependencies=[Depends(get_current_user)])
 
@@ -27,6 +29,11 @@ INDICATOR_LABELS = {
     "QA": "QA",
     "VUONGMAC": "Vướng mắc",
 }
+
+
+@router.get("/last-sync", response_model=ImportJobOut | None)
+def get_last_sync(db: Session = Depends(get_db)):
+    return db.query(ImportJob).order_by(ImportJob.started_at.desc()).first()
 
 
 @router.get("/indicators", response_model=list[IndicatorOut])

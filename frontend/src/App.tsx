@@ -12,7 +12,7 @@ function ProtectedLayout({ children, adminOnly = false }: { children: React.Reac
   if (adminOnly && user.role !== "ADMIN") return <Navigate to="/" replace />;
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-slate-50 to-slate-100 bg-fixed">
       <Navbar />
       <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">{children}</main>
     </div>
