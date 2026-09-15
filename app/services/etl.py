@@ -12,6 +12,7 @@ from datetime import date, datetime
 
 from openpyxl import load_workbook
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import URL
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -34,12 +35,19 @@ def _sqlserver_configured() -> bool:
 
 
 def _sqlserver_engine():
-    dsn = (
-        f"mssql+pyodbc://{settings.sqlserver_user}:{settings.sqlserver_password}"
-        f"@{settings.sqlserver_host}:{settings.sqlserver_port}/{settings.sqlserver_db}"
-        "?driver=ODBC+Driver+17+for+SQL+Server"
+    url = URL.create(
+        "mssql+pyodbc",
+        username=settings.sqlserver_user,
+        password=settings.sqlserver_password,
+        host=settings.sqlserver_host,
+        port=settings.sqlserver_port,
+        database=settings.sqlserver_db,
+        query={
+            "driver": "ODBC Driver 18 for SQL Server",
+            "TrustServerCertificate": "yes",
+        },
     )
-    return create_engine(dsn, pool_pre_ping=True)
+    return create_engine(url, pool_pre_ping=True)
 
 
 def _test_sqlserver_connection() -> None:
