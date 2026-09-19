@@ -1,4 +1,4 @@
-# Dung backend + frontend DH-DVT dang chay nen.
+﻿# Dung backend + frontend DH-DVT dang chay nen.
 
 foreach ($port in 8010, 5173) {
     $conns = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue

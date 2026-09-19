@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  IIS -> uvicorn (FastAPI) qua HttpPlatformHandler. File này được deploy/publish.ps1 sinh ra từ template (thay {{SITE_ROOT}}).
+  Tiến trình Python phục vụ cả API (/api/*) lẫn giao diện React (thư mục static).
+-->
+<configuration>
+  <system.webServer>
+    <handlers>
+      <add name="httpPlatformHandler" path="*" verb="*" modules="httpPlatformHandler" resourceType="Unspecified" />
+    </handlers>
+    <httpPlatform processPath="{{SITE_ROOT}}\.venv\Scripts\python.exe"
+                  arguments="-m uvicorn app.main:app --host 127.0.0.1 --port %HTTP_PLATFORM_PORT%"
+                  stdoutLogEnabled="true"
+                  stdoutLogFile="{{SITE_ROOT}}\logs\stdout"
+                  startupTimeLimit="90"
+                  startupRetryCount="3"
+                  requestTimeout="00:10:00"
+                  processesPerApplication="1">
+      <environmentVariables>
+        <environmentVariable name="PYTHONUTF8" value="1" />
+        <environmentVariable name="PYTHONIOENCODING" value="utf-8" />
+      </environmentVariables>
+    </httpPlatform>
+    <security>
+      <requestFiltering>
+        <!-- Cho phép upload file kế hoạch .xlsb (~10 MB) -->
+        <requestLimits maxAllowedContentLength="104857600" />
+      </requestFiltering>
+    </security>
+  </system.webServer>
+</configuration>

@@ -1,5 +1,9 @@
 # Module Lập kế hoạch sản xuất — thiết kế (draft)
 
+> **Ghi chú (2026-09-20):** Tài liệu này là bản phân tích sơ bộ ban đầu. Thiết kế chính thức được duyệt nằm ở
+> `docs/DVT_Planning_Core_Design_Handoff.md` — khi mâu thuẫn, ưu tiên handoff. Phần "Dữ liệu doanh thu trong SQL Server"
+> và "Phân tích file Excel kế hoạch" bên dưới vẫn còn giá trị tham khảo.
+
 Trạng thái: **Đang chờ người dùng chốt 3 câu hỏi ở cuối file** trước khi code.
 
 ## Bối cảnh

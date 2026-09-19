@@ -1,53 +1,66 @@
 interface GaugeProps {
   label: string;
-  value: number;
-  target: number | null;
-  unit: string;
+  sublabel?: string;
+  pct: number | null;
+  /** % kỳ vọng tại thời điểm hiện tại (VD: % thời gian đã qua của tháng) — dùng để tô màu */
+  expected?: number;
   selected?: boolean;
   onClick?: () => void;
+  children?: React.ReactNode;
 }
 
-export default function Gauge({ label, value, target, unit, selected = false, onClick }: GaugeProps) {
-  const max = target && target > 0 ? target : 100;
-  const pct = Math.max(0, Math.min(1, value / max));
-  const angle = pct * 180;
+export function gaugeColor(pct: number | null, expected?: number): string {
+  if (pct === null) return "#94a3b8";
+  if (expected !== undefined) {
+    if (pct >= expected) return "#16a34a";
+    if (pct >= expected - 10) return "#f59e0b";
+    return "#dc2626";
+  }
+  return pct >= 90 ? "#16a34a" : pct >= 60 ? "#f59e0b" : "#dc2626";
+}
 
-  const radius = 40;
-  const cx = 50;
-  const cy = 50;
-  const toXY = (deg: number) => {
-    const rad = ((180 - deg) * Math.PI) / 180;
-    return [cx - radius * Math.cos(rad), cy - radius * Math.sin(rad)];
-  };
-  const [ex, ey] = toXY(angle);
+export default function Gauge({ label, sublabel, pct, expected, selected = false, onClick, children }: GaugeProps) {
+  const ratio = Math.max(0, Math.min(1, (pct ?? 0) / 100));
+  const angle = ratio * 180;
+  const r = 40;
+  const [cx, cy] = [50, 50];
+  const rad = ((180 - angle) * Math.PI) / 180;
+  const ex = cx - r * Math.cos(rad);
+  const ey = cy - r * Math.sin(rad);
+  const color = gaugeColor(pct, expected);
 
-  const color = pct >= 0.9 ? "#16a34a" : pct >= 0.6 ? "#f59e0b" : "#dc2626";
+  const expRad = expected !== undefined ? ((180 - Math.min(100, expected) * 1.8) * Math.PI) / 180 : null;
 
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`flex flex-col items-center rounded-xl border bg-white p-3 text-left transition hover:border-brand hover:shadow-sm ${
+      className={`flex w-full flex-col items-center rounded-xl border bg-white p-3 text-left transition hover:border-brand hover:shadow-sm ${
         selected ? "border-brand ring-2 ring-brand" : "border-slate-200"
       }`}
     >
-      <svg viewBox="0 0 100 55" className="w-full">
-        <path d="M 10 50 A 40 40 0 0 1 90 50" fill="none" stroke="#e2e8f0" strokeWidth="8" strokeLinecap="round" />
-        <path
-          d={`M 10 50 A 40 40 0 0 1 ${ex} ${ey}`}
-          fill="none"
-          stroke={color}
-          strokeWidth="8"
-          strokeLinecap="round"
-        />
-        <text x="50" y="48" textAnchor="middle" fontSize="14" fontWeight="700" fill="#1e293b">
-          {value}
-          {unit}
+      <p className="w-full text-center text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+      {sublabel && <p className="w-full text-center text-[11px] text-slate-400">{sublabel}</p>}
+      <svg viewBox="0 0 100 58" className="mt-1 w-full max-w-[220px]">
+        <path d="M 10 50 A 40 40 0 0 1 90 50" fill="none" stroke="#e2e8f0" strokeWidth="9" strokeLinecap="round" />
+        {pct !== null && ratio > 0 && (
+          <path d={`M 10 50 A 40 40 0 0 1 ${ex} ${ey}`} fill="none" stroke={color} strokeWidth="9" strokeLinecap="round" />
+        )}
+        {expRad !== null && (
+          <line
+            x1={cx - (r - 6) * Math.cos(expRad)}
+            y1={cy - (r - 6) * Math.sin(expRad)}
+            x2={cx - (r + 6) * Math.cos(expRad)}
+            y2={cy - (r + 6) * Math.sin(expRad)}
+            stroke="#334155"
+            strokeWidth="1.2"
+          />
+        )}
+        <text x="50" y="49" textAnchor="middle" fontSize="15" fontWeight="700" fill="#0f172a">
+          {pct === null ? "—" : `${pct.toFixed(1)}%`}
         </text>
       </svg>
-      <p className="mt-1 w-full truncate text-center text-xs font-medium text-slate-500" title={label}>
-        {label}
-      </p>
+      {children}
     </button>
   );
 }

@@ -1,40 +1,62 @@
-import { createContext, ReactNode, useContext, useState } from "react";
-import { api } from "../api/client";
-
-interface AuthUser {
-  full_name: string;
-  role: string;
-}
+import { createContext, ReactNode, useCallback, useContext, useEffect, useState } from "react";
+import { api, AuthUser } from "../api/client";
 
 interface AuthContextValue {
   user: AuthUser | null;
+  ready: boolean;
+  can: (permission: string) => boolean;
   login: (username: string, password: string) => Promise<void>;
+  loginGoogle: (credential: string) => Promise<void>;
   logout: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(() => {
-    const raw = localStorage.getItem("dhdvt_user");
-    return raw ? JSON.parse(raw) : null;
-  });
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [ready, setReady] = useState(false);
 
-  async function login(username: string, password: string) {
-    const { data } = await api.post("/auth/login", { username, password });
-    localStorage.setItem("dhdvt_token", data.access_token);
-    const authUser = { full_name: data.full_name, role: data.role };
-    localStorage.setItem("dhdvt_user", JSON.stringify(authUser));
-    setUser(authUser);
-  }
-
-  function logout() {
-    localStorage.removeItem("dhdvt_token");
-    localStorage.removeItem("dhdvt_user");
+  const clear = useCallback(() => {
+    localStorage.removeItem("dvt_token");
     setUser(null);
-  }
+  }, []);
 
-  return <AuthContext.Provider value={{ user, login, logout }}>{children}</AuthContext.Provider>;
+  useEffect(() => {
+    const token = localStorage.getItem("dvt_token");
+    if (!token) {
+      setReady(true);
+      return;
+    }
+    api
+      .get<AuthUser>("/auth/me")
+      .then((res) => setUser(res.data))
+      .catch(clear)
+      .finally(() => setReady(true));
+  }, [clear]);
+
+  useEffect(() => {
+    window.addEventListener("dvt-unauthorized", clear);
+    return () => window.removeEventListener("dvt-unauthorized", clear);
+  }, [clear]);
+
+  const accept = (data: { access_token: string; user: AuthUser }) => {
+    localStorage.setItem("dvt_token", data.access_token);
+    setUser(data.user);
+  };
+
+  const value: AuthContextValue = {
+    user,
+    ready,
+    can: (p) => !!user?.permissions.includes(p),
+    login: async (username, password) => accept((await api.post("/auth/login", { username, password })).data),
+    loginGoogle: async (credential) => accept((await api.post("/auth/google", { credential })).data),
+    logout: () => {
+      api.post("/auth/logout").catch(() => undefined);
+      clear();
+    },
+  };
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {

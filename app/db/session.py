@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
@@ -9,6 +11,10 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 class Base(DeclarativeBase):
     pass
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def get_db():
