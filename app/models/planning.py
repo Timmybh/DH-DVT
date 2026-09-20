@@ -14,12 +14,36 @@ class WorkingCalendarRule(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     scope_type: Mapped[str] = mapped_column(String(10), index=True)  # COMPANY | XN | LINE
     scope_key: Mapped[str] = mapped_column(String(40), default="", index=True)  # '' | 'XN1' | 'XN1:07'
-    rule_type: Mapped[str] = mapped_column(String(12))  # WEEKLY_OFF | DATE_OFF | OVERTIME
+    rule_type: Mapped[str] = mapped_column(String(16))  # WEEKLY_OFF|WEEKLY_WORK|WEEKLY_OT|DATE_OFF|DATE_WORK|OVERTIME — suy ra từ loại ngày
+    day_type: Mapped[str] = mapped_column(String(20), default="", index=True)  # mã loại ngày trong danh mục do công ty định nghĩa
     weekday: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 0=Thứ hai .. 6=Chủ nhật
     rule_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    rule_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)  # khoảng ngày (Nghỉ Tết...): [rule_date, rule_end_date]
+    month: Mapped[int | None] = mapped_column(Integer, nullable=True)  # lặp hằng năm: tháng (1–12)
+    month_day: Mapped[int | None] = mapped_column(Integer, nullable=True)  # lặp hằng tháng / hằng năm: ngày trong tháng (1–31)
+    valid_from: Mapped[date | None] = mapped_column(Date, nullable=True)  # giới hạn hiệu lực của quy tắc lặp (VD trong năm 2027); trống = mọi năm
+    valid_to: Mapped[date | None] = mapped_column(Date, nullable=True)
     note: Mapped[str] = mapped_column(String(200), default="")
     created_by: Mapped[str] = mapped_column(String(100), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class CalendarDayType(Base):
+    """Danh mục LOẠI NGÀY của lịch làm việc — do công ty định nghĩa, xí nghiệp/chuyền dùng lại đúng các tên này (kế thừa) và có thể ghi đè lịch."""
+
+    __tablename__ = "calendar_day_types"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(20), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(80))
+    effect: Mapped[str] = mapped_column(String(10))  # OFF | WORKING | OVERTIME
+    recurrence: Mapped[str] = mapped_column(String(8), default="ANY")  # WEEKLY | DATE | ANY
+    color: Mapped[str] = mapped_column(String(7), default="#94a3b8")
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    is_system: Mapped[bool] = mapped_column(default=False)  # loại mặc định: đổi được tên/màu, không xóa được
+    is_active: Mapped[bool] = mapped_column(default=True)
+    updated_by: Mapped[str] = mapped_column(String(100), default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class PlanningEditSession(Base):

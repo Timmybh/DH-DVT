@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -8,10 +8,9 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_perm
 from app.db.session import get_db
 from app.models.core import User
-from app.models.planning import PlanningVersion, PlanningVersionRow, WorkingCalendarRule
+from app.models.planning import PlanningVersion, PlanningVersionRow
 from app.services import planning_service as svc
 from app.services.audit import write_audit
-from app.services.calendar import CalendarResolver, Rule
 
 router = APIRouter(prefix="/planning", tags=["planning"])
 
@@ -190,68 +189,3 @@ def unplanned(
 @router.get("/unplanned/facets")
 def unplanned_facets(db: Session = Depends(get_db), _: User = Depends(require_perm("planning.view"))):
     return svc.unplanned_facets(db)
-
-
-# ------------------------------------------------------------------ Working Calendar
-class RuleBody(BaseModel):
-    scope_type: str = Field(pattern="^(COMPANY|XN|LINE)$")
-    scope_key: str = ""
-    rule_type: str = Field(pattern="^(WEEKLY_OFF|DATE_OFF|OVERTIME)$")
-    weekday: int | None = Field(None, ge=0, le=6)
-    rule_date: date | None = None
-    note: str = ""
-
-
-def _rule_out(r: WorkingCalendarRule) -> dict:
-    return {"id": r.id, "scope_type": r.scope_type, "scope_key": r.scope_key, "rule_type": r.rule_type, "weekday": r.weekday,
-            "rule_date": r.rule_date.isoformat() if r.rule_date else None, "note": r.note, "created_by": r.created_by}
-
-
-@router.get("/calendar")
-def list_rules(db: Session = Depends(get_db), _: User = Depends(require_perm("calendar.view"))):
-    rules = db.query(WorkingCalendarRule).order_by(WorkingCalendarRule.scope_type, WorkingCalendarRule.scope_key, WorkingCalendarRule.rule_date).all()
-    return [_rule_out(r) for r in rules]
-
-
-@router.post("/calendar")
-def add_rule(body: RuleBody, db: Session = Depends(get_db), user: User = Depends(require_perm("calendar.manage"))):
-    if body.rule_type == "WEEKLY_OFF" and body.weekday is None:
-        raise HTTPException(400, "Quy tắc WEEKLY_OFF cần weekday (0=Thứ hai..6=Chủ nhật)")
-    if body.rule_type != "WEEKLY_OFF" and body.rule_date is None:
-        raise HTTPException(400, "Quy tắc theo ngày cần rule_date")
-    if body.scope_type == "COMPANY":
-        body.scope_key = ""
-    elif body.scope_type == "XN" and body.scope_key not in svc.factory_codes(db):
-        raise HTTPException(400, "Xí nghiệp không hợp lệ")
-    elif body.scope_type == "LINE" and ":" not in body.scope_key:
-        raise HTTPException(400, "Scope LINE có dạng 'XN1:07'")
-    rule = WorkingCalendarRule(**body.model_dump(), created_by=user.username)
-    db.add(rule)
-    db.commit()
-    db.refresh(rule)
-    write_audit("CALENDAR_CHANGE", user=user, object_type="CalendarRule", object_id=str(rule.id), detail=f"add {body.scope_type}:{body.scope_key} {body.rule_type} {body.rule_date or body.weekday}")
-    return _rule_out(rule)
-
-
-@router.delete("/calendar/{rule_id}")
-def delete_rule(rule_id: int, db: Session = Depends(get_db), user: User = Depends(require_perm("calendar.manage"))):
-    rule = db.get(WorkingCalendarRule, rule_id)
-    if rule is None:
-        raise HTTPException(404, "Không tìm thấy quy tắc")
-    db.delete(rule)
-    db.commit()
-    write_audit("CALENDAR_CHANGE", user=user, object_type="CalendarRule", object_id=str(rule_id), detail="delete")
-    return {"deleted": True}
-
-
-@router.get("/calendar/resolve")
-def resolve(
-    date_from: date,
-    days: int = Query(31, ge=1, le=366),
-    xn: str | None = None,
-    line: str | None = None,
-    db: Session = Depends(get_db),
-    _: User = Depends(require_perm("calendar.view")),
-):
-    cal: CalendarResolver = svc.load_resolver(db)
-    return [{"date": (date_from + timedelta(days=i)).isoformat(), "status": cal.status(date_from + timedelta(days=i), xn, line)} for i in range(days)]

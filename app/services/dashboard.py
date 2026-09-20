@@ -247,6 +247,35 @@ def progress_overview(db: Session, factories: list[Factory], is_total: bool) -> 
 
 
 def hr_overview(db: Session, factories: list[Factory], is_total: bool) -> dict:
+    """Nhân sự: ưu tiên ảnh chụp lao động eGMF lưu riêng (labor_snapshots: có mặt / biên chế / chuyên cần / chênh lệch); chưa có ảnh chụp thì dùng sheet LAO ĐỘNG của file kế hoạch."""
+    from app.services import labor_snapshot
+
+    snap = labor_snapshot.dashboard_summary(db)
+    if snap is not None:
+        fcodes = [f.code for f in factories]
+        in_scope = fcodes if not is_total else [c for c in snap["by_factory"]]
+        sc = {c: snap["by_factory"].get(c, {"lines": 0, "total": 0, "present": 0}) for c in in_scope}
+        scoped_present = sum(v["present"] for v in sc.values())
+        return {
+            "available": True,
+            "source": "SNAPSHOT",
+            "total": scoped_present,  # có mặt, theo phạm vi đang xem
+            "company_total": snap["present"],  # Tổng công ty luôn cộng dồn tất cả xí nghiệp
+            "company_teams": snap["lines"],
+            "company_roster": snap["total"],
+            "company_attendance_pct": snap["attendance_pct"],
+            "company_delta": snap.get("delta_present"),
+            "as_of_text": f"Ảnh chụp lao động eGMF ngày {snap['as_of'][8:]}/{snap['as_of'][5:7]}/{snap['as_of'][:4]}",
+            "as_of": snap["as_of"],
+            "trend": snap["trend"],
+            "by_factory": [
+                {"code": f.code, "name": f.name, "total": snap["by_factory"].get(f.code, {}).get("present", 0), "teams": snap["by_factory"].get(f.code, {}).get("lines", 0),
+                 "roster": snap["by_factory"].get(f.code, {}).get("total", 0), "attendance_pct": snap["by_factory"].get(f.code, {}).get("attendance_pct"),
+                 "delta": snap["by_factory"].get(f.code, {}).get("delta_present")}
+                for f in factories
+            ],
+            "teams": sum(v["lines"] for v in sc.values()),
+        }
     batch = current_batch(db)
     if batch is None:
         return {"available": False}
@@ -260,6 +289,7 @@ def hr_overview(db: Session, factories: list[Factory], is_total: bool) -> dict:
     scoped = rows if is_total else [r for r in rows if r.factory_id in in_scope]
     return {
         "available": True,
+        "source": "EXCEL",
         "total": sum(r.headcount for r in scoped),  # theo phạm vi đang xem
         "company_total": sum(by_fid.values()),  # Tổng công ty luôn cộng dồn tất cả xí nghiệp
         "company_teams": len(rows),
@@ -365,6 +395,12 @@ def drill_revenue(db: Session, factories: list[Factory], year: int, month: int) 
 
 
 def drill_hr(db: Session, factories: list[Factory], is_total: bool) -> dict:
+    from app.services import labor_snapshot
+
+    snap = labor_snapshot._current(db).first()
+    if snap is not None:  # theo chuyền từ ảnh chụp lao động lưu riêng
+        lines = labor_snapshot.snapshot_lines(db, snap.id, None if is_total else [f.code for f in factories])
+        return {"rows": [{"factory": l.factory_code, "team": f"Chuyền {l.line}", "headcount": l.present, "roster": l.total, "as_of": f"có mặt {l.present}/{l.total} — {l.day.strftime('%d/%m/%Y')}"} for l in lines], "source": "SNAPSHOT"}
     batch = current_batch(db)
     if batch is None:
         return {"rows": []}
@@ -373,7 +409,7 @@ def drill_hr(db: Session, factories: list[Factory], is_total: bool) -> dict:
     if not is_total:
         q = q.filter(LaborHeadcount.factory_id.in_([f.id for f in factories]))
     rows = q.order_by(LaborHeadcount.factory_id, LaborHeadcount.team).all()
-    return {"rows": [{"factory": fmap.get(r.factory_id, "—"), "team": r.team, "headcount": r.headcount, "as_of": r.as_of_text} for r in rows]}
+    return {"rows": [{"factory": fmap.get(r.factory_id, "—"), "team": r.team, "headcount": r.headcount, "as_of": r.as_of_text} for r in rows], "source": "EXCEL"}
 
 
 # ---------------------------------------------------------------- Order Progress (thực tế từ eGMF)

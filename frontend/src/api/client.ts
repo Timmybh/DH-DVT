@@ -137,7 +137,12 @@ export interface HrOverview {
   company_teams?: number;
   as_of_text?: string;
   teams?: number;
-  by_factory?: { code: string; name: string; total: number; teams?: number }[];
+  by_factory?: { code: string; name: string; total: number; teams?: number; roster?: number; attendance_pct?: number | null; delta?: number | null }[];
+  source?: "SNAPSHOT" | "EXCEL";
+  company_roster?: number;
+  company_attendance_pct?: number | null;
+  company_delta?: number | null;
+  as_of?: string;
 }
 
 export interface SyncBrief {

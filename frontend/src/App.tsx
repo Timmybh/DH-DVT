@@ -17,6 +17,7 @@ import SyncLog from "./pages/SyncLog";
 import Alerts from "./pages/admin/Alerts";
 import Lifecycle from "./pages/admin/Lifecycle";
 import Monitoring from "./pages/admin/Monitoring";
+import Snapshots from "./pages/admin/Snapshots";
 import ThemeAdmin from "./pages/admin/Theme";
 import Audit from "./pages/admin/Audit";
 import DashboardConfig from "./pages/admin/DashboardConfig";
@@ -68,6 +69,7 @@ export default function App() {
       <Route path="/admin/sync" element={<Protected perm="sync.view"><SubTabs tabs={ADMIN_TABS}><SyncLog /></SubTabs></Protected>} />
       <Route path="/admin/sync/:runId" element={<Protected perm="sync.view"><SubTabs tabs={ADMIN_TABS}><SyncDetail /></SubTabs></Protected>} />
       <Route path="/admin/users" element={<Protected perm="admin.user_manage"><SubTabs tabs={ADMIN_TABS}><Users /></SubTabs></Protected>} />
+      <Route path="/admin/snapshots" element={<Protected perm="snapshot.view"><SubTabs tabs={ADMIN_TABS}><Snapshots /></SubTabs></Protected>} />
       <Route path="/admin/monitoring" element={<Protected perm="monitoring.view"><SubTabs tabs={ADMIN_TABS}><Monitoring /></SubTabs></Protected>} />
       <Route path="/admin/lifecycle" element={<Protected perm="lifecycle.manage"><SubTabs tabs={ADMIN_TABS}><Lifecycle /></SubTabs></Protected>} />
       <Route path="/admin/theme" element={<Protected perm="theme.manage"><SubTabs tabs={ADMIN_TABS}><ThemeAdmin /></SubTabs></Protected>} />

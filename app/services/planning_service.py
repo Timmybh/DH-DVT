@@ -44,8 +44,9 @@ ROW_COLUMNS = [
 # ------------------------------------------------------------------ lịch & danh mục
 def load_resolver(db: Session) -> CalendarResolver:
     rules = [
-        Rule(r.scope_type, r.scope_key, r.rule_type, r.weekday, r.rule_date)
-        for r in db.query(WorkingCalendarRule).all()
+        Rule(r.scope_type, r.scope_key, r.rule_type, r.weekday, r.rule_date, end_date=r.rule_end_date, day_type=r.day_type, rule_id=r.id, note=r.note,
+             month=r.month, month_day=r.month_day, valid_from=r.valid_from, valid_to=r.valid_to)
+        for r in db.query(WorkingCalendarRule).order_by(WorkingCalendarRule.id).all()  # thứ tự đăng ký: quy tắc sau thắng khi cùng nhóm
     ]
     return CalendarResolver(rules)
 

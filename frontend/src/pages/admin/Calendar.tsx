@@ -1,151 +1,330 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, errorMessage } from "../../api/client";
 import { useAuth } from "../../context/AuthContext";
 
+interface DayType { code: string; name: string; effect: Effect | "CHOICE"; recurrence: "WEEKLY" | "DATE" | "ANY"; color: string; sort_order: number; is_system: boolean; is_active: boolean }
+type Repeat = "NONE" | "WEEKLY" | "MONTHLY" | "YEARLY";
+type Effect = "OFF" | "WORKING" | "OVERTIME";
 interface Rule {
-  id: number;
-  scope_type: string;
-  scope_key: string;
-  rule_type: string;
-  weekday: number | null;
-  rule_date: string | null;
-  note: string;
-  created_by: string;
+  id: number; scope_type: string; scope_key: string; rule_type: string; effect: Effect; repeat: Repeat; day_type: string; weekday: number | null; month: number | null; month_day: number | null;
+  rule_date: string | null; rule_end_date: string | null; valid_from: string | null; valid_to: string | null; note: string; created_by: string;
 }
+interface Day { date: string; status: string; scope: string; scope_key: string; day_type: string; day_type_name: string; color: string; inherited: boolean; overrides: boolean; note: string }
+type Mode = "DATE" | "RANGE" | "WEEKLY" | "MONTHLY" | "YEARLY";
+interface Form { effect: "WORKING" | "OFF"; mode: Mode; date: string; end: string; weekday: number; month: number; mday: number; span: "YEAR" | "ALWAYS"; note: string }
 
+const WD_SHORT = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"];
 const WEEKDAYS = ["Thứ hai", "Thứ ba", "Thứ tư", "Thứ năm", "Thứ sáu", "Thứ bảy", "Chủ nhật"];
-const TYPE_LABEL: Record<string, string> = { WEEKLY_OFF: "Nghỉ hằng tuần", DATE_OFF: "Nghỉ theo ngày", OVERTIME: "Làm thêm (Overtime)" };
-const STATUS_CLS: Record<string, string> = { WORKING: "bg-white text-slate-700", OFF: "bg-red-100 text-red-700", OVERTIME: "bg-amber-100 text-amber-700" };
+const EFFECT_LABEL: Record<string, string> = { OFF: "Nghỉ", WORKING: "Làm việc", OVERTIME: "Làm thêm (tăng ca)", CHOICE: "Chọn khi đăng ký (Làm việc / Nghỉ)" };
+const REC_LABEL: Record<string, string> = { WEEKLY: "thường lặp hằng tuần", DATE: "thường theo ngày / khoảng ngày", ANY: "linh hoạt" };
+const MODE_LABEL: Record<Mode, string> = { DATE: "Ngày cụ thể", RANGE: "Khoảng ngày", WEEKLY: "Lặp hằng tuần", MONTHLY: "Lặp hằng tháng", YEARLY: "Lặp hằng năm" };
+const SCOPE_LABEL: Record<string, string> = { COMPANY: "Công ty", XN: "Xí nghiệp", LINE: "Chuyền", DEFAULT: "Mặc định" };
+const MONTHS = ["Tháng 1", "Tháng 2", "Tháng 3", "Tháng 4", "Tháng 5", "Tháng 6", "Tháng 7", "Tháng 8", "Tháng 9", "Tháng 10", "Tháng 11", "Tháng 12"];
+const inp = "rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm";
+const vi = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
+const pad = (v: number) => String(v).padStart(2, "0");
+const blank = (year: number): Form => ({ effect: "WORKING", mode: "DATE", date: `${year}-01-01`, end: "", weekday: 6, month: 1, mday: 1, span: "YEAR", note: "" });
+
+/** Đăng ký này có hiệu lực trong năm `year` không? */
+function inYear(r: Rule, year: number): boolean {
+  if (r.repeat === "NONE") return !!r.rule_date && +r.rule_date.slice(0, 4) <= year && year <= +(r.rule_end_date ?? r.rule_date).slice(0, 4);
+  return (!r.valid_from || +r.valid_from.slice(0, 4) <= year) && (!r.valid_to || +r.valid_to.slice(0, 4) >= year);
+}
+function describe(r: Rule): string {
+  return `${EFFECT_LABEL[r.effect] ?? r.effect} · ${describeWhen(r)}`;
+}
+function describeWhen(r: Rule): string {
+  const bounds = !r.valid_from && !r.valid_to ? "mọi năm" : r.valid_from?.slice(5) === "01-01" && r.valid_to?.slice(5) === "12-31" && r.valid_from.slice(0, 4) === r.valid_to.slice(0, 4) ? `trong năm ${r.valid_from.slice(0, 4)}` : `${r.valid_from ? `từ ${vi(r.valid_from)}` : ""} ${r.valid_to ? `đến ${vi(r.valid_to)}` : ""}`.trim();
+  if (r.repeat === "WEEKLY") return `Mọi ${WEEKDAYS[r.weekday ?? 0]} · ${bounds}`;
+  if (r.repeat === "MONTHLY") return `Ngày ${r.month_day} hằng tháng · ${bounds}`;
+  if (r.repeat === "YEARLY") return `Ngày ${r.month_day}/${r.month} hằng năm · ${bounds}`;
+  return r.rule_end_date && r.rule_end_date !== r.rule_date ? `${vi(r.rule_date!)} → ${vi(r.rule_end_date)}` : vi(r.rule_date!);
+}
 
 export default function Calendar() {
   const { can } = useAuth();
   const manage = can("calendar.manage");
+  const [types, setTypes] = useState<DayType[]>([]);
   const [rules, setRules] = useState<Rule[]>([]);
   const [factories, setFactories] = useState<string[]>([]);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const [form, setForm] = useState({ scope_type: "COMPANY", xn: "", line: "", rule_type: "DATE_OFF", weekday: 6, rule_date: "", note: "" });
-  const [preview, setPreview] = useState({ xn: "", line: "", month: new Date().toISOString().slice(0, 7) });
-  const [days, setDays] = useState<{ date: string; status: string }[]>([]);
+  const [scope, setScope] = useState({ type: "COMPANY", xn: "XN1", line: "" });
+  const [year, setYear] = useState(new Date().getFullYear());
+  const [days, setDays] = useState<Day[]>([]);
+  const [forms, setForms] = useState<Record<string, Form>>({});
+  const [sel, setSel] = useState("");
+  const [newType, setNewType] = useState({ name: "", effect: "OFF", recurrence: "DATE", color: "#94a3b8" });
 
-  const load = useCallback(async () => setRules((await api.get<Rule[]>("/planning/calendar")).data), []);
+  const loadTypes = useCallback(async () => setTypes((await api.get<DayType[]>("/planning/calendar/types")).data), []);
+  const loadRules = useCallback(async () => setRules((await api.get<Rule[]>("/planning/calendar")).data), []);
   useEffect(() => {
-    load().catch((e) => setMsg({ ok: false, text: errorMessage(e) }));
+    Promise.all([loadTypes(), loadRules()]).catch((e) => setMsg({ ok: false, text: errorMessage(e) }));
     api.get("/dashboard/meta").then((r) => setFactories(r.data.factories.map((f: { code: string }) => f.code))).catch(() => undefined);
-  }, [load]);
+  }, [loadTypes, loadRules]);
+
+  const xn = scope.type === "COMPANY" ? "" : scope.xn;
+  const line = scope.type === "LINE" ? scope.line.trim() : "";
+  const scopeKey = scope.type === "COMPANY" ? "" : scope.type === "XN" ? scope.xn : `${scope.xn}:${line}`;
+  const scopeReady = scope.type !== "LINE" || !!line;
+  const scopeName = scope.type === "COMPANY" ? "Công ty" : scope.type === "XN" ? scope.xn : `${scope.xn}:${line || "?"}`;
 
   useEffect(() => {
-    api
-      .get("/planning/calendar/resolve", { params: { date_from: `${preview.month}-01`, days: 31, xn: preview.xn || undefined, line: preview.xn && preview.line ? preview.line : undefined } })
-      .then((r) => setDays((r.data as { date: string; status: string }[]).filter((d) => d.date.startsWith(preview.month))))
-      .catch(() => setDays([]));
-  }, [preview, rules]);
+    api.get<Day[]>("/planning/calendar/resolve", { params: { date_from: `${year}-01-01`, days: 366, xn: xn || undefined, line: xn && line ? line : undefined } })
+      .then((r) => setDays(r.data.filter((d) => d.date.startsWith(String(year))))).catch(() => setDays([]));
+  }, [year, xn, line, rules, types]);
 
-  async function add() {
-    const scope_key = form.scope_type === "COMPANY" ? "" : form.scope_type === "XN" ? form.xn : `${form.xn}:${form.line}`;
+  const byCode = useMemo(() => new Map(types.map((t) => [t.code, t])), [types]);
+  const dayMap = useMemo(() => new Map(days.map((d) => [d.date, d])), [days]);
+  const activeTypes = types.filter((t) => t.is_active);
+
+  const isOwn = (r: Rule) => r.scope_type === scope.type && r.scope_key === scopeKey;
+  const chain = ["COMPANY", ...(scope.type !== "COMPANY" ? [`XN:${scope.xn}`] : []), ...(scope.type === "LINE" && line ? [`LINE:${scope.xn}:${line}`] : [])];
+  const relevant = rules.filter((r) => chain.includes(r.scope_type === "COMPANY" ? "COMPANY" : `${r.scope_type}:${r.scope_key}`) && inYear(r, year));
+  const selType = activeTypes.find((t) => t.code === sel) ?? activeTypes[0];
+  const orderRules = (a: Rule, b: Rule) => (a.repeat === "NONE" ? 0 : 1) - (b.repeat === "NONE" ? 0 : 1) || (a.rule_date ?? "").localeCompare(b.rule_date ?? "") || a.id - b.id;
+
+  const run = async (fn: () => Promise<string | void>) => {
     try {
-      await api.post("/planning/calendar", {
-        scope_type: form.scope_type, scope_key, rule_type: form.rule_type,
-        weekday: form.rule_type === "WEEKLY_OFF" ? Number(form.weekday) : null,
-        rule_date: form.rule_type === "WEEKLY_OFF" ? null : form.rule_date || null, note: form.note,
-      });
-      setMsg({ ok: true, text: "Đã thêm quy tắc." });
-      load();
+      const t = await fn();
+      if (t) setMsg({ ok: true, text: t });
+      await loadRules();
     } catch (e) {
       setMsg({ ok: false, text: errorMessage(e) });
     }
-  }
-  const remove = async (id: number) => {
-    await api.delete(`/planning/calendar/${id}`);
-    load();
+  };
+  const formOf = (t: DayType): Form => forms[t.code] ?? { ...blank(year), mode: t.recurrence === "WEEKLY" ? "WEEKLY" : "DATE" };
+  const selForm = selType ? formOf(selType) : blank(year);
+  const selList = selType ? relevant.filter((r) => r.day_type === selType.code).sort(orderRules) : [];
+  const setForm = (t: DayType, patch: Partial<Form>) => setForms((f) => ({ ...f, [t.code]: { ...formOf(t), ...patch } }));
+
+  const add = (t: DayType) => {
+    if (!scopeReady) return setMsg({ ok: false, text: "Nhập mã chuyền trước." });
+    const f = formOf(t);
+    const repeat: Repeat = f.mode === "DATE" || f.mode === "RANGE" ? "NONE" : f.mode;
+    const bounds = repeat !== "NONE" && f.span === "YEAR" ? { valid_from: `${year}-01-01`, valid_to: `${year}-12-31` } : {};
+    void run(async () => {
+      await api.post("/planning/calendar", {
+        scope_type: scope.type, scope_key: scopeKey, day_type: t.code, repeat, note: f.note, ...(t.effect === "CHOICE" ? { effect: f.effect } : {}),
+        ...(repeat === "NONE" ? { rule_date: f.date || null, rule_end_date: f.mode === "RANGE" ? f.end || null : null } : {}),
+        ...(repeat === "WEEKLY" ? { weekday: f.weekday } : {}), ...(repeat === "MONTHLY" ? { month_day: f.mday } : {}), ...(repeat === "YEARLY" ? { month: f.month, month_day: f.mday } : {}), ...bounds,
+      });
+      setForms((all) => ({ ...all, [t.code]: { ...f, note: "" } }));
+      return `Đã đăng ký "${t.name}" cho ${scopeName}.`;
+    });
+  };
+  const remove = (r: Rule) => {
+    if (!window.confirm(`Xóa đăng ký "${describe(r)}"?${scope.type !== "COMPANY" ? " (Xí nghiệp/chuyền sẽ kế thừa lại lịch cấp trên.)" : ""}`)) return;
+    void run(async () => { await api.delete(`/planning/calendar/${r.id}`); return "Đã xóa đăng ký."; });
+  };
+  // ghi đè một đăng ký kế thừa: tạo đăng ký NGƯỢC hiệu lực (nghỉ -> làm việc; làm việc/tăng ca -> nghỉ) cho phạm vi đang chỉnh, cùng ngày / cùng kiểu lặp
+  const override = (r: Rule) => {
+    const want: "WORKING" | "OFF" = r.effect === "OFF" ? "WORKING" : "OFF";
+    const t = activeTypes.find((x) => x.effect === "CHOICE") ?? activeTypes.find((x) => x.effect === want);
+    if (!t) return setMsg({ ok: false, text: `Chưa có loại ngày ${want === "WORKING" ? "làm việc (VD Ngoại lệ)" : "nghỉ"} để ghi đè — thêm ở Danh mục loại ngày.` });
+    if (!window.confirm(`Ghi đè "${describe(r)}" của ${SCOPE_LABEL[r.scope_type]} bằng "${t.name}" (${EFFECT_LABEL[want]}) cho ${scopeName}?`)) return;
+    void run(async () => {
+      await api.post("/planning/calendar", {
+        scope_type: scope.type, scope_key: scopeKey, day_type: t.code, repeat: r.repeat, ...(t.effect === "CHOICE" ? { effect: want } : {}), note: `Ghi đè: ${byCode.get(r.day_type)?.name ?? r.day_type} của ${SCOPE_LABEL[r.scope_type]}`,
+        weekday: r.weekday, month: r.month, month_day: r.month_day, rule_date: r.rule_date, rule_end_date: r.rule_end_date, valid_from: r.valid_from, valid_to: r.valid_to,
+      });
+      return `Đã ghi đè bằng "${t.name}" cho ${scopeName}.`;
+    });
   };
 
-  const inp = "rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm";
-  const firstWeekday = days.length ? (new Date(days[0].date).getDay() + 6) % 7 : 0;
+  const saveType = async (code: string, body: Partial<DayType>) => {
+    try { await api.put(`/planning/calendar/types/${code}`, body); } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); }
+    await loadTypes();
+  };
+  const addType = async () => {
+    try { await api.post("/planning/calendar/types", newType); setNewType({ name: "", effect: "OFF", recurrence: "DATE", color: "#94a3b8" }); await loadTypes(); } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); }
+  };
+  const delType = async (code: string) => {
+    if (!window.confirm("Xóa loại ngày này?")) return;
+    try { await api.delete(`/planning/calendar/types/${code}`); await loadTypes(); } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); }
+  };
+  const templates = async () => {
+    try {
+      const r = await api.post<{ created: number }>("/planning/calendar/types/templates");
+      setMsg({ ok: true, text: `Đã tạo ${r.data.created} loại ngày mẫu — đổi tên, sửa hoặc xóa tùy ý.` });
+      await Promise.all([loadTypes(), loadRules()]);
+    } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); }
+  };
+
+  const monthCells = (m: number) => ({ lead: (new Date(year, m, 1).getDay() + 6) % 7, n: new Date(year, m + 1, 0).getDate() });
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4" data-testid="calendar-page">
       <div>
-        <h1 className="text-xl font-bold text-slate-900">Lịch làm việc</h1>
-        <p className="text-xs text-slate-500">Mức ngày. Kế thừa Company → Xí nghiệp → Chuyền; phạm vi hẹp hơn thắng. Trạng thái: WORKING / OFF / OVERTIME. "+1 ngày làm việc" bỏ qua ngày OFF.</p>
+        <h1 className="text-xl font-bold text-slate-900">Lịch làm việc / nghỉ</h1>
+        <p className="text-xs text-slate-500">
+          Lịch do <b>người dùng định nghĩa</b> — hệ thống không nạp sẵn. Chọn <b>năm</b>; trong năm có các <b>loại ngày</b> do công ty đặt tên (VD Nghỉ CN, Nghỉ Tết, Nghỉ lễ, Nghỉ khác, Ngoại lệ, Tăng ca); mỗi loại <b>đăng ký ngày chi tiết</b> (từng ngày, hoặc từ ngày đến ngày) và cả <b>kiểu lặp lại</b> (hằng tuần / hằng tháng / hằng năm, trong năm hoặc mọi năm). Loại "Ngoại lệ" chọn Làm việc hoặc Nghỉ cho từng đăng ký.
+          Xí nghiệp / chuyền dùng đúng các loại này, kế thừa lịch công ty và có thể <b>ghi đè</b>. Ưu tiên: phạm vi hẹp hơn thắng; trong một phạm vi: ngày cụ thể &gt; lặp hằng năm &gt; hằng tháng &gt; hằng tuần.
+        </p>
       </div>
-      {msg && <div className={`rounded-xl border p-3 text-sm ${msg.ok ? "border-green-200 bg-green-50 text-green-800" : "border-red-200 bg-red-50 text-red-700"}`}>{msg.text}</div>}
+      {msg && <div className={`rounded-xl border p-3 text-sm ${msg.ok ? "border-green-300/50 text-green-700" : "border-red-300/50 text-red-700"}`} role="status">{msg.text}</div>}
 
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
-        <div className="space-y-4">
-          {manage && (
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <h2 className="mb-3 text-sm font-bold text-slate-800">Thêm quy tắc</h2>
-              <div className="flex flex-wrap items-end gap-2">
-                <select value={form.scope_type} onChange={(e) => setForm({ ...form, scope_type: e.target.value })} className={inp} aria-label="Phạm vi">
-                  <option value="COMPANY">Công ty</option><option value="XN">Xí nghiệp</option><option value="LINE">Chuyền</option>
-                </select>
-                {form.scope_type !== "COMPANY" && (
-                  <select value={form.xn} onChange={(e) => setForm({ ...form, xn: e.target.value })} className={inp} aria-label="Xí nghiệp">
-                    <option value="">XN</option>{factories.map((f) => <option key={f}>{f}</option>)}
-                  </select>
-                )}
-                {form.scope_type === "LINE" && <input value={form.line} onChange={(e) => setForm({ ...form, line: e.target.value })} placeholder="Mã chuyền" className={`${inp} w-24`} />}
-                <select value={form.rule_type} onChange={(e) => setForm({ ...form, rule_type: e.target.value })} className={inp} aria-label="Loại quy tắc">
-                  {Object.entries(TYPE_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-                </select>
-                {form.rule_type === "WEEKLY_OFF" ? (
-                  <select value={form.weekday} onChange={(e) => setForm({ ...form, weekday: Number(e.target.value) })} className={inp} aria-label="Thứ">
-                    {WEEKDAYS.map((w, i) => <option key={w} value={i}>{w}</option>)}
-                  </select>
-                ) : (
-                  <input type="date" value={form.rule_date} onChange={(e) => setForm({ ...form, rule_date: e.target.value })} className={inp} aria-label="Ngày" />
-                )}
-                <input value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder="Ghi chú (VD: Quốc khánh)" className={`${inp} min-w-[160px] flex-1`} />
-                <button onClick={add} className="rounded-lg bg-brand px-4 py-1.5 text-sm font-semibold text-white hover:bg-indigo-700">Thêm</button>
-              </div>
+      <section className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white p-3">
+        <button onClick={() => setYear(year - 1)} className="rounded-lg border border-slate-300 px-3 py-1 text-sm" aria-label="Năm trước">◀</button>
+        <b className="w-20 text-center text-xl" data-testid="cal-year">{year}</b>
+        <button onClick={() => setYear(year + 1)} className="rounded-lg border border-slate-300 px-3 py-1 text-sm" aria-label="Năm sau">▶</button>
+        <span className="mx-2 text-slate-300">|</span>
+        <span className="text-sm font-bold">Phạm vi:</span>
+        <select value={scope.type} onChange={(e) => setScope({ ...scope, type: e.target.value })} className={inp} aria-label="Phạm vi" data-testid="scope-type">
+          <option value="COMPANY">Công ty</option><option value="XN">Xí nghiệp</option><option value="LINE">Chuyền</option>
+        </select>
+        {scope.type !== "COMPANY" && <select value={scope.xn} onChange={(e) => setScope({ ...scope, xn: e.target.value })} className={inp} aria-label="Xí nghiệp" data-testid="scope-xn">{factories.map((f) => <option key={f}>{f}</option>)}</select>}
+        {scope.type === "LINE" && <input value={scope.line} onChange={(e) => setScope({ ...scope, line: e.target.value })} placeholder="Mã chuyền" className={`${inp} w-24`} aria-label="Chuyền" />}
+        <span className="text-xs text-slate-400">{scope.type === "COMPANY" ? "Áp dụng cho mọi xí nghiệp và chuyền." : "Mặc định kế thừa cấp trên; đăng ký ở đây là GHI ĐÈ."}</span>
+      </section>
+
+      {types.length === 0 && (
+        <section className="rounded-2xl border border-dashed border-slate-300 p-4 text-sm text-slate-500" data-testid="no-types">
+          Chưa có loại ngày nào. Thêm loại ở "Danh mục loại ngày" bên dưới, hoặc
+          {manage && <button onClick={templates} className="ml-2 rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold text-brand" data-testid="create-templates">tạo bộ loại ngày mẫu</button>} (Nghỉ hàng tuần, Nghỉ Tết, Nghỉ lễ khác, Nghỉ khác, Ngoại lệ, Tăng ca).
+        </section>
+      )}
+
+      {/* hai vùng: trái = danh mục loại ngày; phải = chi tiết đã đăng ký của loại đang chọn + đăng ký mới */}
+      {selType && (
+        <div className="grid gap-4 lg:grid-cols-[300px_1fr]" data-testid="master-detail">
+          <nav className="space-y-1.5" aria-label="Danh mục loại ngày" data-testid="type-list">
+            {activeTypes.map((t) => {
+              const n = relevant.filter((r) => r.day_type === t.code).length;
+              const on = t.code === selType.code;
+              return (
+                <button key={t.code} onClick={() => setSel(t.code)} aria-pressed={on} data-testid={`type-${t.code}`}
+                  className={`flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left ${on ? "border-brand bg-indigo-500/15" : "border-slate-200 hover:bg-slate-500/5"}`}
+                  style={{ borderLeft: `5px solid ${t.color}` }}>
+                  <span className="min-w-0 flex-1">
+                    <b className="block truncate text-sm">{t.name}</b>
+                    <span className="text-[11px] text-slate-400">{t.effect === "CHOICE" ? "Làm việc hoặc Nghỉ" : EFFECT_LABEL[t.effect]}</span>
+                  </span>
+                  <span className={`pg-chip ${n ? "bg-indigo-500/20 text-indigo-500" : "bg-slate-500/15 text-slate-400"}`} title={`${n} đăng ký trong ${year}`}>{n}</span>
+                </button>
+              );
+            })}
+          </nav>
+
+          <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4" style={{ borderTop: `4px solid ${selType.color}` }} data-testid={`detail-${selType.code}`}>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="h-3 w-3 rounded-full" style={{ background: selType.color }} />
+              <h2 className="text-base font-bold">{selType.name}</h2>
+              <span className="pg-chip bg-slate-500/20 text-slate-500">{selType.effect === "CHOICE" ? "Làm việc hoặc Nghỉ" : EFFECT_LABEL[selType.effect]}</span>
+              <span className="ml-auto text-xs text-slate-400">{selList.length} đăng ký trong {year} · {scopeName}</span>
             </div>
-          )}
 
-          <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-slate-100 text-xs uppercase text-slate-400"><th className="px-4 py-3">Phạm vi</th><th>Quy tắc</th><th>Ngày / Thứ</th><th>Ghi chú</th><th /></tr>
-              </thead>
-              <tbody>
-                {rules.map((r) => (
-                  <tr key={r.id} className="border-b border-slate-50">
-                    <td className="px-4 py-2 text-xs font-semibold">{r.scope_type}{r.scope_key ? ` · ${r.scope_key}` : ""}</td>
-                    <td>{TYPE_LABEL[r.rule_type]}</td>
-                    <td>{r.rule_type === "WEEKLY_OFF" ? WEEKDAYS[r.weekday ?? 0] : r.rule_date ? new Date(r.rule_date).toLocaleDateString("vi-VN") : "—"}</td>
-                    <td className="text-xs text-slate-500">{r.note}</td>
-                    <td className="px-3 text-right">{manage && <button onClick={() => remove(r.id)} className="text-xs text-red-500 hover:underline">Xóa</button>}</td>
-                  </tr>
-                ))}
-                {rules.length === 0 && <tr><td colSpan={5} className="py-6 text-center text-slate-400">Chưa có quy tắc nào (mọi ngày là ngày làm việc).</td></tr>}
-              </tbody>
-            </table>
-          </div>
-        </div>
+            <ul className="mt-3 space-y-1 text-sm" data-testid="registered-list">
+              {selList.map((r) => {
+                const mine = isOwn(r);
+                return (
+                  <li key={r.id} className={`flex flex-wrap items-center gap-2 rounded-lg px-3 py-1.5 ${mine ? "bg-slate-500/5" : "opacity-60"}`} data-testid={`rule-${r.id}`}>
+                    <span className="font-medium">{describe(r)}</span>
+                    {r.repeat !== "NONE" && <span className="pg-chip bg-indigo-500/15 text-indigo-500">lặp</span>}
+                    {r.note && <span className="text-xs text-slate-400">{r.note}</span>}
+                    <span className="ml-auto flex items-center gap-2 text-xs">
+                      {!mine && <span className="text-slate-400">kế thừa · {SCOPE_LABEL[r.scope_type]}</span>}
+                      {manage && mine && <button onClick={() => remove(r)} className="text-red-500 hover:underline">Xóa</button>}
+                      {manage && !mine && <button onClick={() => override(r)} className="text-brand hover:underline" data-testid={`override-${r.id}`}>Ghi đè</button>}
+                    </span>
+                  </li>
+                );
+              })}
+              {selList.length === 0 && <li className="rounded-lg border border-dashed border-slate-200 px-3 py-4 text-center text-xs text-slate-400">Chưa đăng ký ngày nào cho "{selType.name}" trong {year}.</li>}
+            </ul>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-sm font-bold text-slate-800">Xem lịch đã kế thừa</h2>
-            <div className="flex gap-2">
-              <select value={preview.xn} onChange={(e) => setPreview({ ...preview, xn: e.target.value, line: "" })} className={inp} aria-label="Xem theo XN">
-                <option value="">Công ty</option>{factories.map((f) => <option key={f}>{f}</option>)}
-              </select>
-              {preview.xn && <input value={preview.line} onChange={(e) => setPreview({ ...preview, line: e.target.value })} placeholder="Chuyền" className={`${inp} w-20`} />}
-              <input type="month" value={preview.month} onChange={(e) => setPreview({ ...preview, month: e.target.value })} className={inp} />
-            </div>
-          </div>
-          <div className="grid grid-cols-7 gap-1 text-center text-[11px]">
-            {["T2", "T3", "T4", "T5", "T6", "T7", "CN"].map((d) => <div key={d} className="font-semibold text-slate-400">{d}</div>)}
-            {Array.from({ length: firstWeekday }).map((_, i) => <div key={`e${i}`} />)}
-            {days.map((d) => (
-              <div key={d.date} className={`rounded-md border border-slate-100 py-1.5 ${STATUS_CLS[d.status]}`} title={d.status}>
-                {Number(d.date.slice(8, 10))}
-                {d.status === "OVERTIME" && <span className="block text-[9px] font-bold">OT</span>}
+            {manage && (
+              <div className="mt-4 border-t border-slate-100 pt-4" data-testid={`form-${selType.code}`}>
+                <p className="mb-2 text-xs font-bold uppercase text-slate-400">Đăng ký chi tiết{scope.type !== "COMPANY" ? ` — ghi đè cho ${scopeName}` : ""}</p>
+                <div className="flex flex-wrap items-end gap-2">
+                  {selType.effect === "CHOICE" && (
+                    <select value={selForm.effect} onChange={(e) => setForm(selType, { effect: e.target.value as "WORKING" | "OFF" })} className={inp} aria-label={`Hiệu lực ${selType.name}`} data-testid={`effect-${selType.code}`}>
+                      <option value="WORKING">Làm việc</option><option value="OFF">Nghỉ</option>
+                    </select>
+                  )}
+                  <select value={selForm.mode} onChange={(e) => setForm(selType, { mode: e.target.value as Mode })} className={inp} aria-label={`Kiểu đăng ký ${selType.name}`} data-testid="mode">
+                    {(Object.keys(MODE_LABEL) as Mode[]).map((m) => <option key={m} value={m}>{MODE_LABEL[m]}</option>)}
+                  </select>
+                  {(selForm.mode === "DATE" || selForm.mode === "RANGE") && <input type="date" value={selForm.date} onChange={(e) => setForm(selType, { date: e.target.value })} className={inp} aria-label="Từ ngày" />}
+                  {selForm.mode === "RANGE" && <input type="date" value={selForm.end} min={selForm.date} onChange={(e) => setForm(selType, { end: e.target.value })} className={inp} aria-label="Đến ngày" />}
+                  {selForm.mode === "WEEKLY" && <select value={selForm.weekday} onChange={(e) => setForm(selType, { weekday: Number(e.target.value) })} className={inp} aria-label="Thứ">{WEEKDAYS.map((w, i) => <option key={w} value={i}>{w}</option>)}</select>}
+                  {selForm.mode === "YEARLY" && <select value={selForm.month} onChange={(e) => setForm(selType, { month: Number(e.target.value) })} className={inp} aria-label="Tháng">{MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}</select>}
+                  {(selForm.mode === "MONTHLY" || selForm.mode === "YEARLY") && <input type="number" min={1} max={31} value={selForm.mday} onChange={(e) => setForm(selType, { mday: Number(e.target.value) })} className={`${inp} w-20`} aria-label="Ngày trong tháng" />}
+                  {(selForm.mode === "WEEKLY" || selForm.mode === "MONTHLY" || selForm.mode === "YEARLY") && (
+                    <select value={selForm.span} onChange={(e) => setForm(selType, { span: e.target.value as "YEAR" | "ALWAYS" })} className={inp} aria-label="Phạm vi thời gian của quy tắc lặp">
+                      <option value="YEAR">Lặp lại trong năm {year}</option><option value="ALWAYS">Lặp lại mọi năm</option>
+                    </select>
+                  )}
+                  <input value={selForm.note} onChange={(e) => setForm(selType, { note: e.target.value })} placeholder="Ghi chú (VD: Quốc khánh)" className={`${inp} min-w-[160px] flex-1`} aria-label="Ghi chú" />
+                  <button onClick={() => add(selType)} className="rounded-lg bg-brand px-5 py-1.5 text-sm font-semibold text-white" data-testid={`add-${selType.code}`}>Đăng ký</button>
+                </div>
               </div>
-            ))}
-          </div>
-          <p className="mt-3 text-[11px] text-slate-400"><span className="mr-1 inline-block h-2 w-2 rounded bg-red-200" /> OFF <span className="ml-3 mr-1 inline-block h-2 w-2 rounded bg-amber-200" /> Overtime</p>
+            )}
+          </section>
         </div>
-      </div>
+      )}
+
+      {/* lịch cả năm: xem nhanh kết quả sau kế thừa / ghi đè */}
+      <details className="rounded-2xl border border-slate-200 bg-white p-4" open data-testid="year-grid">
+        <summary className="cursor-pointer text-sm font-bold">Lịch cả năm {year} — {scopeName} (kết quả sau kế thừa / ghi đè)</summary>
+        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {MONTHS.map((name, m) => {
+            const { lead, n } = monthCells(m);
+            return (
+              <div key={name} className="rounded-xl border border-slate-100 p-2">
+                <p className="mb-1 text-center text-xs font-bold text-slate-600">{name}</p>
+                <div className="grid grid-cols-7 gap-0.5 text-center text-[10px]">
+                  {WD_SHORT.map((d) => <div key={d} className="font-semibold text-slate-400">{d}</div>)}
+                  {Array.from({ length: lead }).map((_, i) => <div key={`e${i}`} />)}
+                  {Array.from({ length: n }).map((_, i) => {
+                    const date = `${year}-${pad(m + 1)}-${pad(i + 1)}`;
+                    const d = dayMap.get(date);
+                    const special = d && (d.status !== "WORKING" || d.day_type === "EXCEPTION");
+                    const tip = d ? `${vi(date)} — ${d.status === "WORKING" && !d.day_type ? "Làm việc" : d.day_type_name || EFFECT_LABEL[d.status]}${d.scope !== "DEFAULT" ? ` · ${SCOPE_LABEL[d.scope]}${d.inherited ? " (kế thừa)" : d.overrides ? " (ghi đè công ty)" : ""}` : ""}${d.note ? ` · ${d.note}` : ""}` : vi(date);
+                    return (
+                      <div key={date} title={tip} data-date={date} data-status={d?.status} data-type={d?.day_type ?? ""} data-inherited={d?.inherited ? "1" : "0"} className="h-6 rounded text-[11px] leading-6"
+                        style={{ background: special && d?.color ? `${d.color}44` : undefined, border: d?.overrides ? `2px solid ${d.color || "#0ea5e9"}` : "1px solid transparent", opacity: d?.inherited && special ? 0.7 : 1, color: special && d?.color ? d.color : undefined, fontWeight: special ? 700 : 400 }}>
+                        {i + 1}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
+          {activeTypes.map((t) => <span key={t.code}><span className="mr-1 inline-block h-2 w-2 rounded" style={{ background: t.color }} />{t.name}</span>)}
+          <span><span className="mr-1 inline-block h-2 w-3 rounded border-2 border-slate-400" />viền đậm = ghi đè lịch cấp trên</span><span>màu mờ = kế thừa</span>
+        </div>
+      </details>
+
+      {/* danh mục loại ngày */}
+      <details className="rounded-2xl border border-slate-200 bg-white p-4" open={types.length === 0} data-testid="day-types">
+        <summary className="cursor-pointer text-sm font-bold">Danh mục loại ngày (cấp công ty) — {types.length} loại</summary>
+        <p className="mb-3 mt-2 text-[11px] text-slate-400">Công ty đặt tên; xí nghiệp / chuyền dùng lại đúng các tên này. Đổi tên / màu áp dụng toàn hệ thống; loại đang được dùng thì không xóa được. Cột "kiểu thường dùng" chỉ gợi ý kiểu đăng ký mặc định — loại nào cũng đăng ký được theo ngày lẫn kiểu lặp.</p>
+        <div className="space-y-1.5">
+          {types.map((t) => (
+            <div key={t.code} className={`flex flex-wrap items-center gap-2 text-sm ${t.is_active ? "" : "opacity-50"}`}>
+              <input type="color" value={t.color} disabled={!manage} onChange={(e) => saveType(t.code, { color: e.target.value })} className="h-7 w-9 cursor-pointer rounded border border-slate-300 bg-transparent" aria-label={`Màu ${t.name}`} />
+              <input defaultValue={t.name} key={t.name} disabled={!manage} onBlur={(e) => e.target.value.trim() !== t.name && saveType(t.code, { name: e.target.value.trim() })} className={`${inp} w-52`} aria-label={`Tên ${t.code}`} data-testid={`type-name-${t.code}`} />
+              <span className="pg-chip bg-slate-500/20 text-slate-500">{t.effect === "CHOICE" ? "Làm việc hoặc Nghỉ" : EFFECT_LABEL[t.effect]}</span>
+              <span className="text-xs text-slate-400">{REC_LABEL[t.recurrence]}</span>
+              {manage && <label className="flex items-center gap-1 text-xs text-slate-500"><input type="checkbox" checked={t.is_active} onChange={(e) => saveType(t.code, { is_active: e.target.checked })} /> đang dùng</label>}
+              {manage && <button onClick={() => delType(t.code)} className="text-xs text-red-500 hover:underline">Xóa</button>}
+            </div>
+          ))}
+        </div>
+        {manage && (
+          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+            <input type="color" value={newType.color} onChange={(e) => setNewType({ ...newType, color: e.target.value })} className="h-7 w-9 cursor-pointer rounded border border-slate-300 bg-transparent" aria-label="Màu loại mới" />
+            <input value={newType.name} onChange={(e) => setNewType({ ...newType, name: e.target.value })} placeholder="Tên loại ngày mới (VD: Nghỉ bảo trì)" className={`${inp} w-64`} aria-label="Tên loại mới" />
+            <select value={newType.effect} onChange={(e) => setNewType({ ...newType, effect: e.target.value })} className={inp} aria-label="Hiệu lực">{Object.entries(EFFECT_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
+            <select value={newType.recurrence} onChange={(e) => setNewType({ ...newType, recurrence: e.target.value })} className={inp} aria-label="Kiểu thường dùng">{Object.entries(REC_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
+            <button onClick={addType} disabled={!newType.name.trim()} className="rounded-full bg-brand px-4 py-1.5 text-xs font-semibold text-white disabled:opacity-40">+ Thêm loại</button>
+            {types.length > 0 && <button onClick={templates} className="rounded-full border border-slate-300 px-3 py-1 text-xs">Bổ sung loại mẫu còn thiếu</button>}
+          </div>
+        )}
+      </details>
     </div>
   );
 }

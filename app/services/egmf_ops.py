@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 from app.models.core import Factory
 from app.models.data import PoPackDaily, PoProgress, QaDefectDaily, SyncRun
 from app.models.resources import LaborDaily, MachineRequirement, MachineType
-from app.services import actual_service
+from app.services import actual_service, labor_snapshot
 from app.services.sync_core import add_items
 
 log = logging.getLogger(__name__)
@@ -216,6 +216,7 @@ def sync_ops(db: Session, run: SyncRun, conn: Connection, fmap: dict[int, int]) 
         reqs = [dict(style_cc=str(r.style).strip()[:60], machine_type=str(r.machine).strip().upper()[:20], machine_name=str(r.machine)[:100], quantity=int(r.qty), source="QTCN")
                 for r in conn.execute(text(QTCN_SQL))]
         with db.begin_nested():
+            labor_snapshot.take_snapshot(db, run.id, labor)  # ảnh chụp riêng cho Dashboard
             for part in _chunks(labor, 1000):
                 stmt = pg_insert(LaborDaily).values(part)
                 db.execute(stmt.on_conflict_do_update(constraint="uq_labor_daily", set_={"total": stmt.excluded.total, "present": stmt.excluded.present, "sync_run_id": stmt.excluded.sync_run_id}))

@@ -13,6 +13,7 @@ from app.db.session import utcnow
 from app.models.actual import ActualMapping, ActualObservation
 from app.models.core import AuditLog, User
 from app.models.data import PlanImportBatch, RevenueDaily, SyncRun
+from app.models.labor_snapshot import LaborSnapshot
 from app.models.lifecycle import YearArchive
 from app.models.planning import PlanningEditSession, PlanningVersion, PlanningVersionRow
 from app.services import lifecycle
@@ -85,6 +86,9 @@ def snapshot(db: Session) -> dict:
         alert("WARNING", "PLAN_STALE", f"File kế hoạch nhập lần cuối cách đây {plan_age_days:.0f} ngày (> {settings.plan_stale_days} ngày)")
     last_obs = db.query(func.max(ActualObservation.observed_at)).scalar()
     latest_rev = db.query(func.max(RevenueDaily.report_date)).scalar()
+    snap = db.query(LaborSnapshot).order_by(LaborSnapshot.as_of_date.desc(), LaborSnapshot.id.desc()).first()
+    if snap is None:
+        alert("INFO", "NO_LABOR_SNAPSHOT", "Chưa có ảnh chụp lao động — Dashboard nhân sự đang dùng số liệu file Excel")
     ref = db.query(PlanningVersion).filter(PlanningVersion.status == "ISSUED").order_by(PlanningVersion.id.desc()).first()
     if ref is None:
         alert("INFO", "NO_ISSUED", "Chưa có phiên bản kế hoạch nào được Issue")
@@ -119,7 +123,7 @@ def snapshot(db: Session) -> dict:
         "database": {"ping_ms": ping_ms, "size_bytes": size},
         "sync": sync, "sync_failed_24h": failed_24h, "scheduler": {"enabled": settings.scheduler_enabled, "running": running},
         "data": {"plan_import_age_days": plan_age_days, "last_actual_observation": last_obs.isoformat() if last_obs else None, "issued_version": ref.code if ref else None,
-                 "latest_revenue_date": latest_rev.isoformat() if latest_rev else None,
+                 "latest_revenue_date": latest_rev.isoformat() if latest_rev else None, "labor_snapshot_as_of": snap.as_of_date.isoformat() if snap else None,
                  "mappings": {k: mappings.get(k, 0) for k in ("MATCHED", "REVIEW", "UNMATCHED", "OUT_OF_PLAN", "IGNORED")}},
         "security": {"failed_logins_24h": failed_logins, "locked_accounts": locked, "active_users": db.query(func.count(User.id)).filter(User.is_active.is_(True)).scalar(),
                      "edit_sessions_active": db.query(func.count(PlanningEditSession.id)).filter(PlanningEditSession.status == "ACTIVE").scalar()},

@@ -35,6 +35,14 @@ def _upgrade_schema() -> None:
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_count INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMP WITH TIME ZONE",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0",
+            "UPDATE calendar_day_types SET effect='CHOICE' WHERE code='EXCEPTION' AND effect='WORKING'",  # Ngoại lệ: hiệu lực chọn theo từng đăng ký (rule cũ giữ nguyên)
+            "ALTER TABLE working_calendar_rules ALTER COLUMN rule_type TYPE VARCHAR(16)",
+            "ALTER TABLE working_calendar_rules ADD COLUMN IF NOT EXISTS day_type VARCHAR(20) NOT NULL DEFAULT ''",
+            "ALTER TABLE working_calendar_rules ADD COLUMN IF NOT EXISTS rule_end_date DATE",
+            "ALTER TABLE working_calendar_rules ADD COLUMN IF NOT EXISTS month INTEGER",
+            "ALTER TABLE working_calendar_rules ADD COLUMN IF NOT EXISTS month_day INTEGER",
+            "ALTER TABLE working_calendar_rules ADD COLUMN IF NOT EXISTS valid_from DATE",
+            "ALTER TABLE working_calendar_rules ADD COLUMN IF NOT EXISTS valid_to DATE",
             "ALTER TABLE actual_mappings ALTER COLUMN status TYPE VARCHAR(16)",
             "ALTER TABLE actual_mappings ALTER COLUMN method TYPE VARCHAR(24)",
         ):
@@ -72,8 +80,11 @@ def run_seed() -> None:
                 admin.must_change_password = True  # vẫn dùng mật khẩu mặc định -> buộc đổi
                 log.warning("Tài khoản admin vẫn dùng mật khẩu mặc định — đã bật bắt buộc đổi mật khẩu")
 
-        if db.query(WorkingCalendarRule).count() == 0:  # mặc định Company: Chủ nhật nghỉ (admin chỉnh trong lịch làm việc)
-            db.add(WorkingCalendarRule(scope_type="COMPANY", scope_key="", rule_type="WEEKLY_OFF", weekday=6, note="Chủ nhật nghỉ", created_by="system"))
+        # Lịch làm việc và danh mục loại ngày do NGƯỜI DÙNG định nghĩa — hệ thống không nạp sẵn dữ liệu nào vào DB.
+
+        from app.services import labor_snapshot
+
+        labor_snapshot.backfill_from_labor_daily(db)  # lần đầu: dựng ảnh chụp lao động từ dữ liệu eGMF đã lưu
 
         if not db.get(SsoConfig, 1):
             db.add(SsoConfig(id=1))
