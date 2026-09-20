@@ -1,128 +1,126 @@
-import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { RevenueOverview, Tile } from "../api/client";
-import { dateVi, num, pct } from "../lib/format";
-import Gauge, { gaugeColor } from "./Gauge";
+import { useState } from "react";
+import { RevenueOverview, RevenueSummaryRow } from "../api/client";
+import { num } from "../lib/format";
 import Section from "./Section";
 
 interface Props {
   data: RevenueOverview;
-  today: string;
-  onDrill: () => void;
+  onDrill: (factoryCode: string) => void;
 }
 
-function TileBody({ tile, unit }: { tile: Tile; unit: string }) {
-  return (
-    <dl className="mt-1 w-full space-y-0.5 text-xs">
-      <div className="flex justify-between">
-        <dt className="text-slate-500">Thực hiện</dt>
-        <dd className="font-semibold text-slate-900">{num(tile.actual)}</dd>
-      </div>
-      <div className="flex justify-between">
-        <dt className="text-slate-500">Kế hoạch</dt>
-        <dd className="text-slate-700">{num(tile.plan)}</dd>
-      </div>
-      <div className="flex justify-between">
-        <dt className="text-slate-500">Còn lại</dt>
-        <dd className="text-slate-700">{num(tile.remaining)}</dd>
-      </div>
-      <p className="pt-0.5 text-right text-[10px] text-slate-400">{unit}</p>
-    </dl>
-  );
-}
+type Period = "month" | "ytd";
 
-export default function RevenueSection({ data, today, onDrill }: Props) {
-  const [y, m] = data.month.split("-");
-  const t = new Date(today);
-  const dayOfYear = Math.floor((t.getTime() - new Date(t.getFullYear(), 0, 0).getTime()) / 86400000);
-  const yearElapsed = t.getFullYear() === Number(y) ? (dayOfYear / 365) * 100 : 100;
-  const empty: Tile = { plan: null, actual: null, remaining: null, pct: null };
+const TICKS = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
 
-  const chart = data.trend.map((p) => ({
-    day: Number(p.date.slice(8, 10)),
-    date: p.date,
-    "Kế hoạch": p.plan,
-    "Thực hiện": p.actual,
-  }));
+/** Một dòng so sánh kiểu 100%: phần đậm = % đạt, phần nhạt = giá trị thực hiện, ô bên phải = kế hoạch. */
+function ComparisonRow({ row, unit, period, onDrill }: { row: RevenueSummaryRow; unit: string; period: Period; onDrill: (code: string) => void }) {
+  const total = row.kind === "TOTAL";
+  const pct = row.pct;
+  const fill = Math.max(0, Math.min(100, pct ?? 0));
+  const pctText = pct === null ? "—" : `${Math.round(pct)}%`;
+  const narrow = fill < 14; // vùng đậm quá hẹp để chứa chữ → hiện % ở phần nhạt
+  const label = `${row.label}: ${pctText}, thực hiện ${num(row.actual)} ${unit}`;
 
   return (
-    <Section
-      title="Doanh thu / Thực hiện"
-      subtitle={`Tháng ${m}/${y} · đơn vị ${data.unit}`}
-      right={
-        <button onClick={onDrill} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
-          Xem chi tiết theo ngày
-        </button>
-      }
+    <div
+      className={`flex items-center gap-3 rounded-lg ${total ? "border-t border-slate-200 pt-4" : "cursor-pointer transition hover:bg-indigo-50/60"}`}
+      {...(total
+        ? { role: "img" }
+        : {
+            role: "button",
+            tabIndex: 0,
+            onClick: () => onDrill(row.code),
+            onKeyDown: (e: React.KeyboardEvent) => (e.key === "Enter" || e.key === " ") && onDrill(row.code),
+          })}
+      aria-label={total ? label : `${label}. Bấm để xem chi tiết ${row.code}`}
+      data-testid={`rev-row-${row.code}`}
     >
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <Gauge label="Ngày gần nhất" sublabel={data.day ? dateVi(data.day.date) : "Chưa có số liệu"} pct={data.day?.pct ?? null} expected={90} onClick={onDrill}>
-          <TileBody tile={data.day ?? empty} unit={data.unit} />
-        </Gauge>
-        <Gauge label={`Tháng ${m}`} sublabel={`Thời gian đã qua ${data.elapsed_pct.toFixed(0)}%`} pct={data.month_tile.pct} expected={data.elapsed_pct} onClick={onDrill}>
-          <TileBody tile={data.month_tile} unit={data.unit} />
-        </Gauge>
-        <Gauge label={`Năm ${y}`} sublabel={`Thời gian đã qua ${yearElapsed.toFixed(0)}%`} pct={data.year_tile.pct} expected={yearElapsed} onClick={onDrill}>
-          <TileBody tile={data.year_tile} unit={data.unit} />
-        </Gauge>
+      <div className={`w-28 shrink-0 text-sm sm:w-36 ${total ? "font-bold text-slate-900" : "font-semibold text-slate-700"}`}>
+        {row.code === "TONG" ? "Tổng công ty" : row.code}
+        {row.kind === "FACTORY" && <span className="hidden text-xs font-normal text-slate-400 sm:inline"> · {row.label}</span>}
       </div>
 
-      <div className="mt-5">
-        <p className="mb-2 text-xs font-semibold text-slate-500">Kế hoạch vs Thực hiện theo ngày (bấm cột để xem chi tiết)</p>
-        <ResponsiveContainer width="100%" height={240}>
-          <BarChart data={chart} onClick={onDrill} margin={{ left: -10, right: 4 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-            <XAxis dataKey="day" tick={{ fontSize: 11 }} />
-            <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => (v >= 1000 ? `${Math.round(v / 1000)}k` : String(v))} />
-            <Tooltip
-              formatter={(v) => num(v as number)}
-              labelFormatter={(_, p) => (p?.[0]?.payload?.date ? dateVi(p[0].payload.date) : "")}
-            />
-            <Legend />
-            <Bar dataKey="Kế hoạch" fill="#c7d2fe" radius={[3, 3, 0, 0]} cursor="pointer" />
-            <Bar dataKey="Thực hiện" fill="#4f46e5" radius={[3, 3, 0, 0]} cursor="pointer" />
-          </BarChart>
-        </ResponsiveContainer>
+      <div className={`relative flex-1 overflow-hidden rounded-lg border-2 border-indigo-800 bg-cyan-100 ${total ? "h-12" : "h-10"}`}>
+        {row.declared ? (
+          <>
+            <div className="absolute inset-y-0 left-0 flex items-center justify-end bg-indigo-800 pr-2 text-sm font-bold text-white" style={{ width: `${fill}%` }}>
+              {!narrow && pctText}
+            </div>
+            <div className="absolute inset-y-0 flex items-center pl-3 text-sm font-medium text-indigo-900" style={{ left: `${fill}%` }}>
+              {narrow && <span className="mr-2 font-bold">{pctText}</span>}
+              {num(row.actual)}
+            </div>
+          </>
+        ) : (
+          <div className="flex h-full items-center pl-3 text-sm text-amber-700">{period === "ytd" ? "Chưa khai báo doanh thu năm" : "Chưa khai báo doanh thu tháng"}</div>
+        )}
       </div>
 
-      <div className="mt-4 overflow-x-auto">
-        <table className="w-full text-left text-sm">
-          <thead>
-            <tr className="border-b border-slate-100 text-xs uppercase text-slate-400">
-              <th className="py-2">Đơn vị</th>
-              <th className="py-2 text-right">Tháng: thực hiện / kế hoạch</th>
-              <th className="py-2 pl-4">% tháng</th>
-              <th className="py-2 pl-4">% năm</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.by_factory.map((f) => (
-              <tr key={f.code} className="border-b border-slate-50">
-                <td className="py-2 font-medium text-slate-800">{f.name}</td>
-                <td className="py-2 text-right text-slate-700">
-                  {f.month_declared ? `${num(f.month_actual)} / ${num(f.month_plan)}` : <span className="text-amber-600">Chưa khai báo</span>}
-                </td>
-                <td className="py-2 pl-4">
-                  <Bar100 value={f.month_pct} expected={data.elapsed_pct} />
-                </td>
-                <td className="py-2 pl-4">
-                  <Bar100 value={f.year_pct} expected={yearElapsed} />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div
+        className={`flex shrink-0 items-center justify-center rounded-lg border-2 border-indigo-800 bg-cyan-100 px-3 text-sm font-medium text-indigo-900 ${total ? "h-12 min-w-[92px]" : "h-10 min-w-[92px]"}`}
+        title="Kế hoạch"
+      >
+        {num(row.plan)}
       </div>
-    </Section>
+    </div>
   );
 }
 
-function Bar100({ value, expected }: { value: number | null; expected: number }) {
+/** Tóm tắt điều hành: chỉ so sánh nhanh. Biểu đồ/phân tích theo ngày nằm trong drill-down (bấm vào khối này). */
+export default function RevenueSection({ data, onDrill }: Props) {
+  const [y, m] = data.month.split("-");
+  const [period, setPeriod] = useState<Period>("month");
+  const rows = period === "ytd" ? data.summary_ytd : data.summary;
+  const total = rows.find((r) => r.kind === "TOTAL");
+  const missing = total?.missing ?? [];
+
   return (
-    <div className="flex items-center gap-2">
-      <div className="h-2 w-24 overflow-hidden rounded-full bg-slate-100">
-        <div className="h-full rounded-full" style={{ width: `${Math.min(100, value ?? 0)}%`, backgroundColor: gaugeColor(value, expected) }} />
-      </div>
-      <span className="w-14 text-xs text-slate-600">{pct(value)}</span>
+    <div>
+      <Section
+        title="Doanh thu / Thực hiện"
+        subtitle={`${period === "ytd" ? `Lũy kế năm ${data.year}` : `Tháng ${m}/${y}`} · % đạt so với kế hoạch ${period === "ytd" ? "năm" : "tháng"} ${period === "ytd" ? "" : `· thời gian đã qua ${data.elapsed_pct.toFixed(0)}% `}· đơn vị ${data.unit}`}
+        right={
+          <div className="flex items-center gap-2">
+            <div className="inline-flex overflow-hidden rounded-lg border border-slate-200 text-xs font-medium" role="group" aria-label="Kỳ xem doanh thu">
+              {([["month", "Tháng hiện tại"], ["ytd", "Lũy kế"]] as const).map(([k, label]) => (
+                <button
+                  key={k}
+                  type="button"
+                  aria-pressed={period === k}
+                  onClick={() => setPeriod(k)}
+                  className={`px-3 py-1.5 ${period === k ? "bg-indigo-800 text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <span className="hidden text-xs text-slate-400 sm:inline">Bấm vào từng xí nghiệp để xem chi tiết</span>
+          </div>
+        }
+      >
+        <div className="flex items-end gap-3 pb-1">
+          <div className="w-28 shrink-0 sm:w-36" />
+          <div className="relative h-4 flex-1">
+            {TICKS.map((t) => (
+              <span key={t} className="absolute top-0 -translate-x-1/2 text-[10px] text-slate-400" style={{ left: `${t}%` }}>
+                {t % 20 === 0 ? `${t}%` : ""}
+                <span className="mx-auto block h-1.5 w-px bg-slate-300" />
+              </span>
+            ))}
+          </div>
+          <div className="min-w-[92px] shrink-0 text-center text-[10px] font-semibold uppercase text-slate-400">Kế hoạch</div>
+        </div>
+
+        <div className="space-y-3">
+          {rows.map((row) => (
+            <ComparisonRow key={row.code} row={row} unit={data.unit} period={period} onDrill={onDrill} />
+          ))}
+        </div>
+
+        {missing.length > 0 && total?.declared && (
+          <p className="mt-3 text-[11px] text-amber-600">Tổng công ty chưa gồm {missing.join(", ")} (chưa khai báo doanh thu {period === "ytd" ? "năm" : "tháng"}).</p>
+        )}
+      </Section>
     </div>
   );
 }

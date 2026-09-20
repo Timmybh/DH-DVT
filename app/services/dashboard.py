@@ -127,6 +127,43 @@ def revenue_overview(db: Session, factories: list[Factory], year: int, month: in
     }
 
 
+def revenue_summary(
+    db: Session, all_factories: list[Factory], selected: list[Factory], is_total: bool, year: int, month: int, period: str = "month"
+) -> dict:
+    """Tóm tắt điều hành cho dashboard chính. period="month": tháng đang chọn; period="ytd": lũy kế cả năm (bảng DoanhThu_Nam).
+
+    Góc nhìn Tổng công ty: XN1, XN2, XN3 + Tổng công ty. Góc nhìn Xí nghiệp: chỉ XN đang chọn + Tổng công ty.
+    Dòng "Tổng công ty" luôn cộng dồn từ TẤT CẢ đơn vị, không phụ thuộc XN đang xem.
+    """
+    fids = [f.id for f in all_factories]
+    if period == "ytd":
+        q = db.query(RevenueYearly).filter(RevenueYearly.factory_id.in_(fids), RevenueYearly.year == year)
+    else:
+        q = db.query(RevenueMonthly).filter(RevenueMonthly.factory_id.in_(fids), RevenueMonthly.year == year, RevenueMonthly.month == month)
+    monthly = {r.factory_id: r for r in q}
+
+    def row(f: Factory) -> dict:
+        m = monthly.get(f.id)
+        return {
+            "code": f.code, "label": f.name, "kind": "FACTORY", "declared": m is not None,
+            "plan": m.plan if m else None, "actual": m.actual if m else None,
+            "pct": safe_pct(m.actual, m.plan) if m else None, "selected": (not is_total) and f.id == selected[0].id,
+        }
+
+    rows = [row(f) for f in (all_factories if is_total else selected)]
+    declared = [monthly[f.id] for f in all_factories if f.id in monthly]
+    plan, actual = _sum(r.plan for r in declared), _sum(r.actual for r in declared)
+    rows.append(
+        {
+            "code": "TONG", "label": "Tổng công ty", "kind": "TOTAL", "declared": bool(declared),
+            "plan": plan, "actual": actual, "pct": safe_pct(actual, plan), "selected": False,
+            "missing": [f.code for f in all_factories if f.id not in monthly],
+        }
+    )
+    used = [monthly[f.id] for f in all_factories if f.id in monthly and (is_total or f.id == selected[0].id)]
+    return {"rows": rows, "has_demo": any(r.source == "DEMO" for r in (declared if is_total else used + declared))}
+
+
 def current_batch(db: Session) -> PlanImportBatch | None:
     return db.query(PlanImportBatch).filter(PlanImportBatch.is_current.is_(True)).order_by(PlanImportBatch.id.desc()).first()
 
@@ -311,7 +348,15 @@ def drill_revenue(db: Session, factories: list[Factory], year: int, month: int) 
         d["plan"] = (d["plan"] or 0) + (r.plan or 0) if r.plan is not None or d["plan"] is not None else None
         d["actual"] = (d["actual"] or 0) + (r.actual or 0) if r.actual is not None or d["actual"] is not None else None
         d["factories"][code[r.factory_id]] = {"plan": r.plan, "actual": r.actual}
-    return {"unit": settings.revenue_unit, "codes": [f.code for f in factories], "rows": list(by_date.values())}
+    today = today_local()
+    return {
+        "unit": settings.revenue_unit,
+        "codes": [f.code for f in factories],
+        "rows": list(by_date.values()),
+        "today": today.isoformat(),
+        # chi tiết chỉ hiện trong drill-down: 3 gauge Ngày/Tháng/Năm, biểu đồ theo ngày, bảng theo đơn vị
+        "detail": revenue_overview(db, factories, year, month, today),
+    }
 
 
 def drill_hr(db: Session, factories: list[Factory], is_total: bool) -> dict:

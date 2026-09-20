@@ -33,7 +33,7 @@ export default function SyncDetail() {
     setRetrying(true);
     try {
       const res = await api.post<SyncRun>(`/sync/runs/${run.id}/retry`);
-      navigate(`/sync/${res.data.id}`);
+      navigate(`/admin/sync/${res.data.id}`);
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -56,7 +56,7 @@ export default function SyncDetail() {
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <Link to="/sync" className="text-xs text-brand hover:underline">← Sync Log</Link>
+          <Link to="/admin/sync" className="text-xs text-brand hover:underline">← Sync Log</Link>
           <h1 className="mt-1 flex items-center gap-3 text-xl font-bold text-slate-900">
             <span className="font-mono">{run.run_code}</span> <StatusBadge status={run.status} />
           </h1>

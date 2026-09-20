@@ -54,7 +54,8 @@ export interface RevenueFactory {
   year_pct: number | null;
 }
 
-export interface RevenueOverview {
+// Chi tiết doanh thu (chỉ dùng trong drill-down): 3 gauge, biểu đồ theo ngày, bảng theo đơn vị
+export interface RevenueDetailData {
   unit: string;
   month: string;
   elapsed_pct: number;
@@ -66,6 +67,30 @@ export interface RevenueOverview {
   has_demo: boolean;
   latest_actual_date: string | null;
   undeclared_month: string[];
+}
+
+export interface RevenueSummaryRow {
+  code: string;
+  label: string;
+  kind: "FACTORY" | "TOTAL";
+  declared: boolean;
+  plan: number | null;
+  actual: number | null;
+  pct: number | null;
+  selected: boolean;
+  missing?: string[];
+}
+
+// Bản tóm tắt điều hành trên dashboard chính
+export interface RevenueOverview {
+  unit: string;
+  month: string;
+  elapsed_pct: number;
+  has_demo: boolean;
+  latest_actual_date: string | null;
+  year: number;
+  summary: RevenueSummaryRow[];
+  summary_ytd: RevenueSummaryRow[];
 }
 
 export interface ProgressOverview {

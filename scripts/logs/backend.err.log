@@ -1,0 +1,36 @@
+2026-09-20 12:51:02,336 INFO dvt: Phục vụ frontend từ D:\Source\DH-DVT\frontend\dist
+INFO:     Started server process [34312]
+INFO:     Waiting for application startup.
+2026-09-20 12:51:02,901 INFO apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-09-20 12:51:02,949 INFO apscheduler.scheduler: Added job "_tick" to job store "default"
+2026-09-20 12:51:02,949 INFO apscheduler.scheduler: Scheduler started
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8010 (Press CTRL+C to quit)
+2026-09-20 12:51:22,916 INFO apscheduler.executors.default: Running job "_tick (trigger: interval[0:01:00], next run at: 2026-09-20 12:51:22 +07)" (scheduled at 2026-09-20 12:51:22.901084+07:00)
+2026-09-20 12:51:22,975 INFO apscheduler.executors.default: Job "_tick (trigger: interval[0:01:00], next run at: 2026-09-20 12:52:22 +07)" executed successfully
+2026-09-20 12:52:22,906 INFO apscheduler.executors.default: Running job "_tick (trigger: interval[0:01:00], next run at: 2026-09-20 12:53:22 +07)" (scheduled at 2026-09-20 12:52:22.901084+07:00)
+2026-09-20 12:52:22,959 INFO apscheduler.executors.default: Job "_tick (trigger: interval[0:01:00], next run at: 2026-09-20 12:53:22 +07)" executed successfully
+2026-09-20 12:53:22,905 INFO apscheduler.executors.default: Running job "_tick (trigger: interval[0:01:00], next run at: 2026-09-20 12:54:22 +07)" (scheduled at 2026-09-20 12:53:22.901084+07:00)
+2026-09-20 12:53:22,952 INFO apscheduler.executors.default: Job "_tick (trigger: interval[0:01:00], next run at: 2026-09-20 12:54:22 +07)" executed successfully
+2026-09-20 12:54:22,906 INFO apscheduler.executors.default: Running job "_tick (trigger: interval[0:01:00], next run at: 2026-09-20 12:55:22 +07)" (scheduled at 2026-09-20 12:54:22.901084+07:00)
+2026-09-20 12:54:22,978 INFO apscheduler.executors.default: Job "_tick (trigger: interval[0:01:00], next run at: 2026-09-20 12:55:22 +07)" executed successfully
+2026-09-20 12:55:22,913 INFO apscheduler.executors.default: Running job "_tick (trigger: interval[0:01:00], next run at: 2026-09-20 12:56:22 +07)" (scheduled at 2026-09-20 12:55:22.901084+07:00)
+2026-09-20 12:55:22,956 INFO apscheduler.executors.default: Job "_tick (trigger: interval[0:01:00], next run at: 2026-09-20 12:56:22 +07)" executed successfully
+2026-09-20 12:56:22,918 INFO apscheduler.executors.default: Running job "_tick (trigger: interval[0:01:00], next run at: 2026-09-20 12:57:22 +07)" (scheduled at 2026-09-20 12:56:22.901084+07:00)
+2026-09-20 12:56:22,967 INFO apscheduler.executors.default: Job "_tick (trigger: interval[0:01:00], next run at: 2026-09-20 12:57:22 +07)" executed successfully
+2026-09-20 12:57:22,905 INFO apscheduler.executors.default: Running job "_tick (trigger: interval[0:01:00], next run at: 2026-09-20 12:58:22 +07)" (scheduled at 2026-09-20 12:57:22.901084+07:00)
+2026-09-20 12:57:22,954 INFO apscheduler.executors.default: Job "_tick (trigger: interval[0:01:00], next run at: 2026-09-20 12:58:22 +07)" executed successfully
+2026-09-20 12:58:22,910 INFO apscheduler.executors.default: Running job "_tick (trigger: interval[0:01:00], next run at: 2026-09-20 12:59:22 +07)" (scheduled at 2026-09-20 12:58:22.901084+07:00)
+2026-09-20 12:58:22,918 INFO apscheduler.executors.default: Job "_tick (trigger: interval[0:01:00], next run at: 2026-09-20 12:59:22 +07)" executed successfully
+2026-09-20 12:59:22,906 INFO apscheduler.executors.default: Running job "_tick (trigger: interval[0:01:00], next run at: 2026-09-20 13:00:22 +07)" (scheduled at 2026-09-20 12:59:22.901084+07:00)
+2026-09-20 12:59:22,951 INFO apscheduler.executors.default: Job "_tick (trigger: interval[0:01:00], next run at: 2026-09-20 13:00:22 +07)" executed successfully
+2026-09-20 13:00:22,918 INFO apscheduler.executors.default: Running job "_tick (trigger: interval[0:01:00], next run at: 2026-09-20 13:01:22 +07)" (scheduled at 2026-09-20 13:00:22.901084+07:00)
+2026-09-20 13:00:22,965 INFO apscheduler.executors.default: Job "_tick (trigger: interval[0:01:00], next run at: 2026-09-20 13:01:22 +07)" executed successfully
+2026-09-20 13:01:22,909 INFO apscheduler.executors.default: Running job "_tick (trigger: interval[0:01:00], next run at: 2026-09-20 13:02:22 +07)" (scheduled at 2026-09-20 13:01:22.901084+07:00)
+2026-09-20 13:01:22,957 INFO apscheduler.executors.default: Job "_tick (trigger: interval[0:01:00], next run at: 2026-09-20 13:02:22 +07)" executed successfully
+2026-09-20 13:02:22,913 INFO apscheduler.executors.default: Running job "_tick (trigger: interval[0:01:00], next run at: 2026-09-20 13:03:22 +07)" (scheduled at 2026-09-20 13:02:22.901084+07:00)
+2026-09-20 13:02:22,961 INFO apscheduler.executors.default: Job "_tick (trigger: interval[0:01:00], next run at: 2026-09-20 13:03:22 +07)" executed successfully
+2026-09-20 13:03:22,913 INFO apscheduler.executors.default: Running job "_tick (trigger: interval[0:01:00], next run at: 2026-09-20 13:04:22 +07)" (scheduled at 2026-09-20 13:03:22.901084+07:00)
+2026-09-20 13:03:22,950 INFO apscheduler.executors.default: Job "_tick (trigger: interval[0:01:00], next run at: 2026-09-20 13:04:22 +07)" executed successfully
+2026-09-20 13:04:22,909 INFO apscheduler.executors.default: Running job "_tick (trigger: interval[0:01:00], next run at: 2026-09-20 13:05:22 +07)" (scheduled at 2026-09-20 13:04:22.901084+07:00)
+2026-09-20 13:04:22,956 INFO apscheduler.executors.default: Job "_tick (trigger: interval[0:01:00], next run at: 2026-09-20 13:05:22 +07)" executed successfully

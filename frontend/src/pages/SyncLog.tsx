@@ -144,7 +144,7 @@ export default function SyncLog() {
           </thead>
           <tbody>
             {runs.map((r) => (
-              <tr key={r.id} onClick={() => navigate(`/sync/${r.id}`)} className="cursor-pointer border-b border-slate-50 hover:bg-slate-50">
+              <tr key={r.id} onClick={() => navigate(`/admin/sync/${r.id}`)} className="cursor-pointer border-b border-slate-50 hover:bg-slate-50">
                 <td className="px-4 py-3 font-mono text-xs font-semibold text-brand">{r.run_code}{r.retry_of ? " ↻" : ""}</td>
                 <td>{dateTimeVi(r.started_at)}</td>
                 <td>{SOURCE_LABEL[r.source] ?? r.source}</td>

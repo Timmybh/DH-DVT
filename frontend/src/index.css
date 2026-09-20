@@ -3,5 +3,66 @@
 @tailwind utilities;
 
 body {
-  @apply bg-slate-50 text-slate-800;
+  @apply bg-[#070d1c] text-slate-800;
 }
+
+/* ===== Giao diện tối (xanh navy, chữ sáng, nút viền) — áp dụng cho vùng đăng nhập rồi ===== */
+body { font-family: "Montserrat", "Segoe UI", system-ui, sans-serif; color: #e2e8f0; }
+
+.dvt-dark { color-scheme: dark; color: #e2e8f0; }
+.dvt-dark h1 { text-transform: uppercase; letter-spacing: .04em; color: #fff !important; }
+
+/* Thẻ / bảng: kính mờ tối */
+.dvt-dark .bg-white,
+.dvt-dark .bg-white\/90 { background-color: rgba(18, 28, 56, .72) !important; border-color: rgba(255,255,255,.12) !important; backdrop-filter: blur(6px); }
+.dvt-dark .bg-slate-50,
+.dvt-dark .bg-slate-100,
+.dvt-dark .hover\:bg-slate-50:hover,
+.dvt-dark .hover\:bg-white:hover { background-color: rgba(255,255,255,.06) !important; }
+.dvt-dark .bg-slate-200 { background-color: rgba(255,255,255,.14) !important; }
+
+/* Chữ */
+.dvt-dark .text-slate-900, .dvt-dark .text-slate-800, .dvt-dark .text-slate-700 { color: #f1f5f9 !important; }
+.dvt-dark .text-slate-600 { color: #cbd5e1 !important; }
+.dvt-dark .text-slate-500, .dvt-dark .text-slate-400 { color: #94a3b8 !important; }
+.dvt-dark .text-brand { color: #a5b4fc !important; }
+
+/* Viền */
+.dvt-dark .border-slate-100, .dvt-dark .border-slate-200, .dvt-dark .border-slate-300,
+.dvt-dark .divide-slate-100 > :not([hidden]) ~ :not([hidden]) { border-color: rgba(255,255,255,.12) !important; }
+
+/* Nút viền trắng, bo tròn như mẫu */
+.dvt-dark button.border { border-color: rgba(255,255,255,.45); }
+.dvt-dark button.border:hover { background-color: rgba(255,255,255,.1) !important; }
+
+/* Ô nhập */
+.dvt-dark input, .dvt-dark select, .dvt-dark textarea { background-color: rgba(255,255,255,.07) !important; color: #f1f5f9; border-color: rgba(255,255,255,.25) !important; }
+.dvt-dark input::placeholder { color: #94a3b8; }
+
+/* Biểu đồ recharts */
+.dvt-dark .recharts-text, .dvt-dark .recharts-legend-item-text { fill: #cbd5e1 !important; color: #cbd5e1 !important; }
+.dvt-dark .recharts-cartesian-grid line { stroke: rgba(255,255,255,.1); }
+
+/* Hàng bảng khi rê chuột */
+.dvt-dark tr:hover { background-color: rgba(255,255,255,.04); }
+
+/* Nền: gradient navy + các đường sóng mờ */
+.dvt-bg {
+  background:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='1600' height='900' viewBox='0 0 1600 900' fill='none' stroke='%2394a3b8' stroke-opacity='.10'><g><path d='M0 640 C300 520 520 760 820 600 S1300 420 1600 560'/><path d='M0 660 C300 540 520 780 820 620 S1300 440 1600 580'/><path d='M0 680 C300 560 520 800 820 640 S1300 460 1600 600'/><path d='M0 700 C300 580 520 820 820 660 S1300 480 1600 620'/><path d='M0 720 C300 600 520 840 820 680 S1300 500 1600 640'/><path d='M0 740 C300 620 520 860 820 700 S1300 520 1600 660'/></g></svg>") center bottom / cover no-repeat fixed,
+    radial-gradient(ellipse at 50% -10%, #1e2a4a 0%, #0f1830 45%, #070d1c 100%) fixed;
+}
+
+/* Khối cảnh báo màu: nền tối pha màu, chữ sáng */
+.dvt-dark .bg-red-50 { background-color: rgba(239,68,68,.16) !important; border-color: rgba(248,113,113,.45) !important; }
+.dvt-dark .bg-green-50, .dvt-dark .bg-emerald-50 { background-color: rgba(34,197,94,.14) !important; border-color: rgba(74,222,128,.4) !important; }
+.dvt-dark .bg-amber-50, .dvt-dark .bg-orange-50, .dvt-dark .bg-yellow-50 { background-color: rgba(245,158,11,.15) !important; border-color: rgba(251,191,36,.45) !important; }
+.dvt-dark .bg-red-50 *, .dvt-dark .bg-green-50 *, .dvt-dark .bg-emerald-50 *, .dvt-dark .bg-amber-50 *, .dvt-dark .bg-orange-50 *, .dvt-dark .bg-yellow-50 * { color: #f1f5f9; }
+.dvt-dark .bg-red-50 .text-slate-500, .dvt-dark .bg-amber-50 .text-slate-500, .dvt-dark .bg-orange-50 .text-slate-500, .dvt-dark .bg-green-50 .text-slate-500 { color: #cbd5e1 !important; }
+.dvt-dark .text-red-700, .dvt-dark .text-red-800 { color: #fca5a5 !important; }
+.dvt-dark .text-green-700, .dvt-dark .text-green-800 { color: #86efac !important; }
+.dvt-dark .text-orange-800, .dvt-dark .text-amber-700, .dvt-dark .text-amber-600 { color: #fcd34d !important; }
+/* chip trạng thái giữ nền sáng + chữ tối */
+.dvt-dark [class*="rounded-full"][class*="bg-"] * { color: inherit; }
+.dvt-dark .bg-sky-50, .dvt-dark .bg-blue-50, .dvt-dark .bg-indigo-50, .dvt-dark .bg-cyan-50 { background-color: rgba(56,189,248,.14) !important; border-color: rgba(125,211,252,.4) !important; }
+.dvt-dark .bg-sky-50 *, .dvt-dark .bg-blue-50 *, .dvt-dark .bg-indigo-50 *, .dvt-dark .bg-cyan-50 * { color: #f1f5f9; }

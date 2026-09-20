@@ -22,6 +22,24 @@ def meta(db: Session = Depends(get_db), _: User = Viewer):
     }
 
 
+def _revenue_summary_payload(db: Session, factories, is_total: bool, year: int, mon: int, today) -> dict:
+    """Dashboard chính chỉ nhận bản tóm tắt điều hành; số liệu theo ngày nằm ở drill-down."""
+    all_factories, _ = svc.scope_factories(db, "TONG")
+    full = svc.revenue_overview(db, factories, year, mon, today)
+    summary = svc.revenue_summary(db, all_factories, factories, is_total, year, mon)
+    summary_ytd = svc.revenue_summary(db, all_factories, factories, is_total, year, mon, "ytd")
+    return {
+        "unit": full["unit"],
+        "month": full["month"],
+        "elapsed_pct": full["elapsed_pct"],
+        "latest_actual_date": full["latest_actual_date"],
+        "has_demo": summary["has_demo"] or summary_ytd["has_demo"] or full["has_demo"],
+        "year": year,
+        "summary": summary["rows"],
+        "summary_ytd": summary_ytd["rows"],
+    }
+
+
 @router.get("/overview")
 def overview(scope: str = "TONG", month: str | None = None, db: Session = Depends(get_db), _: User = Viewer):
     today = svc.today_local()
@@ -32,7 +50,7 @@ def overview(scope: str = "TONG", month: str | None = None, db: Session = Depend
         "scope_name": "Tổng công ty" if is_total else factories[0].name,
         "month": f"{year}-{mon:02d}",
         "today": today.isoformat(),
-        "revenue": svc.revenue_overview(db, factories, year, mon, today),
+        "revenue": _revenue_summary_payload(db, factories, is_total, year, mon, today),
         "progress": svc.progress_overview(db, factories, is_total),
         "hr": svc.hr_overview(db, factories, is_total),
         "sync": {

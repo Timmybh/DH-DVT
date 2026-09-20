@@ -57,8 +57,8 @@ export default function Dashboard() {
   }, [load]);
 
   const handleSignalDrill = (d: Drill) => {
-    if (d.kind === "sync_run") navigate(`/sync/${d.id}`);
-    else if (d.kind === "sync_log") navigate("/sync");
+    if (d.kind === "sync_run") navigate(`/admin/sync/${d.id}`);
+    else if (d.kind === "sync_log") navigate("/admin/sync");
     else if (d.kind === "revenue") setDrill({ type: "revenue", month: d.month });
     else if (d.kind === "po") setDrill({ type: "po", risk: d.risk });
   };
@@ -125,7 +125,7 @@ export default function Dashboard() {
       {overview && (
         <div className="flex flex-col gap-5 xl:flex-row xl:items-start">
           <div className="min-w-0 flex-1 space-y-5">
-            <RevenueSection data={overview.revenue} today={overview.today} onDrill={() => setDrill({ type: "revenue", month: overview.month })} />
+            <RevenueSection data={overview.revenue} onDrill={(code) => setDrill({ type: "revenue", month: overview.month, scope: code })} />
             <ProgressSection data={overview.progress} onDrill={(risk) => setDrill({ type: "po", risk })} />
             <HrSection data={overview.hr} onDrill={() => setDrill({ type: "hr" })} />
           </div>

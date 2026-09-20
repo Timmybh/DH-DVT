@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { api, errorMessage } from "../api/client";
 import { dateVi, num } from "../lib/format";
+import RevenueDetail from "./RevenueDetail";
 
-export type DrillTarget = { type: "po"; risk: string } | { type: "revenue"; month: string } | { type: "hr" };
+export type DrillTarget = { type: "po"; risk: string } | { type: "revenue"; month: string; scope?: string } | { type: "hr" };
 
 interface Props {
   target: DrillTarget | null;
@@ -38,7 +39,7 @@ export default function DrillDrawer({ target, scope, onClose }: Props) {
       target.type === "po"
         ? api.get("/dashboard/drill/po", { params: { scope, risk: target.risk } })
         : target.type === "revenue"
-          ? api.get("/dashboard/drill/revenue", { params: { scope, month: target.month } })
+          ? api.get("/dashboard/drill/revenue", { params: { scope: target.scope ?? scope, month: target.month } })
           : api.get("/dashboard/drill/hr", { params: { scope } });
     req
       .then((r) => setData(r.data))
@@ -48,7 +49,7 @@ export default function DrillDrawer({ target, scope, onClose }: Props) {
 
   if (!target) return null;
   const title =
-    target.type === "po" ? RISK_TITLE[target.risk] ?? "Chi tiết PO" : target.type === "revenue" ? `Doanh thu theo ngày — ${target.month}` : "Nhân sự theo tổ";
+    target.type === "po" ? RISK_TITLE[target.risk] ?? "Chi tiết PO" : target.type === "revenue" ? `Chi tiết doanh thu${target.scope && target.scope !== "TONG" ? ` ${target.scope}` : ""} — ${target.month}` : "Nhân sự theo tổ";
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/30" onClick={onClose}>
@@ -114,6 +115,7 @@ export default function DrillDrawer({ target, scope, onClose }: Props) {
             </table>
           )}
 
+          {data && target.type === "revenue" && data.detail && <div className="mb-6"><RevenueDetail data={data.detail} today={data.today} /></div>}
           {data && target.type === "revenue" && (
             <table className="w-full text-left text-sm">
               <thead>
