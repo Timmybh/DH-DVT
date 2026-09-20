@@ -24,9 +24,9 @@ function Toggle({ on, onChange, disabled, label }: { on: boolean; onChange: (v: 
       aria-label={label}
       disabled={disabled}
       onClick={() => onChange(!on)}
-      className={`relative h-5 w-9 shrink-0 rounded-full transition ${on ? "bg-emerald-500" : "bg-slate-500/40"} ${disabled ? "opacity-50" : ""}`}
+      className={`relative h-5 w-9 shrink-0 rounded-full ${on ? "bg-emerald-500" : "bg-slate-500/40"} ${disabled ? "opacity-50" : ""}`}
     >
-      <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${on ? "left-[18px]" : "left-0.5"}`} />
+      <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white ${on ? "left-[18px]" : "left-0.5"}`} />
     </button>
   );
 }

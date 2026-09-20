@@ -35,7 +35,7 @@ export default function Gauge({ label, sublabel, pct, expected, selected = false
     <button
       type="button"
       onClick={onClick}
-      className={`flex w-full flex-col items-center rounded-xl border bg-white p-3 text-left transition hover:border-brand hover:shadow-sm ${
+      className={`flex w-full flex-col items-center rounded-xl border bg-white p-3 text-left hover:border-brand hover:shadow-sm ${
         selected ? "border-brand ring-2 ring-brand" : "border-slate-200"
       }`}
     >

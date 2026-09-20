@@ -2,6 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, EditSessionView, errorMessage, PlanRowDto, PlanVersion, RecheckResult, UnplannedDto } from "../api/client";
 import PendingDropModal from "../components/planning/PendingDropModal";
+import { formatLines } from "../lib/lines";
+import type { CapDef } from "../lib/capacityRef";
+import { quickCheck, touchedRowUids } from "../lib/quickCheck";
+import { AddLinesModal, MergeLinesModal, SplitLinesModal } from "../components/planning/LineActions";
 import ConfirmMoveModal, { PendingMove } from "../components/planning/ConfirmMoveModal";
 import PlannedGrid, { DragInfo } from "../components/planning/PlannedGrid";
 import RowEditorModal from "../components/planning/RowEditorModal";
@@ -40,6 +44,11 @@ export default function Planning() {
   const [unplannedMap, setUnplannedMap] = useState<Map<number, UnplannedDto>>(new Map());
   const [returnedMap, setReturnedMap] = useState<Map<string, UnplannedDto>>(new Map());
   const [pendingMove, setPendingMove] = useState<PendingMove | null>(null);
+  const [mergeDraft, setMergeDraft] = useState<{ rows: DraftRow[]; keepUid: string } | null>(null);
+  const [addLinesRow, setAddLinesRow] = useState<DraftRow | null>(null);
+  const [splitRow, setSplitRow] = useState<DraftRow | null>(null);
+  const [capDefs, setCapDefs] = useState<CapDef[]>([]);
+  const [laborLines, setLaborLines] = useState<Record<string, string[]>>({});
   const [unplannedReload, setUnplannedReload] = useState(0);
   const drag = useRef<DragInfo>(null);
   const [pending, setPending] = useState<{ source: UnplannedDto; xn: string; line: string; afterUid: string | null } | null>(null);
@@ -76,11 +85,20 @@ export default function Planning() {
   const stale = recheck !== null && recheckRev !== revision;
   const excludeIds = useMemo(() => new Set(ops.filter((o) => o.type === "ADD_FROM_UNPLANNED").map((o) => (o as Extract<Op, { type: "ADD_FROM_UNPLANNED" }>).sourceId)), [ops]);
 
+  // kiểm tra nhẹ: chỉ dòng người dùng tự gõ ngày bắt đầu/kết thúc/năng suất, so với dòng trước-sau; Recheck All Plan vẫn là thao tác thủ công
+  const quickIssues = useMemo(() => quickCheck(draftRows, touchedRowUids(ops), capDefs), [draftRows, ops, capDefs]);
+  const quickMap = useMemo(() => {
+    const m = new Map<string, typeof quickIssues>();
+    quickIssues.forEach((i) => m.set(i.row_uid, [...(m.get(i.row_uid) ?? []), i]));
+    return m;
+  }, [quickIssues]);
   const issueMap = useMemo(() => {
     const m = new Map<string, "ERROR" | "WARNING">();
-    if (recheck && !stale) recheck.issues.forEach((i) => m.set(i.row_uid, i.severity === "ERROR" || m.get(i.row_uid) === "ERROR" ? "ERROR" : "WARNING"));
+    const put = (uid: string, sev: string) => m.set(uid, sev === "ERROR" || m.get(uid) === "ERROR" ? "ERROR" : "WARNING");
+    quickIssues.forEach((i) => put(i.row_uid, i.severity));
+    if (recheck && !stale) recheck.issues.forEach((i) => put(i.row_uid, i.severity));
     return m;
-  }, [recheck, stale]);
+  }, [recheck, stale, quickIssues]);
 
   const overridesList = useMemo(
     () => draftRows.filter((r) => Object.keys(r.extra?.overrides ?? {}).length).map((r) => ({ row_uid: r.row_uid, po_number: r.po_number, fields: Object.keys(r.extra.overrides ?? {}) })),
@@ -341,6 +359,42 @@ export default function Planning() {
     setPending(null);
   }
 
+  // Danh sách chuyền của xí nghiệp: chuyền đang có trong kế hoạch + chuyền có lao động trên eGMF
+  useEffect(() => {
+    if (!editing) return;
+    api.get<{ rows: CapDef[] }>("/planning/resources/capacity", { params: { limit: 2000 } }).then((r) => setCapDefs(r.data.rows)).catch(() => undefined);
+    api.get<{ factory_code: string; line: string }[]>("/planning/resources/labor").then((r) => {
+      const m: Record<string, string[]> = {};
+      r.data.forEach((x) => (m[x.factory_code] = [...(m[x.factory_code] ?? []), x.line]));
+      setLaborLines(m);
+    }).catch(() => undefined);
+  }, [editing]);
+  const lineOptionsFor = (xn: string): string[] => [...new Set([...(linesByFactory.get(xn) ?? []), ...(laborLines[xn] ?? [])])];
+
+  function requestMerge(rows: DraftRow[]) {
+    if (!editing || rows.length < 2) return;
+    setMergeDraft({ rows, keepUid: rows[0].row_uid });
+  }
+  function confirmMerge(all: boolean) {
+    if (!mergeDraft) return;
+    pushOps([...ops, { type: "MERGE_LINES", rowUids: mergeDraft.rows.map((r) => r.row_uid), primaryUid: mergeDraft.keepUid, ...(all ? { all: true } : {}) }]);
+    setNotice({ ok: true, text: `Đã dồn ${mergeDraft.rows.length} dòng thành 1 dòng. Bấm Recheck All Plan để tính lại kết quả.` });
+    setMergeDraft(null);
+  }
+  function acceptSplit(v: { mode: "FROM" | "TO"; lines: string[]; all: boolean; date: string; quantity: number }) {
+    if (!splitRow) return;
+    const target = v.mode === "FROM" ? { lines: v.lines } : { newLines: v.lines, ...(v.all ? { newAll: true } : {}) };
+    pushOps([...ops, { type: "SPLIT_LINES", rowUid: splitRow.row_uid, ...target, effectiveDate: v.date, quantity: v.quantity, tempRowId: newTempId() }]);
+    setNotice({ ok: true, text: `Đã tách ${v.mode === "FROM" ? "chuyền" : "sang chuyền"} ${formatLines(v.lines)} của PO ${splitRow.po_number} thành dòng riêng từ ${v.date}. Bấm Recheck All Plan để tính lại.` });
+    setSplitRow(null);
+  }
+  function acceptAddLines(lines: string[], all: boolean) {
+    if (!addLinesRow) return;
+    pushOps([...ops, { type: "SET_LINES", rowUid: addLinesRow.row_uid, lines, ...(all ? { all: true } : {}) }]);
+    setNotice({ ok: true, text: `Đã đặt chuyền ${formatLines(lines)} cho PO ${addLinesRow.po_number}. Bấm Recheck All Plan để kiểm tra.` });
+    setAddLinesRow(null);
+  }
+
   function recalcLane(xn: string, line: string, fromUid: string | null) {
     if (!editing) return;
     pushOps([...ops, { type: "RECALC_LANE", factory: xn, line, ...(fromUid ? { fromRowUid: fromUid } : {}) }]);
@@ -420,6 +474,19 @@ export default function Planning() {
   const commitReady = editing && online && ops.length > 0 && recheck !== null && !stale && recheck.result !== "ERROR";
   const validationLabel = !recheck ? "Chưa Recheck" : stale ? "Needs Recheck" : recheck.result;
 
+  const versionBar = !editing ? (
+    <div className="flex flex-wrap items-center gap-2">
+      <select value={versionId ?? ""} onChange={(e) => setVersionId(Number(e.target.value))} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs shadow-sm" aria-label="Phiên bản">
+        {versions.length === 0 && <option value="">Chưa có phiên bản</option>}
+        {versions.map((v) => (
+          <option key={v.id} value={v.id}>{v.code} · {v.status}</option>
+        ))}
+      </select>
+      {version && <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${version.status === "ISSUED" ? "bg-green-100 text-green-700" : version.status === "SUPERSEDED" ? "bg-slate-100 text-slate-500" : "bg-sky-100 text-sky-700"}`}>{version.status}</span>}
+      {version && <span className="text-[11px] text-slate-500">{version.row_count.toLocaleString("vi-VN")} dòng · Recheck {version.recheck_result || "—"}</span>}
+    </div>
+  ) : undefined;
+
   const grids = (fill: boolean) => (
     <>
       <PlannedGrid
@@ -429,8 +496,16 @@ export default function Planning() {
         onDropAt={handleDropAt}
         onOpenRow={setOpenRow}
         onRecalc={recalcLane}
+        onMergeLines={requestMerge}
+        onAddLines={setAddLinesRow}
+        onSplitLines={setSplitRow}
         highlightUid={highlight}
         issueMap={issueMap}
+        quickMap={quickMap}
+        titleExtra={versionBar}
+        action={!editing && can("planning.edit") && version && !other ? (
+          <button onClick={enterEdit} disabled={busy !== "" || loadingRows} className="rounded-lg bg-brand px-4 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50" data-testid="enter-edit">Vào Edit Mode</button>
+        ) : undefined}
         fill={fill}
         light={fill}
       />
@@ -463,34 +538,6 @@ export default function Planning() {
 
   const body = (
     <div className={editing ? "flex min-h-0 flex-1 flex-col gap-2" : "space-y-4"}>
-      {!editing && (
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900">Kế hoạch sản xuất</h1>
-          <p className="text-xs text-slate-500">Planning cấp Tổng công ty — Planned ở trên, Chưa lên KH (Unplanned) ở dưới.</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <select
-            value={versionId ?? ""}
-            disabled={editing}
-            onChange={(e) => setVersionId(Number(e.target.value))}
-            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm shadow-sm disabled:opacity-60"
-            aria-label="Phiên bản"
-          >
-            {versions.length === 0 && <option value="">Chưa có phiên bản</option>}
-            {versions.map((v) => (
-              <option key={v.id} value={v.id}>{v.code} · {v.status}</option>
-            ))}
-          </select>
-          {version && (
-            <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${version.status === "ISSUED" ? "bg-green-100 text-green-700" : version.status === "SUPERSEDED" ? "bg-slate-100 text-slate-500" : "bg-sky-100 text-sky-700"}`}>
-              {version.status}
-            </span>
-          )}
-        </div>
-      </div>
-
-      )}
 
       {notice && (
         <div className={`flex items-start justify-between rounded-xl border p-3 text-sm ${notice.ok ? "border-green-200 bg-green-50 text-green-800" : "border-red-200 bg-red-50 text-red-700"}`}>
@@ -534,26 +581,12 @@ export default function Planning() {
           </div>
         </div>
       ) : (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm shadow-sm">
-          <div className="flex items-center gap-3 text-slate-600">
-            <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-bold text-slate-500">VIEW MODE</span>
-            {other ? (
-              <span>Đang được <b>{other.username}</b> chỉnh sửa từ {dateTimeVi(other.started_at)} — bạn chỉ có thể xem.</span>
-            ) : (
-              <span>{version ? `${version.code} · ${version.row_count.toLocaleString("vi-VN")} dòng · Recheck ${version.recheck_result || "—"}` : "Chưa có phiên bản kế hoạch"}</span>
-            )}
+        other ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-800">
+            <span>Đang được <b>{other.username}</b> chỉnh sửa từ {dateTimeVi(other.started_at)} — bạn chỉ có thể xem.</span>
+            {can("planning.force_unlock") && <button onClick={forceUnlock} className="rounded-lg border border-red-300 bg-red-50 px-3 py-1 font-semibold text-red-700">Force Unlock</button>}
           </div>
-          <div className="flex gap-2">
-            {other && can("planning.force_unlock") && (
-              <button onClick={forceUnlock} className="rounded-lg border border-red-300 bg-red-50 px-3 py-1 text-xs font-semibold text-red-700">Force Unlock</button>
-            )}
-            {can("planning.edit") && version && !other && (
-              <button onClick={enterEdit} disabled={busy !== "" || loadingRows} className="rounded-lg bg-brand px-4 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
-                Vào Edit Mode
-              </button>
-            )}
-          </div>
-        </div>
+        ) : null
       )}
 
       {/* Chưa có phiên bản nào: tạo nền từ file Excel đã nhập */}
@@ -584,7 +617,7 @@ export default function Planning() {
             <span>Kiểm tra (Validation): <b>{validationLabel}</b>{recheck && !stale ? ` · ${recheck.counts.ERROR} lỗi · ${recheck.counts.WARNING} cảnh báo` : ""}{overridesList.length ? ` · ${overridesList.length} ô ghi đè` : ""}</span>
             <span>{showValidation ? "▼ Ẩn" : "▲ Xem chi tiết"}</span>
           </button>
-          {showValidation && <div className="mt-2 max-h-[40vh] overflow-auto"><ValidationPanel result={recheck} stale={stale} overrides={overridesList} onFocus={focusRow} /></div>}
+          {showValidation && <div className="mt-2 max-h-[40vh] overflow-auto"><ValidationPanel result={recheck} stale={stale} overrides={overridesList} onFocus={focusRow} quick={quickIssues} /></div>}
         </div>
       )}
 
@@ -600,9 +633,13 @@ export default function Planning() {
         />
       )}
 
+      {mergeDraft && <MergeLinesModal rows={mergeDraft.rows} keepUid={mergeDraft.keepUid} allLines={lineOptionsFor(mergeDraft.rows[0].factory_code)} onKeep={(uid) => setMergeDraft({ ...mergeDraft, keepUid: uid })} onConfirm={confirmMerge} onCancel={() => setMergeDraft(null)} />}
+      {splitRow && <SplitLinesModal row={splitRow} capDefs={capDefs} options={lineOptionsFor(splitRow.factory_code)} onAccept={acceptSplit} onCancel={() => setSplitRow(null)} />}
+      {addLinesRow && <AddLinesModal row={addLinesRow} options={lineOptionsFor(addLinesRow.factory_code)} onAccept={acceptAddLines} onCancel={() => setAddLinesRow(null)} />}
+
       {pendingMove && <ConfirmMoveModal pending={pendingMove} onConfirm={confirmMove} onCancel={() => setPendingMove(null)} />}
 
-      {openRow && <RowEditorModal row={openRow} editable={editing} onApply={(o) => pushOps([...ops, ...o])} onClose={() => setOpenRow(null)} />}
+      {openRow && <RowEditorModal row={openRow} editable={editing} lineOptions={linesByFactory.get(openRow.factory_code) ?? []} onApply={(o) => { pushOps([...ops, ...o]); if (o.some((x) => x.type === "EDIT_FIELD" && ["begin_prod_date", "end_prod_date", "capacity"].includes(x.field))) setShowValidation(true); }} onClose={() => setOpenRow(null)} />}
 
       {showCommit && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">

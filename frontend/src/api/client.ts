@@ -275,7 +275,7 @@ export interface PlanRowDto {
   warehouse_date: string | null;
   chd: string | null;
   note: string;
-  extra: { overrides?: Record<string, { source: string; calculated: unknown }> };
+  extra: { overrides?: Record<string, { source: string; calculated: unknown }>; capacity_source?: { definition_id: number; version: number; source: string } };
 }
 
 export interface UnplannedDto {

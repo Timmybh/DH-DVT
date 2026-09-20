@@ -24,7 +24,7 @@ export function GoodNewsCard({ items: good, onDrill }: CardProps) {
             <button
               key={s.id}
               onClick={() => s.drill && onDrill(s.drill)}
-              className="w-full rounded-lg border border-green-200 bg-white p-3 text-left transition hover:border-green-400 hover:shadow-sm"
+              className="w-full rounded-lg border border-green-200 bg-white p-3 text-left hover:border-green-400 hover:shadow-sm"
             >
               <p className="text-sm font-semibold text-slate-800">{s.title}</p>
               {s.detail && <p className="mt-0.5 text-xs text-slate-500">{s.detail}</p>}
@@ -57,7 +57,7 @@ export function WarningCard({ items: warn, onDrill }: CardProps) {
               <button
                 key={s.id}
                 onClick={() => s.drill && onDrill(s.drill)}
-                className={`w-full rounded-lg border-2 p-3 text-left transition hover:shadow-sm ${
+                className={`w-full rounded-lg border-2 p-3 text-left hover:shadow-sm ${
                   crit ? "animate-blink border-red-300 bg-red-50" : "border-amber-200 bg-amber-50"
                 }`}
               >

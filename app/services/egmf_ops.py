@@ -22,6 +22,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 from app.models.data import PoPackDaily, PoProgress, QaDefectDaily, SyncRun
+from app.models.resources import LaborDaily, MachineRequirement, MachineType
 from app.services.sync_core import add_items
 
 log = logging.getLogger(__name__)
@@ -82,6 +83,19 @@ def _qa_queries(since: date) -> dict[str, str]:
             WHERE l.thoiGianKiem >= :since GROUP BY CAST(l.thoiGianKiem AS date), p.FtyXN""",
     }
 
+
+LABOR_SQL = """
+SELECT XiNghiep AS xn, TenChuyen AS line, CAST(Ngay AS date) AS d, MAX(TongSoLaoDong) AS total, MAX(SoLaoDongHienDien) AS present
+FROM dbo.LCD_Truc_Quan_ChuyenMay_LaoDong WHERE Ngay >= :since AND TenChuyen IS NOT NULL GROUP BY XiNghiep, TenChuyen, CAST(Ngay AS date)"""
+
+MACHINE_TYPE_SQL = "SELECT MaLoaiMay AS code, TenLoai AS name FROM dbo.Lib_ChungLoaiMay"
+
+QTCN_SQL = """
+SELECT m.MaHang AS style, d.TenThietBi AS machine, SUM(d.SoLuong) AS qty
+FROM dbo.ChuyenMay_QTCN_QuyTrinhCongNghe_Master m
+JOIN dbo.ChuyenMay_QTCN_QuyTrinhCongNghe_Detail d ON d.IdQTCN = m.Id
+WHERE m.MaHang IS NOT NULL AND d.TenThietBi IS NOT NULL AND d.SoLuong > 0
+GROUP BY m.MaHang, d.TenThietBi"""
 
 PACK_SQL = """
 SELECT PO AS po, CAST(NgayXacNhan AS date) AS d, SUM(Quantity) AS q
@@ -174,6 +188,35 @@ def sync_ops(db: Session, run: SyncRun, conn: Connection, fmap: dict[int, int]) 
         log.exception("Đồng bộ xác nhận đóng gói lỗi")
         errors.append(("Xác nhận đóng gói", f"Không đồng bộ được: {str(exc)[:180]}", {}))
         objects.append({"name": "Xác nhận đóng gói (Lib_XacNhanTemDongGoi)", "read": 0, "matched": 0, "unmatched": 1})
+
+    # ---- Nguồn lực: lao động theo chuyền/ngày, danh mục loại máy, yêu cầu máy theo mã hàng (QTCN)
+    try:
+        labor = []
+        for r in conn.execute(text(LABOR_SQL), {"since": since}):
+            ma = normalize_xn(r.xn)
+            if ma is None or r.d is None:
+                continue
+            labor.append(dict(factory_code=f"XN{ma}", line=str(r.line).strip()[:20], day=r.d, total=int(r.total or 0), present=int(r.present or 0), sync_run_id=run.id))
+        types = [dict(code=str(r.code).strip()[:20], name=(r.name or "")[:100], source="EGMF") for r in conn.execute(text(MACHINE_TYPE_SQL)) if r.code]
+        reqs = [dict(style_cc=str(r.style).strip()[:60], machine_type=str(r.machine).strip().upper()[:20], machine_name=str(r.machine)[:100], quantity=int(r.qty), source="QTCN")
+                for r in conn.execute(text(QTCN_SQL))]
+        with db.begin_nested():
+            for part in _chunks(labor, 1000):
+                stmt = pg_insert(LaborDaily).values(part)
+                db.execute(stmt.on_conflict_do_update(constraint="uq_labor_daily", set_={"total": stmt.excluded.total, "present": stmt.excluded.present, "sync_run_id": stmt.excluded.sync_run_id}))
+            for part in _chunks(types, 200):
+                stmt = pg_insert(MachineType).values(part)
+                db.execute(stmt.on_conflict_do_update(index_elements=["code"], set_={"name": stmt.excluded.name}))
+            for part in _chunks(reqs, 200):  # không ghi đè yêu cầu do người dùng nhập tay
+                stmt = pg_insert(MachineRequirement).values(part)
+                db.execute(stmt.on_conflict_do_update(constraint="uq_machine_req", set_={"quantity": stmt.excluded.quantity, "machine_name": stmt.excluded.machine_name}, where=(MachineRequirement.source == "QTCN")))
+        objects.append({"name": "Lao động theo chuyền (LCD_Truc_Quan_ChuyenMay_LaoDong)", "read": len(labor), "matched": len(labor), "unmatched": 0})
+        objects.append({"name": "Loại máy + yêu cầu máy theo mã hàng (QTCN)", "read": len(types) + len(reqs), "matched": len(types) + len(reqs), "unmatched": 0})
+        total_rows += len(labor) + len(types) + len(reqs)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("Đồng bộ nguồn lực lỗi")
+        errors.append(("Nguồn lực", f"Không đồng bộ được: {str(exc)[:180]}", {}))
+        objects.append({"name": "Nguồn lực (lao động / máy)", "read": 0, "matched": 0, "unmatched": 1})
 
     if unmatched_names:
         add_items(db, run.id, "UNMATCHED", "QA / Tiến độ eGMF", [(k, f"Không gán được xí nghiệp — {v:,} bản ghi/lỗi bị bỏ qua (phòng ban hoặc tên lạ)", {"count": v}) for k, v in unmatched_names.items()])

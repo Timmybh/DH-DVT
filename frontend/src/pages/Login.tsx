@@ -119,7 +119,7 @@ export default function Login() {
                 required
               />
             </div>
-            <button type="submit" disabled={loading} className="w-full rounded-lg bg-brand py-2.5 font-semibold text-white transition hover:bg-indigo-700 disabled:opacity-60">
+            <button type="submit" disabled={loading} className="w-full rounded-lg bg-brand py-2.5 font-semibold text-white hover:bg-indigo-700 disabled:opacity-60">
               {loading ? "Đang đăng nhập..." : "Đăng nhập"}
             </button>
           </form>

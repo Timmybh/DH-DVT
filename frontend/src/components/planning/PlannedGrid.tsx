@@ -1,8 +1,10 @@
-import { CSSProperties, Fragment, MutableRefObject, useEffect, useMemo, useState } from "react";
+import { CSSProperties, Fragment, MutableRefObject, ReactNode, useEffect, useMemo, useState } from "react";
 import { DraftRow } from "../../lib/draft";
 import { cellText, Col, naturalCompare, PLANNED_COLS, sortValue } from "../../lib/planColumns";
 import { num } from "../../lib/format";
 import { useColumnWidths } from "../../lib/useColumnWidths";
+import { LineMenu } from "./LineActions";
+import type { QuickIssue } from "../../lib/quickCheck";
 import { inWindow, isoWeek, periodTitle, PlanView, rangeOf, shift, startOfDay, weekRange } from "../../lib/weeks";
 
 export type DragInfo = { kind: "unplanned"; id: number } | { kind: "returned"; uid: string } | { kind: "row"; uid: string } | null;
@@ -16,6 +18,12 @@ interface Props {
   onRecalc: (xn: string, line: string, fromUid: string | null) => void;
   highlightUid: string | null;
   issueMap: Map<string, "ERROR" | "WARNING">;
+  titleExtra?: ReactNode; // cạnh tiêu đề (VD chọn phiên bản)
+  action?: ReactNode; // nút hành động (VD Vào Edit Mode) đặt cùng hàng điều khiển kỳ
+  quickMap?: Map<string, QuickIssue[]>; // cảnh báo nhanh (!) trên ô ngày/năng suất người dùng tự gõ
+  onMergeLines: (rows: DraftRow[]) => void; // dồn các dòng đã tick thành 1 dòng
+  onAddLines: (row: DraftRow) => void; // thêm chuyền cho một kế hoạch lớn
+  onSplitLines: (row: DraftRow) => void; // tách chuyền khỏi dòng dồn chuyền
   fill?: boolean; // chiếm hết chiều cao còn lại (chế độ tập trung)
   light?: boolean; // nền trắng chữ đen
 }
@@ -37,7 +45,9 @@ function onTimeClass(v: string | undefined): string {
   return "";
 }
 
-export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow, onRecalc, highlightUid, issueMap, fill, light }: Props) {
+const QUICK_COL: Record<string, string> = { begin: "begin_prod_date", end_begin: "end_prod_date", capacity: "capacity" };
+
+export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow, onRecalc, highlightUid, issueMap, quickMap, titleExtra, action, fill, light, onMergeLines, onAddLines, onSplitLines }: Props) {
   const cols = PLANNED_COLS;
   const cw = useColumnWidths("dvt_cols_planned", cols.map((c) => ({ key: c.key, w: c.w })));
   const [sort, setSort] = useState<Sort>(null);
@@ -46,6 +56,7 @@ export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow,
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [over, setOver] = useState<Over>(null);
+  const [lineMenu, setLineMenu] = useState<{ row: DraftRow; x: number; y: number } | null>(null);
   // Cửa sổ thời gian: mặc định TUẦN hiện tại; có thể chọn Tháng hoặc Tất cả và nhảy trái/phải giữa các kỳ
   const [view, setViewState] = useState<PlanView>(() => {
     try {
@@ -89,6 +100,18 @@ export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow,
     });
     return m;
   }, [cols, cw]);
+  const rightOffsets = useMemo(() => {
+    let right = 0;
+    const m = new Map<string, number>();
+    [...cols].reverse().forEach((c) => {
+      if (c.frozenRight) {
+        m.set(c.key, right);
+        right += cw.widthOf(c.key);
+      }
+    });
+    return m;
+  }, [cols, cw]);
+  const firstRightKey = cols.find((c) => c.frozenRight)?.key;
   const totalWidth = CTRL_W + cols.reduce((s, c) => s + cw.widthOf(c.key), 0);
   const filterActive = Object.values(filters).some((v) => v.trim());
 
@@ -168,7 +191,8 @@ export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow,
   const toggleExp = (uid: string) => setExpanded((cur) => { const n = new Set(cur); n.has(uid) ? n.delete(uid) : n.add(uid); return n; });
   const allSelected = allVisible.length > 0 && allVisible.every((r) => selected.has(r.row_uid));
 
-  const frozenStyle = (c: Col<DraftRow>): CSSProperties | undefined => (c.frozen ? { left: frozenOffsets.get(c.key) } : undefined);
+  const frozenStyle = (c: Col<DraftRow>): CSSProperties | undefined => (c.frozen ? { left: frozenOffsets.get(c.key) } : c.frozenRight ? { right: rightOffsets.get(c.key) } : undefined);
+  const frozenCls = (c: Col<DraftRow>) => (c.frozen ? "frozen" : c.frozenRight ? `frozen${c.key === firstRightKey ? " frozen-r-first" : ""}` : "");
 
   // ---- kéo/thả
   const dropProps = (xn: string, line: string, key: string, laneFull: DraftRow[], row: DraftRow | null) => ({
@@ -198,8 +222,27 @@ export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow,
   const cellContent = (c: Col<DraftRow>, r: DraftRow) => {
     const text = cellText(c, r);
     if (c.key === "on_time" && text !== "—") return <span className={onTimeClass(text)}>{text}</span>;
-    if (c.key === "line" && r.line_assignments.length > 1) return <span title="Dồn chuyền" className="pg-chip pg-adv">{text}</span>;
-    if (c.key === "line" && r.transfer) return <span title="Chuyển chuyền" className="pg-chip pg-viol">{text}</span>;
+    if (c.key === "line") {
+      const chipCls = r.line_assignments.length > 1 ? "pg-chip pg-adv" : r.transfer ? "pg-chip pg-viol" : "";
+      const title = r.line_assignments.length > 1 ? "Dồn chuyền" : r.transfer ? "Chuyển chuyền" : "";
+      if (!editable) return chipCls ? <span title={title} className={chipCls}>{text}</span> : text;
+      // Edit Mode: bấm vào ô Chuyền để Dồn chuyền (nhiều dòng đã tick) hoặc Thêm chuyền
+      return (
+        <button
+          type="button"
+          className={`pg-linecell ${chipCls}`}
+          title="Bấm để Dồn chuyền / Thêm chuyền"
+          data-testid={`line-cell-${r.row_uid}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            setLineMenu({ row: r, x: rect.left, y: rect.bottom + 4 });
+          }}
+        >
+          {text} <span aria-hidden className="pg-caret">▾</span>
+        </button>
+      );
+    }
     if (c.key === "quantity" && r.extra?.overrides && Object.keys(r.extra.overrides).length) return <>{text}</>;
     return text;
   };
@@ -208,18 +251,19 @@ export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow,
 
   return (
     <section className={`rounded-2xl border border-slate-200 bg-white shadow-sm ${fill ? "flex min-h-0 flex-[3] flex-col" : ""}`} data-testid="planned-grid">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
-        <div>
-          <h2 className="text-sm font-bold text-slate-900">Kế hoạch vận hành (Planned)</h2>
-          <p className="mt-1 flex flex-wrap items-center gap-2" data-testid="plan-period">
-            <span className="rounded-lg bg-indigo-500/20 px-3 py-1 text-base font-bold text-slate-900" data-testid="plan-period-title">{period.title}</span>
-            {period.range && <span className="text-xs text-slate-500">{period.range}</span>}
-          </p>
-          <p className="text-[11px] text-slate-500">
-            {filterActive ? `${visibleCount.toLocaleString("vi-VN")} / ` : ""}{windowRows.length.toLocaleString("vi-VN")}{view !== "ALL" ? ` / ${rows.length.toLocaleString("vi-VN")}` : ""} dòng ·{" "}
-            {editable ? (sort ? "đang sắp xếp theo cột — bỏ sắp xếp để kéo thả đổi thứ tự" : "kéo tay cầm ⠿ để đổi thứ tự / chuyền / XN, hoặc thả PO từ Unplanned vào giữa các dòng") : "View Mode"}
-          </p>
+      <div className="border-b border-slate-100 px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+          <h2 className="text-lg font-bold text-slate-900">Kế hoạch vận hành (Planned)</h2>
+          {titleExtra}
         </div>
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1" data-testid="plan-period">
+            <span className="rounded-lg bg-indigo-500/20 px-3 py-1 text-sm font-bold text-slate-900" data-testid="plan-period-title">{period.title}</span>
+            {period.range && <span className="text-xs text-slate-500">{period.range}</span>}
+            <span className="text-[11px] text-slate-500" title={editable ? (sort ? "Đang sắp xếp theo cột — bỏ sắp xếp để kéo thả đổi thứ tự" : "Kéo tay cầm ⠿ để đổi thứ tự / chuyền / XN, hoặc thả PO từ Unplanned vào giữa các dòng") : "View Mode"}>
+              {filterActive ? `${visibleCount.toLocaleString("vi-VN")} / ` : ""}{windowRows.length.toLocaleString("vi-VN")}{view !== "ALL" ? ` / ${rows.length.toLocaleString("vi-VN")}` : ""} dòng
+            </span>
+          </div>
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <div className="flex items-center gap-1" role="group" aria-label="Điều hướng kỳ">
             <button onClick={() => setAnchor((a) => shift(view === "ALL" ? "WEEK" : view, a, -1))} disabled={view === "ALL"} className="rounded-md border border-slate-300 px-2.5 py-1 disabled:opacity-30" aria-label={view === "MONTH" ? "Tháng trước" : "Tuần trước"} data-testid="plan-prev">◀</button>
@@ -241,6 +285,8 @@ export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow,
           {cw.customized && <button onClick={cw.reset} className="rounded-md border border-slate-300 px-2 py-1" title="Đặt lại độ rộng cột mặc định">Đặt lại độ rộng cột</button>}
           <button onClick={() => setAll(true)} className="rounded-md border border-slate-300 px-2 py-1">Mở tất cả</button>
           <button onClick={() => setAll(false)} className="rounded-md border border-slate-300 px-2 py-1">Thu gọn tất cả</button>
+          {action}
+        </div>
         </div>
       </div>
 
@@ -256,7 +302,7 @@ export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow,
                 <input type="checkbox" aria-label="Chọn tất cả dòng đang hiển thị" checked={allSelected} onChange={() => setSelected(allSelected ? new Set() : new Set(allVisible.map((r) => r.row_uid)))} />
               </th>
               {cols.map((c) => (
-                <th key={c.key} className={`${c.frozen ? "frozen" : ""} ${c.kind === "num" ? "pg-r" : ""}`} style={frozenStyle(c)} onClick={() => clickSort(c.key)} title="Bấm để sắp xếp">
+                <th key={c.key} className={`${frozenCls(c)} ${c.kind === "num" ? "pg-r" : ""}`} style={frozenStyle(c)} onClick={() => clickSort(c.key)} title="Bấm để sắp xếp">
                   {c.label} {sort?.key === c.key ? (sort.dir === 1 ? "▲" : "▼") : ""}
                   <span className="pg-rz" role="separator" aria-label={`Kéo để đổi độ rộng cột ${c.label}`} onPointerDown={(e) => cw.startResize(c.key, e)} onClick={(e) => e.stopPropagation()} />
                 </th>
@@ -265,7 +311,7 @@ export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow,
             <tr className="pg-h2">
               <th className="frozen" style={{ left: 0 }} />
               {cols.map((c) => (
-                <th key={c.key} className={c.frozen ? "frozen" : ""} style={frozenStyle(c)}>
+                <th key={c.key} className={frozenCls(c)} style={frozenStyle(c)}>
                   <input
                     value={filters[c.key] ?? ""}
                     onChange={(e) => setFilters((f) => ({ ...f, [c.key]: e.target.value }))}
@@ -341,8 +387,13 @@ export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow,
                                       {overrides.length > 0 && <span className="pg-ovr" title={`Ghi đè thủ công: ${overrides.join(", ")}`}>!</span>}
                                     </td>
                                     {cols.map((c) => (
-                                      <td key={c.key} className={`${c.frozen ? "frozen" : ""} ${c.kind === "num" ? "pg-r" : ""}`} style={frozenStyle(c)} title={c.key === "description" ? r.description : undefined}>
+                                      <td key={c.key} className={`${frozenCls(c)} ${c.kind === "num" ? "pg-r" : ""}`} style={frozenStyle(c)} title={c.key === "description" ? r.description : undefined}>
                                         {cellContent(c, r)}
+                                        {(() => {
+                                          const col = QUICK_COL[c.key];
+                                          const hits = col ? (quickMap?.get(r.row_uid) ?? []).filter((q) => q.column === col) : [];
+                                          return hits.length ? <span className={hits.some((q) => q.severity === "ERROR") ? "pg-qerr" : "pg-qwarn"} title={hits.map((q) => q.message).join(" | ")} data-testid="quick-warn">!</span> : null;
+                                        })()}
                                       </td>
                                     ))}
                                   </tr>
@@ -355,6 +406,7 @@ export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow,
                                             <div><dt>Sport / Season</dt><dd>{r.sport || "—"} · {r.season || "—"}</dd></div>
                                             <div><dt>Line (gốc)</dt><dd>{r.line_raw || r.primary_line}{r.transfer ? ` · chuyển ${r.transfer.from} → ${r.transfer.to}` : ""}</dd></div>
                                             <div><dt>Rủi ro</dt><dd>{risk ? `${RISK_LABEL[risk] ?? "Đúng hạn"}${r.ref?.risk_reason ? ` — ${r.ref.risk_reason}` : ""}` : "—"}</dd></div>
+                                            <div><dt>Nguồn năng suất</dt><dd>{r.extra?.capacity_source ? `${r.extra.capacity_source.source} v${r.extra.capacity_source.version} (định nghĩa #${r.extra.capacity_source.definition_id})` : "Theo dữ liệu kế hoạch"}</dd></div>
                                             <div><dt>Ghi chú</dt><dd>{r.note || "—"}</dd></div>
                                             <div><dt>Ghi đè thủ công</dt><dd>{overrides.length ? overrides.join(", ") : "—"}</dd></div>
                                           </dl>
@@ -382,6 +434,31 @@ export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow,
           </tbody>
         </table>
       </div>
+      {lineMenu && (
+        <LineMenu
+          row={lineMenu.row}
+          selected={selectedRows}
+          x={lineMenu.x}
+          y={lineMenu.y}
+          onClose={() => setLineMenu(null)}
+          onMerge={() => {
+            const picked = selectedRows;
+            const menuRow = lineMenu.row;
+            setLineMenu(null);
+            onMergeLines([menuRow, ...picked.filter((r) => r.row_uid !== menuRow.row_uid)]);
+          }}
+          onAdd={() => {
+            const r = lineMenu.row;
+            setLineMenu(null);
+            onAddLines(r);
+          }}
+          onSplit={() => {
+            const r = lineMenu.row;
+            setLineMenu(null);
+            onSplitLines(r);
+          }}
+        />
+      )}
     </section>
   );
 }

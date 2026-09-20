@@ -82,7 +82,7 @@ export default function Dashboard() {
               <button
                 key={t.code}
                 onClick={() => setScope(t.code)}
-                className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${scope === t.code ? "bg-brand text-white shadow" : "text-slate-600 hover:bg-slate-50"}`}
+                className={`rounded-lg px-3 py-1.5 text-sm font-medium ${scope === t.code ? "bg-brand text-white shadow" : "text-slate-600 hover:bg-slate-50"}`}
               >
                 {t.code === "TONG" ? t.name : t.code}
               </button>

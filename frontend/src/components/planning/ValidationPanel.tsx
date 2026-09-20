@@ -1,15 +1,17 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { RecheckIssue, RecheckResult } from "../../api/client";
+import { QuickIssue } from "../../lib/quickCheck";
 
 interface Props {
   result: RecheckResult | null;
   stale: boolean; // đã sửa sau lần Recheck gần nhất -> Needs Recheck
   overrides: { row_uid: string; po_number: string; fields: string[] }[];
   onFocus: (rowUid: string) => void;
+  quick?: QuickIssue[]; // kiểm tra nhẹ các ô ngày/năng suất người dùng tự gõ (khác Recheck All Plan)
 }
 
 type Mode = "collapsed" | "floating" | "expanded";
-type Filter = "ALL" | "ERROR" | "WARNING" | "OVERRIDE";
+type Filter = "ALL" | "ERROR" | "WARNING" | "OVERRIDE" | "QUICK";
 
 const RULE_LABEL: Record<string, string> = {
   QTY_INVALID: "Số lượng không hợp lệ",
@@ -24,15 +26,19 @@ const RULE_LABEL: Record<string, string> = {
   BEGIN_ON_OFF_DAY: "Vào chuyền ngày OFF",
   CALC_MISMATCH: "Khác kết quả tự tính",
   LATE_VS_CHD: "Trễ so với CHD",
-  LINE_OVERLAP: "Chồng lấn chuyền",
+  LINE_OVERLAP: "Chồng lấn với dòng trước",
+  LINE_OVERLAP_NEXT: "Chồng lấn với dòng sau",
+  CAPACITY_VS_REFERENCE: "Năng suất lệch bảng năng suất chuyền",
   TRANSFER_DATE_MISSING: "Thiếu ngày chuyển chuyền",
   TRANSFER_DEST_UNAVAILABLE: "Chuyền đích không làm việc",
 };
 
-export default function ValidationPanel({ result, stale, overrides, onFocus }: Props) {
+export default function ValidationPanel({ result, stale, overrides, onFocus, quick = [] }: Props) {
   const [mode, setMode] = useState<Mode>("floating");
   const [filter, setFilter] = useState<Filter>("ALL");
   const [visibleCount, setVisibleCount] = useState(80);
+  const quickCount = quick.length;
+  useEffect(() => { if (quickCount > 0) setFilter("QUICK"); }, [quickCount]); // có cảnh báo nhanh mới -> mở thẳng mục đó
 
   const issues = useMemo<RecheckIssue[]>(() => {
     if (!result) return [];
@@ -77,6 +83,7 @@ export default function ValidationPanel({ result, stale, overrides, onFocus }: P
             ["ALL", `Tất cả ${result?.issues.length ?? 0}`],
             ["ERROR", `Lỗi ${result?.counts.ERROR ?? 0}`],
             ["WARNING", `Cảnh báo ${result?.counts.WARNING ?? 0}`],
+            ["QUICK", `Kiểm tra nhanh ${quick.length}`],
             ["OVERRIDE", `Ghi đè ! ${overrides.length}`],
           ] as [Filter, string][]
         ).map(([f, l]) => (
@@ -87,9 +94,21 @@ export default function ValidationPanel({ result, stale, overrides, onFocus }: P
       </div>
 
       <div className="flex-1 space-y-1.5 overflow-y-auto px-3 pb-3">
-        {!result && filter !== "OVERRIDE" && <p className="p-3 text-xs text-slate-400">Bấm "Recheck All Plan" để kiểm tra toàn bộ kế hoạch.</p>}
-        {result && filter !== "OVERRIDE" && issues.length === 0 && <p className="p-3 text-xs text-green-600">Không có mục nào.</p>}
-        {filter !== "OVERRIDE" &&
+        {(filter === "QUICK" || (filter === "ALL" && quick.length > 0)) && (
+          <>
+            <p className="px-1 text-[11px] text-slate-400">Chỉ soát các ô ngày bắt đầu / kết thúc / năng suất bạn vừa gõ, so với dòng trước và dòng sau. Kiểm tra toàn bộ: bấm Recheck All Plan.</p>
+            {filter === "QUICK" && quick.length === 0 && <p className="p-3 text-xs text-green-600">Không có lệch nào ở các ô đã sửa.</p>}
+            {quick.map((i, idx) => (
+              <button key={`${i.row_uid}-${i.code}-${idx}`} onClick={() => onFocus(i.row_uid)} className={`w-full rounded-lg border p-2 text-left text-xs hover:shadow ${i.severity === "ERROR" ? "border-red-200 bg-red-50" : "border-amber-200 bg-amber-50"}`}>
+                <p className="font-semibold text-slate-800">{RULE_LABEL[i.code] ?? i.code}</p>
+                <p className="text-slate-600">{i.message}</p>
+              </button>
+            ))}
+          </>
+        )}
+        {!result && filter !== "OVERRIDE" && filter !== "QUICK" && <p className="p-3 text-xs text-slate-400">Bấm "Recheck All Plan" để kiểm tra toàn bộ kế hoạch.</p>}
+        {result && filter !== "OVERRIDE" && filter !== "QUICK" && issues.length === 0 && <p className="p-3 text-xs text-green-600">Không có mục nào.</p>}
+        {filter !== "OVERRIDE" && filter !== "QUICK" &&
           issues.slice(0, visibleCount).map((i, idx) => (
             <button
               key={`${i.row_uid}-${i.rule_code}-${idx}`}
@@ -102,7 +121,7 @@ export default function ValidationPanel({ result, stale, overrides, onFocus }: P
               <p className="text-slate-600">{i.message}</p>
             </button>
           ))}
-        {filter !== "OVERRIDE" && issues.length > visibleCount && (
+        {filter !== "OVERRIDE" && filter !== "QUICK" && issues.length > visibleCount && (
           <button onClick={() => setVisibleCount((c) => c + 200)} className="w-full rounded-lg bg-slate-100 py-1.5 text-xs text-slate-600">
             Hiện thêm ({issues.length - visibleCount} mục)
           </button>

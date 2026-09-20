@@ -33,7 +33,7 @@ export default function HrSection({ data, onDrill }: Props) {
             key={f.code}
             onClick={onDrill}
             data-testid={`hr-card-${f.code}`}
-            className="rounded-xl border border-slate-200 p-4 text-left transition hover:shadow-md"
+            className="rounded-xl border border-slate-200 p-4 text-left hover:shadow-md"
             style={{ borderTop: `4px solid ${FACTORY_COLOR[f.code] ?? "#94a3b8"}` }}
             aria-label={`${f.name}: ${f.total} lao động`}
           >
@@ -52,7 +52,7 @@ export default function HrSection({ data, onDrill }: Props) {
         <button
           onClick={onDrill}
           data-testid="hr-card-TONG"
-          className="rounded-xl border border-slate-200 bg-indigo-500/10 p-4 text-left transition hover:shadow-md"
+          className="rounded-xl border border-slate-200 bg-indigo-500/10 p-4 text-left hover:shadow-md"
           style={{ borderTop: "4px solid #a78bfa" }}
           aria-label={`Tổng công ty: ${companyTotal} lao động`}
         >

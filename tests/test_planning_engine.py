@@ -219,3 +219,217 @@ def test_recalc_lane_cascades_downstream_and_keeps_overrides():
     assert next(r for r in rows if r["row_uid"] == "b")["begin_prod_date"] == date(2026, 12, 1)
     with pytest.raises(OpError):
         apply_ops([a], {}, [{"type": "RECALC_LANE", "factory": "XN9", "line": "1"}], CAL, FACTORIES)
+
+
+def test_set_lines_multi_line_moves_to_new_primary_lane_and_sums_capacity():
+    a, b = row("a", 1, line="7"), row("b", 2, line="7")
+    other = row("z", 1, line="4", qty=500, cap=250)
+    caps = {"4": {"capacity_per_day": 300, "id": 1, "version": 1, "source": "IE"}, "5": {"capacity_per_day": 200, "id": 2, "version": 1, "source": "IE"}}
+    rows, changed = apply_ops([a, b, other], {}, [{"type": "SET_LINES", "rowUid": "b", "lines": ["4", " 5", "4"]}], CAL, FACTORIES, None, lambda r: caps.get(r["primary_line"]))
+    nb = next(r for r in rows if r["row_uid"] == "b")
+    assert nb["line_assignments"] == ["4", "5"] and nb["line_raw"] == "4 + 5" and nb["primary_line"] == "4" and nb["transfer"] is None
+    assert nb["capacity"] == 500 and nb["extra"]["capacity_source"]["source"].startswith("SUM(2")
+    assert nb["total_day"] == pytest.approx(1000 / 500)
+    assert [r["row_uid"] for r in rows if r["primary_line"] == "4"] == ["z", "b"]      # xếp cuối chuyền chính mới
+    assert [r["row_uid"] for r in rows if r["primary_line"] == "7"] == ["a"] and "b" in changed
+    with pytest.raises(OpError, match="ít nhất"):
+        apply_ops([a], {}, [{"type": "SET_LINES", "rowUid": "a", "lines": [" ", ""]}], CAL, FACTORIES)
+    with pytest.raises(OpError, match="tối đa 4"):
+        apply_ops([a], {}, [{"type": "SET_LINES", "rowUid": "a", "lines": list("12345")}], CAL, FACTORIES)
+
+
+def test_set_lines_keeps_manual_capacity_when_definitions_incomplete():
+    a = row("a", 1, line="7", cap=500)
+    resolver = lambda r: {"capacity_per_day": 100, "id": 1, "version": 1, "source": "IE"} if r["primary_line"] == "7" else None  # noqa: E731
+    rows, _ = apply_ops([a], {}, [{"type": "SET_LINES", "rowUid": "a", "lines": ["7", "8"]}], CAL, FACTORIES, None, resolver)
+    assert rows[0]["capacity"] == 500  # chuyền 8 chưa có định nghĩa -> không tự cộng
+    rows, _ = apply_ops([a], {}, [{"type": "SET_LINES", "rowUid": "a", "lines": ["7", "8"], "capacity": 800}], CAL, FACTORIES)
+    assert rows[0]["capacity"] == 800
+
+
+def test_set_transfer_and_clear_with_validation():
+    a = row("a", 1, line="2", qty=1000)
+    rows, _ = apply_ops([a], {}, [{"type": "SET_TRANSFER", "rowUid": "a", "toLines": ["1"], "effectiveDate": "2099-01-05", "plannedRemainingQty": 400}], CAL, FACTORIES)
+    t = rows[0]["transfer"]
+    assert t == {"from": "2", "to": "1", "effective_date": "2099-01-05", "planned_remaining_qty": 400.0, "status": "PLANNED"} and rows[0]["line_raw"] == "2 ==> 1"
+    assert apply_ops(rows, {}, [{"type": "SET_TRANSFER", "rowUid": "a", "toLines": ["1"], "effectiveDate": "2000-01-05"}], CAL, FACTORIES)[0][0]["transfer"]["status"] == "EFFECTIVE"
+    cleared, _ = apply_ops(rows, {}, [{"type": "SET_TRANSFER", "rowUid": "a", "clear": True}], CAL, FACTORIES)
+    assert cleared[0]["transfer"] is None and cleared[0]["line_raw"] == "2"
+    for bad, msg in (({"toLines": ["2"]}, "khác"), ({"toLines": ["1"], "plannedRemainingQty": 5000}, "trong khoảng"), ({"toLines": []}, "ít nhất")):
+        with pytest.raises(OpError, match=msg):
+            apply_ops([a], {}, [{"type": "SET_TRANSFER", "rowUid": "a", **bad}], CAL, FACTORIES)
+    r2 = apply_ops([a], {}, [{"type": "SET_TRANSFER", "rowUid": "a", "toLines": ["1"]}], CAL, FACTORIES)[0]
+    assert "TRANSFER_DATE_MISSING" in recheck(r2, CAL, FACTORIES)["by_rule"]  # Recheck vẫn bắt thiếu ngày hiệu lực
+
+
+def test_merge_lines_combines_selected_rows_into_one_multi_line_row():
+    a = row("a", 1, line="4", qty=1000, cap=500)
+    b = row("b", 1, line="5", qty=600, cap=300)
+    c = row("c", 1, line="9", qty=400, cap=200)
+    for r in (a, b, c):
+        r["po_number"], r["extra"]["ref"] = "PO-1", {"worker": 30.0}
+    tail = row("t", 2, line="4", qty=200, cap=100)
+    rows, changed = apply_ops([a, b, c, tail], {}, [{"type": "MERGE_LINES", "rowUids": ["b", "a", "c"], "primaryUid": "a"}], CAL, FACTORIES)
+    by = {r["row_uid"]: r for r in rows}
+    assert set(by) == {"a", "t"} and changed == {"a"}                          # b, c gộp vào a
+    k = by["a"]
+    assert k["line_assignments"] == ["4", "5", "9"] and k["line_raw"] == "4 + 5 + 9" and k["primary_line"] == "4"
+    assert k["quantity"] == 2000 and k["capacity"] == 1000 and k["extra"]["ref"]["worker"] == 90.0
+    assert k["total_day"] == pytest.approx(2.0)                                # 2000 / 1000
+    assert [m["row_uid"] for m in k["extra"]["merged_from"]] == ["b", "c"]
+    assert [r["row_uid"] for r in rows if r["primary_line"] == "4"] == ["a", "t"]  # thứ tự chuyền chính giữ nguyên
+
+
+def test_merge_lines_validation():
+    a, b = row("a", 1, line="4"), row("b", 1, line="5")
+    a["po_number"] = b["po_number"] = "PO-1"
+    other_po = row("x", 1, line="6")
+    same_po_other_style = row("s", 1, line="7", style="OTHER")
+    same_po_other_style["po_number"] = "PO-1"
+    for ops, msg in (
+        ([{"type": "MERGE_LINES", "rowUids": ["a"], "primaryUid": "a"}], "ít nhất 2"),
+        ([{"type": "MERGE_LINES", "rowUids": ["a", "zzz"], "primaryUid": "a"}], "Không tìm thấy"),
+        ([{"type": "MERGE_LINES", "rowUids": ["a", "b"], "primaryUid": "x"}], "giữ lại"),
+        ([{"type": "MERGE_LINES", "rowUids": ["a", "x"], "primaryUid": "a"}], "cùng 1 PO"),
+    ):
+        with pytest.raises(OpError, match=msg):
+            apply_ops([a, b, other_po], {}, ops, CAL, FACTORIES)
+    b["transfer"] = {"from": "5", "to": "6", "effective_date": None, "planned_remaining_qty": None, "status": "PLANNED"}
+    with pytest.raises(OpError, match="chuyển chuyền"):
+        apply_ops([a, b], {}, [{"type": "MERGE_LINES", "rowUids": ["a", "b"], "primaryUid": "a"}], CAL, FACTORIES)
+    # cùng PO nhưng khác style vẫn dồn được (quy tắc chỉ xét 1 PO); PO khác xí nghiệp thì không
+    rows, _ = apply_ops([a, same_po_other_style], {}, [{"type": "MERGE_LINES", "rowUids": ["a", "s"], "primaryUid": "a"}], CAL, FACTORIES)
+    assert len(rows) == 1 and rows[0]["line_raw"] == "4 + 7" and rows[0]["style_cc"] == "S"
+    other_xn = row("y", 1, xn="XN2", line="4")
+    other_xn["po_number"] = "PO-1"
+    with pytest.raises(OpError, match="cùng 1 PO"):
+        apply_ops([a, other_xn], {}, [{"type": "MERGE_LINES", "rowUids": ["a", "y"], "primaryUid": "a"}], CAL, FACTORIES)
+    blank = row("q", 1, line="8")
+    blank["po_number"] = ""
+    with pytest.raises(OpError, match="chưa có số PO"):
+        apply_ops([a, blank], {}, [{"type": "MERGE_LINES", "rowUids": ["a", "q"], "primaryUid": "a"}], CAL, FACTORIES)
+    # thiếu năng suất ở một dòng -> giữ năng suất của dòng giữ lại
+    b["transfer"], b["capacity"] = None, None
+    rows, _ = apply_ops([a, b], {}, [{"type": "MERGE_LINES", "rowUids": ["a", "b"], "primaryUid": "a"}], CAL, FACTORIES)
+    assert rows[0]["capacity"] == 500
+
+
+def test_add_lines_to_one_big_plan_via_set_lines_keeps_current_lines_first():
+    a = row("a", 1, line="4", qty=3000, cap=500)
+    rows, _ = apply_ops([a], {}, [{"type": "SET_LINES", "rowUid": "a", "lines": ["4", "5", "6"], "capacity": 1500}], CAL, FACTORIES)
+    assert rows[0]["line_raw"] == "4 + 5 + 6" and rows[0]["primary_line"] == "4" and rows[0]["total_day"] == pytest.approx(2.0)
+
+
+def test_split_lines_creates_new_row_from_selected_lines_and_conserves_quantity():
+    a = row("a", 1, line="4", qty=3000, cap=1500)
+    a["po_number"], a["extra"]["ref"] = "PO-1", {"worker": 90.0}
+    a["line_assignments"], a["line_raw"] = ["4", "5", "9"], "4 + 5 + 9"
+    tail = row("t", 2, line="4", qty=200, cap=100)
+    op = {"type": "SPLIT_LINES", "rowUid": "a", "lines": ["9"], "effectiveDate": "2026-09-21", "quantity": 1000, "tempRowId": "n1"}
+    rows, changed = apply_ops([a, tail], {}, [op], CAL, FACTORIES)
+    old = next(r for r in rows if r["row_uid"] == "a")
+    new = next(r for r in rows if r["origin"] == "DRAFT_NEW")
+    assert old["line_assignments"] == ["4", "5"] and old["line_raw"] == "4 + 5" and old["quantity"] == 2000
+    assert new["line_assignments"] == ["9"] and new["primary_line"] == "9" and new["po_number"] == "PO-1" and new["quantity"] == 1000
+    assert old["quantity"] + new["quantity"] == 3000                                   # bảo toàn số lượng
+    assert old["capacity"] == pytest.approx(1000) and new["capacity"] == pytest.approx(500)  # chia đều theo số chuyền (1/3, 2/3)
+    assert old["extra"]["ref"]["worker"] == pytest.approx(60.0) and new["extra"]["ref"]["worker"] == pytest.approx(30.0)
+    assert new["begin_prod_date"] == date(2026, 9, 21) and "begin_prod_date" in new["extra"]["overrides"] and new["extra"]["split_from"] == "a"
+    assert new["total_day"] == pytest.approx(2.0) and new["end_prod_date"] is not None
+    assert {"a", new["row_uid"]} <= changed and len(rows) == 3
+
+
+def test_split_moves_original_to_new_primary_lane_when_primary_line_is_split_off():
+    a = row("a", 1, line="4", qty=2000, cap=1000)
+    a["line_assignments"], a["line_raw"] = ["4", "5"], "4 + 5"
+    rows, _ = apply_ops([a], {}, [{"type": "SPLIT_LINES", "rowUid": "a", "lines": ["4"], "effectiveDate": "2026-09-21", "quantity": 500, "tempRowId": "n2"}], CAL, FACTORIES)
+    old = next(r for r in rows if r["row_uid"] == "a")
+    new = next(r for r in rows if r["origin"] == "DRAFT_NEW")
+    assert old["primary_line"] == "5" and new["primary_line"] == "4" and old["line_raw"] == "5" and new["line_raw"] == "4"
+
+
+def test_split_uses_capacity_definitions_when_all_lines_defined():
+    a = row("a", 1, line="4", qty=3000, cap=1500)
+    a["line_assignments"], a["line_raw"] = ["4", "5"], "4 + 5"
+    defs = {"4": {"capacity_per_day": 1000, "id": 1, "version": 1, "source": "IE"}, "5": {"capacity_per_day": 500, "id": 2, "version": 1, "source": "IE"}}
+    rows, _ = apply_ops([a], {}, [{"type": "SPLIT_LINES", "rowUid": "a", "lines": ["5"], "effectiveDate": "2026-09-21", "quantity": 900, "tempRowId": "n3"}], CAL, FACTORIES, None, lambda r: defs.get(r["primary_line"]))
+    new = next(r for r in rows if r["origin"] == "DRAFT_NEW")
+    old = next(r for r in rows if r["row_uid"] == "a")
+    assert new["capacity"] == 500 and old["capacity"] == 1000
+
+
+def test_split_validation_and_merge_roundtrip():
+    single = row("s", 1, line="4")
+    multi = row("m", 1, line="4", qty=1000, cap=500)
+    multi["line_assignments"], multi["line_raw"] = ["4", "5"], "4 + 5"
+    ok = {"type": "SPLIT_LINES", "rowUid": "m", "lines": ["5"], "effectiveDate": "2026-09-21", "quantity": 400, "tempRowId": "n4"}
+    for patch, msg in (({"rowUid": "s", "lines": ["4"]}, "ít nhất 1 chuyền"), ({"lines": ["9"]}, "đang có trong dòng"), ({"lines": ["4", "5"]}, "ít nhất 1 chuyền"), ({"effectiveDate": None}, "ngày tách"),
+                       ({"quantity": 1000}, "nhỏ hơn"), ({"quantity": 0}, "lớn hơn 0")):
+        with pytest.raises(OpError, match=msg):
+            apply_ops([single, multi], {}, [{**ok, **patch}], CAL, FACTORIES)
+    multi["po_number"] = "PO-1"
+    rows, _ = apply_ops([multi], {}, [ok], CAL, FACTORIES)
+    new_uid = next(r["row_uid"] for r in rows if r["origin"] == "DRAFT_NEW")
+    merged, _ = apply_ops(rows, {}, [{"type": "MERGE_LINES", "rowUids": ["m", new_uid], "primaryUid": "m"}], CAL, FACTORIES)
+    assert len(merged) == 1 and merged[0]["quantity"] == 1000 and merged[0]["line_raw"] == "4 + 5"  # tách rồi dồn lại: số lượng và chuyền được khôi phục
+
+
+def test_loose_merge_max_four_lines_but_all_lines_allowed_and_shown_as_range():
+    from app.services.planning_engine import format_lines
+
+    assert format_lines(["4", "5", "9"]) == "4 + 5 + 9" and format_lines(["7", "4", "5", "6", "9"]) == "4:7 + 9"
+    assert format_lines([str(i) for i in range(1, 19)]) == "1:18" and format_lines(["1", "2", "3", "4", "5", "A"]) == "1:5 + A"
+    a = row("a", 1, line="1", qty=1800, cap=900)
+    fl = {"XN1": {str(i) for i in range(1, 19)}}                       # xí nghiệp có 18 chuyền
+    with pytest.raises(OpError, match="tối đa 4"):
+        apply_ops([a], {}, [{"type": "SET_LINES", "rowUid": "a", "lines": ["1", "2", "3", "4", "5"]}], CAL, FACTORIES, None, None, fl)
+    ok, _ = apply_ops([a], {}, [{"type": "SET_LINES", "rowUid": "a", "lines": ["1", "2", "3", "4"]}], CAL, FACTORIES, None, None, fl)
+    assert ok[0]["line_raw"] == "1 + 2 + 3 + 4"
+    everything, _ = apply_ops([a], {}, [{"type": "SET_LINES", "rowUid": "a", "lines": ["1"], "all": True}], CAL, FACTORIES, None, None, fl)
+    assert everything[0]["line_raw"] == "1:18" and everything[0]["line_assignments"][0] == "1" and len(everything[0]["line_assignments"]) == 18
+    # chuyền chính giữ nguyên là chuyền đứng đầu khi dồn tất cả từ một chuyền khác
+    b = row("b", 1, line="7")
+    other, _ = apply_ops([b], {}, [{"type": "SET_LINES", "rowUid": "b", "lines": ["7"], "all": True}], CAL, FACTORIES, None, None, fl)
+    assert other[0]["primary_line"] == "7" and other[0]["line_raw"] == "1:18"
+    # liệt kê đủ mọi chuyền (không cờ all) cũng được nhận biết là "tất cả"
+    listed, _ = apply_ops([a], {}, [{"type": "SET_LINES", "rowUid": "a", "lines": [str(i) for i in range(1, 19)]}], CAL, FACTORIES, None, None, fl)
+    assert listed[0]["line_raw"] == "1:18"
+
+
+def test_merge_all_lines_of_factory_over_four_rows():
+    rows = [row(f"r{i}", 1, line=str(i), qty=100, cap=50) for i in range(1, 7)]
+    for r in rows:
+        r["po_number"] = "PO-9"
+    uids = [r["row_uid"] for r in rows]
+    fl = {"XN1": {str(i) for i in range(1, 7)}}                        # xí nghiệp chỉ có 6 chuyền -> dồn 6 dòng = tất cả chuyền
+    with pytest.raises(OpError, match="tối đa 4"):
+        apply_ops(rows[:5], {}, [{"type": "MERGE_LINES", "rowUids": uids[:5], "primaryUid": uids[0]}], CAL, FACTORIES, None, None, fl)
+    merged, _ = apply_ops(rows, {}, [{"type": "MERGE_LINES", "rowUids": uids, "primaryUid": uids[0]}], CAL, FACTORIES, None, None, fl)
+    assert len(merged) == 1 and merged[0]["line_raw"] == "1:6" and merged[0]["quantity"] == 600
+
+
+def test_split_single_line_row_to_other_lines_keeps_original_line():
+    a = row("a", 1, line="4", qty=1000, cap=500)
+    a["po_number"], a["extra"]["ref"] = "PO-1", {"worker": 30.0}
+    fl = {"XN1": {"4", "5", "6", "7", "8"}}
+    op = {"type": "SPLIT_LINES", "rowUid": "a", "newLines": ["5", "6"], "effectiveDate": "2026-09-21", "quantity": 400, "tempRowId": "s1"}
+    rows, changed = apply_ops([a], {}, [op], CAL, FACTORIES, None, None, fl)
+    old = next(r for r in rows if r["row_uid"] == "a")
+    new = next(r for r in rows if r["origin"] == "DRAFT_NEW")
+    assert old["line_raw"] == "4" and old["quantity"] == 600 and old["capacity"] == 500          # dòng gốc giữ chuyền + năng suất
+    assert new["line_raw"] == "5 + 6" and new["primary_line"] == "5" and new["quantity"] == 400 and new["po_number"] == "PO-1"
+    assert new["capacity"] == pytest.approx(1000) and new["extra"]["ref"]["worker"] == pytest.approx(60.0)   # ước theo bình quân mỗi chuyền x 2 chuyền
+    assert new["begin_prod_date"] == date(2026, 9, 21) and new["extra"]["split_from"] == "a" and old["quantity"] + new["quantity"] == 1000
+    assert "a" in changed and len(rows) == 2
+
+
+def test_split_to_other_lines_rules():
+    a = row("a", 1, line="4", qty=1000, cap=500)
+    fl = {"XN1": {str(i) for i in range(1, 9)}}
+    base = {"type": "SPLIT_LINES", "rowUid": "a", "effectiveDate": "2026-09-21", "quantity": 400, "tempRowId": "s2"}
+    for patch, msg in (({"newLines": ["4"]}, "khác các chuyền"), ({"newLines": ["1", "2", "3", "5", "6"]}, "tối đa 4"), ({"newLines": ["5"], "quantity": 1000}, "nhỏ hơn"), ({"newLines": ["5"], "effectiveDate": None}, "ngày tách")):
+        with pytest.raises(OpError, match=msg):
+            apply_ops([a], {}, [{**base, **patch}], CAL, FACTORIES, None, None, fl)
+    everything, _ = apply_ops([a], {}, [{**base, "newAll": True}], CAL, FACTORIES, None, None, fl)
+    new = next(r for r in everything if r["origin"] == "DRAFT_NEW")
+    assert new["line_assignments"] == [l for l in new["line_assignments"] if l != "4"] and len(new["line_assignments"]) == 7 and new["line_raw"] == "1:3 + 5:8"

@@ -10,7 +10,7 @@ interface Props {
 function Cell({ value, tone, label, onClick }: { value: number; tone: "ok" | "late"; label: string; onClick: () => void }) {
   const cls = tone === "ok" ? "border-emerald-400/50 bg-emerald-500/10 text-emerald-700" : "border-rose-400/50 bg-rose-500/10 text-rose-700";
   return (
-    <button onClick={onClick} className={`rounded-xl border px-4 py-3 text-left transition hover:brightness-125 ${cls}`} aria-label={`${label}: ${value} PO`}>
+    <button onClick={onClick} className={`rounded-xl border px-4 py-3 text-left hover:brightness-125 ${cls}`} aria-label={`${label}: ${value} PO`}>
       <p className="text-3xl font-bold leading-none tabular-nums">{num(value)}</p>
       <p className="mt-1 text-[11px] font-medium opacity-80">PO</p>
     </button>

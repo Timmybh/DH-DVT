@@ -15,6 +15,7 @@ from app.models.data import PlanRow
 from app.models.planning import PlanningEditSession, PlanningVersion, PlanningVersionRow, WorkingCalendarRule
 from app.services.audit import write_audit
 from app.services import formula_runtime as fx
+from app.services.resource_service import load_resources
 from app.services.calendar import CalendarResolver, Rule
 from app.services.dashboard import current_batch, today_local
 from app.services.planning_engine import (
@@ -298,7 +299,7 @@ def create_baseline(db: Session, user: User, from_date: date | None, note: str) 
     db.add(version)
     db.flush()
     _insert_rows(db, version.id, rows)
-    result = recheck(rows, load_resolver(db), factory_codes(db))
+    result = recheck(rows, load_resolver(db), factory_codes(db), load_resources(db).check)
     _store_recheck(version, result)
     db.commit()
     write_audit("PLANNING_BASELINE", user=user, object_type="PlanningVersion", object_id=version.code, detail=f"{len(rows)} dòng, recheck={result['result']}", trace_id=result["trace_id"])
@@ -462,7 +463,8 @@ def build_draft(db: Session, base_version_id: int, ops: list[dict], with_returne
     base_rows = load_rows(db, base_version_id)
     returned = [dict(r) for r in (base.returned or [])]
     try:
-        rows, changed = apply_ops(base_rows, unplanned_lookup(db, base_version_id), ops, load_resolver(db), factory_codes(db), returned)
+        res = load_resources(db)
+        rows, changed = apply_ops(base_rows, unplanned_lookup(db, base_version_id), ops, load_resolver(db), factory_codes(db), returned, res.capacity_for, res.factory_lines())
     except OpError as exc:
         raise HTTPException(422, str(exc))
     if with_changed:
@@ -485,7 +487,7 @@ def _row_out(r: dict) -> dict:
 
 def run_recheck(db: Session, user: User, session: PlanningEditSession, base_version_id: int, ops: list[dict], draft_revision: int) -> dict:
     rows, _returned, changed_uids_engine = build_draft(db, base_version_id, ops, with_changed=True)
-    result = recheck(rows, load_resolver(db), factory_codes(db))
+    result = recheck(rows, load_resolver(db), factory_codes(db), load_resources(db).check)
     session.last_recheck_revision, session.last_recheck_hash = draft_revision, ops_hash(ops)
     session.last_recheck_result, session.last_recheck_trace = result["result"], result["trace_id"]
     db.commit()
@@ -502,7 +504,7 @@ def commit_draft(db: Session, user: User, session: PlanningEditSession, base_ver
         raise HTTPException(422, "Recheck có ERROR — không thể Commit.")
     base = get_version(db, base_version_id)
     rows, returned = build_draft(db, base_version_id, ops, with_returned=True)
-    result = recheck(rows, load_resolver(db), factory_codes(db))  # kiểm tra lại độc lập ở server ngay lúc commit
+    result = recheck(rows, load_resolver(db), factory_codes(db), load_resources(db).check)  # kiểm tra lại độc lập ở server ngay lúc commit
     if result["result"] == "ERROR":
         raise HTTPException(422, "Recheck tại thời điểm Commit có ERROR — không thể Commit.")
     today = today_local()
@@ -520,7 +522,7 @@ def commit_draft(db: Session, user: User, session: PlanningEditSession, base_ver
 
 def recheck_version(db: Session, user: User, version_id: int) -> dict:
     v = get_version(db, version_id)
-    result = recheck(load_rows(db, version_id), load_resolver(db), factory_codes(db))
+    result = recheck(load_rows(db, version_id), load_resolver(db), factory_codes(db), load_resources(db).check)
     _store_recheck(v, result)
     db.commit()
     write_audit("PLANNING_RECHECK", user=user, object_type="PlanningVersion", object_id=v.code, result=result["result"], trace_id=result["trace_id"])

@@ -23,7 +23,7 @@ function ComparisonRow({ row, unit, period, onDrill }: { row: RevenueSummaryRow;
 
   return (
     <div
-      className={`flex items-center gap-3 rounded-lg ${total ? "border-t border-slate-200 pt-4" : "cursor-pointer transition hover:bg-indigo-50/60"}`}
+      className={`flex items-center gap-3 rounded-lg ${total ? "border-t border-slate-200 pt-4" : "cursor-pointer hover:bg-indigo-50/60"}`}
       {...(total
         ? { role: "img" }
         : {

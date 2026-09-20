@@ -1,10 +1,15 @@
 import { PlanRowDto, UnplannedDto } from "../api/client";
+import { formatLines } from "./lines";
 
 // Thao tác trên Draft State (khớp với engine backend `apply_ops`)
 export type Op =
   | { type: "ADD_FROM_UNPLANNED"; tempRowId: string; sourceId: number; factory: string; line: string; afterRowUid: string | null }
   | { type: "UNPLAN"; rowUid: string }
   | { type: "RECALC_LANE"; factory: string; line: string; fromRowUid?: string }
+  | { type: "SET_LINES"; rowUid: string; lines: string[]; capacity?: number; all?: boolean }
+  | { type: "MERGE_LINES"; rowUids: string[]; primaryUid: string; all?: boolean }
+  | { type: "SPLIT_LINES"; rowUid: string; lines?: string[]; newLines?: string[]; newAll?: boolean; effectiveDate: string; quantity: number; tempRowId: string }
+  | { type: "SET_TRANSFER"; rowUid: string; toLines?: string[]; effectiveDate?: string; plannedRemainingQty?: number | null; clear?: boolean }
   | { type: "ADD_RETURNED"; rowUid: string; factory: string; line: string; afterRowUid: string | null }
   | { type: "MOVE"; rowUid: string; factory: string; line: string; afterRowUid: string | null }
   | { type: "EDIT_FIELD"; rowUid: string; field: string; value: unknown }
@@ -76,6 +81,97 @@ export function applyOpsLocal(
       };
       byUid.set(uid, row);
       place(row, op.afterRowUid);
+    } else if (op.type === "SET_LINES") {
+      const row = byUid.get(op.rowUid);
+      if (!row) continue;
+      const lines = [...new Set(op.lines.map((x) => x.trim()).filter(Boolean))];
+      if (!lines.length) continue;
+      take(row);
+      row.line_assignments = lines;
+      row.line_raw = formatLines(lines);
+      row.transfer = null;
+      row.primary_line = lines[0];
+      if (op.capacity) row.capacity = op.capacity;
+      row._flag = row._flag ?? "EDITED";
+      const lane = lanes.get(laneId(row.factory_code, row.primary_line)) ?? [];
+      place(row, lane[lane.length - 1]?.row_uid ?? null);
+    } else if (op.type === "MERGE_LINES") {
+      const group = op.rowUids.map((u) => byUid.get(u)).filter((r): r is DraftRow => !!r);
+      const keep = byUid.get(op.primaryUid);
+      if (!keep || group.length < 2) continue;
+      const lines: string[] = [];
+      [keep, ...group.filter((r) => r !== keep)].forEach((r) => r.line_assignments.forEach((l) => !lines.includes(l) && lines.push(l)));
+      const others = group.filter((r) => r !== keep);
+      const workers = group.map((r) => r.ref?.worker ?? 0);
+      keep.quantity = group.reduce((s, r) => s + (r.quantity ?? 0), 0);
+      if (group.every((r) => r.capacity)) keep.capacity = group.reduce((s, r) => s + (r.capacity ?? 0), 0);
+      if (workers.some(Boolean)) keep.ref = { ...(keep.ref ?? {}), worker: workers.reduce((s, w) => s + w, 0) };
+      keep.line_assignments = lines;
+      keep.line_raw = formatLines(lines);
+      keep.transfer = null;
+      keep._flag = keep._flag ?? "EDITED";
+      others.forEach((r) => {
+        take(r);
+        byUid.delete(r.row_uid);
+      });
+    } else if (op.type === "SPLIT_LINES" && (op.newLines?.length || op.newAll)) {
+      // Tách SANG chuyền khác: dòng gốc giữ chuyền cũ, dòng mới chạy trên các chuyền chọn (hiển thị tạm; server tính chính xác khi Recheck)
+      const row = byUid.get(op.rowUid);
+      if (!row || !op.newLines?.length || !(op.quantity > 0 && op.quantity < row.quantity)) continue;
+      const uid = tempUid(op.tempRowId);
+      const worker = row.ref?.worker;
+      const perLine = row.line_assignments.length || 1;
+      const fresh: DraftRow = {
+        ...cloneRow(row), row_uid: uid, sequence: 0, origin: "DRAFT_NEW", transfer: null, line_assignments: op.newLines, line_raw: formatLines(op.newLines), primary_line: op.newLines[0],
+        quantity: op.quantity, capacity: row.capacity ? (row.capacity / perLine) * op.newLines.length : null, begin_prod_date: op.effectiveDate, end_prod_date: null, warehouse_date: null, total_day: null,
+        ref: worker ? { ...(row.ref ?? {}), worker: Math.round((worker / perLine) * op.newLines.length * 10) / 10 } : row.ref, _flag: "NEW",
+      };
+      row.quantity -= op.quantity;
+      row._flag = row._flag ?? "EDITED";
+      byUid.set(uid, fresh);
+      const laneNew = lanes.get(laneId(fresh.factory_code, fresh.primary_line)) ?? [];
+      place(fresh, laneNew[laneNew.length - 1]?.row_uid ?? null);
+    } else if (op.type === "SPLIT_LINES") {
+      const row = byUid.get(op.rowUid);
+      if (!row) continue;
+      const take2 = (op.lines ?? []).filter((l) => row.line_assignments.includes(l));
+      const stay = row.line_assignments.filter((l) => !take2.includes(l));
+      if (!take2.length || !stay.length || !(op.quantity > 0 && op.quantity < row.quantity)) continue;
+      const share = take2.length / row.line_assignments.length; // hiển thị tạm; kết quả chính xác do server tính khi Recheck
+      const uid = tempUid(op.tempRowId);
+      const worker = row.ref?.worker;
+      const fresh: DraftRow = {
+        ...cloneRow(row), row_uid: uid, sequence: 0, origin: "DRAFT_NEW", transfer: null, line_assignments: take2, line_raw: formatLines(take2), primary_line: take2[0],
+        quantity: op.quantity, capacity: row.capacity ? row.capacity * share : null, begin_prod_date: op.effectiveDate, end_prod_date: null, warehouse_date: null, total_day: null,
+        ref: worker ? { ...(row.ref ?? {}), worker: Math.round(worker * share * 10) / 10 } : row.ref, _flag: "NEW",
+      };
+      take(row);
+      row.quantity -= op.quantity;
+      row.capacity = row.capacity ? row.capacity * (1 - share) : null;
+      if (worker) row.ref = { ...(row.ref ?? {}), worker: Math.round(worker * (1 - share) * 10) / 10 };
+      row.line_assignments = stay;
+      row.line_raw = formatLines(stay);
+      row.primary_line = stay[0];
+      row._flag = row._flag ?? "EDITED";
+      const laneOld = lanes.get(laneId(row.factory_code, row.primary_line)) ?? [];
+      place(row, laneOld[laneOld.length - 1]?.row_uid ?? null);
+      byUid.set(uid, fresh);
+      const laneNew = lanes.get(laneId(fresh.factory_code, fresh.primary_line)) ?? [];
+      place(fresh, laneNew[laneNew.length - 1]?.row_uid ?? null);
+    } else if (op.type === "SET_TRANSFER") {
+      const row = byUid.get(op.rowUid);
+      if (!row) continue;
+      const current = row.line_assignments.join(" + ");
+      if (op.clear) {
+        row.transfer = null;
+        row.line_raw = current;
+      } else {
+        const to = [...new Set((op.toLines ?? []).map((x) => x.trim()).filter(Boolean))].join(" + ");
+        if (!to) continue;
+        row.transfer = { from: current, to, effective_date: op.effectiveDate || null, planned_remaining_qty: op.plannedRemainingQty ?? null, status: "PLANNED" };
+        row.line_raw = `${current} ==> ${to}`;
+      }
+      row._flag = row._flag ?? "EDITED";
     } else if (op.type === "UNPLAN") {
       const row = byUid.get(op.rowUid);
       if (!row) continue;

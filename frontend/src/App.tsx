@@ -9,6 +9,7 @@ import Login from "./pages/Login";
 import Planning from "./pages/Planning";
 import Versions from "./pages/Versions";
 import ColumnConfig from "./pages/planning/ColumnConfig";
+import Resources from "./pages/planning/Resources";
 import SyncDetail from "./pages/SyncDetail";
 import SyncLog from "./pages/SyncLog";
 import Alerts from "./pages/admin/Alerts";
@@ -49,6 +50,8 @@ export default function App() {
       <Route path="/planning" element={<Protected perm="planning.view"><SubTabs tabs={PLANNING_TABS}><Planning /></SubTabs></Protected>} />
       <Route path="/planning/versions" element={<Protected perm="planning.view"><SubTabs tabs={PLANNING_TABS}><Versions /></SubTabs></Protected>} />
       <Route path="/planning/calendar" element={<Protected perm="calendar.view"><SubTabs tabs={PLANNING_TABS}><Calendar /></SubTabs></Protected>} />
+      <Route path="/planning/resources" element={<Navigate to="/planning/resources/capacity" replace />} />
+      <Route path="/planning/resources/:section" element={<Protected perm="planning.view"><SubTabs tabs={PLANNING_TABS}><Resources /></SubTabs></Protected>} />
       <Route path="/planning/columns" element={<Protected perm="planning.view"><SubTabs tabs={PLANNING_TABS}><ColumnConfig /></SubTabs></Protected>} />
       <Route path="/admin" element={<AdminIndex />} />
       <Route path="/admin/dashboard" element={<Navigate to="/admin/dashboard/indicators" replace />} />

@@ -54,7 +54,7 @@ export default function ProgressSection({ data, onDrill }: Props) {
           <div
             key={s.label}
             onClick={s.drill ? () => onDrill(s.drill!) : undefined}
-            className={`relative rounded-xl border border-slate-200 bg-slate-50 p-3 ${s.drill ? "cursor-pointer transition hover:border-brand hover:shadow-sm" : ""}`}
+            className={`relative rounded-xl border border-slate-200 bg-slate-50 p-3 ${s.drill ? "cursor-pointer hover:border-brand hover:shadow-sm" : ""}`}
           >
             <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">{s.label}</p>
             <p className="mt-1 text-2xl font-bold text-slate-900">{num(s.value)}</p>
@@ -72,7 +72,7 @@ export default function ProgressSection({ data, onDrill }: Props) {
             <button
               key={t.key}
               onClick={() => onDrill(t.key)}
-              className={`rounded-xl border-2 p-3 text-left transition hover:shadow-md ${t.cls} ${blink ? "animate-blink" : ""}`}
+              className={`rounded-xl border-2 p-3 text-left hover:shadow-md ${t.cls} ${blink ? "animate-blink" : ""}`}
             >
               <p className="text-xs font-semibold">{t.label}</p>
               <p className="mt-1 text-2xl font-bold">{num(count)}</p>

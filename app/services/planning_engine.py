@@ -149,6 +149,8 @@ def apply_ops(
     cal: CalendarResolver,
     factory_codes: set[str],
     returned: list[dict] | None = None,
+    cap_resolver=None,
+    factory_lines: dict[str, set[str]] | None = None,
 ) -> tuple[list[dict], set[str]]:
     """Áp danh sách thao tác lên bản sao của base_rows. Trả (rows đã reindex, tập row_uid bị thay đổi).
 
@@ -177,6 +179,11 @@ def apply_ops(
                 if uid in by_uid:
                     raise OpError("tempRowId bị trùng")
                 capacity = op.get("capacity") or src.get("capacity")
+                cap_source = None
+                if not capacity and cap_resolver is not None:  # thiếu năng suất -> lấy từ Capacity Definition (mức cụ thể nhất)
+                    d = cap_resolver({"factory_code": factory, "primary_line": line, "style_cc": src["style_cc"], "model_code": src["model_code"]})
+                    if d:
+                        capacity, cap_source = d["capacity_per_day"], {"definition_id": d["id"], "version": d["version"], "source": d["source"]}
                 row = {
                     "row_uid": uid,
                     "sequence": 0,
@@ -192,7 +199,7 @@ def apply_ops(
                     "description": src["description"], "customer": src["customer"], "sport": src["sport"], "season": src["season"],
                     "quantity": src["quantity"], "capacity": capacity, "total_day": None,
                     "begin_prod_date": None, "end_prod_date": None, "warehouse_date": None, "chd": src.get("chd"),
-                    "note": src.get("note", ""), "extra": {"ref": src.get("ref") or {}},
+                    "note": src.get("note", ""), "extra": {"ref": src.get("ref") or {}, **({"capacity_source": cap_source} if cap_source else {})},
                 }
                 _insert_after(rows, row, op.get("afterRowUid"))
                 recalc_row(row, _prev_in_lane_by_position(rows, row))
@@ -237,6 +244,192 @@ def apply_ops(
                 _insert_after(rows, row, op.get("afterRowUid"))
                 recalc_row(row, _prev_in_lane_by_position(rows, row))
                 by_uid[row["row_uid"]] = row
+                changed.add(row["row_uid"])
+
+            elif kind == "SET_LINES":
+                # Dồn chuyền "4 + 5 + 9": chạy ĐỒNG THỜI trên nhiều chuyền; chuyền đầu là chuyền chính (xác định hàng chờ/thứ tự)
+                row = by_uid.get(op["rowUid"])
+                if row is None:
+                    raise OpError("Không tìm thấy dòng")
+                requested = _clean_lines(op.get("lines")) if not op.get("all") else [row["primary_line"]]
+                lines = _resolve_lines(op, rows, row["factory_code"], requested[0], requested, factory_lines)
+                old_lane = lane_key(row)
+                row["line_assignments"], row["line_raw"], row["transfer"] = lines, format_lines(lines), None  # dồn chuyền thay thế chuyển chuyền cũ
+                if (row["factory_code"], lines[0]) != old_lane:
+                    rows.remove(row)
+                    row["primary_line"] = lines[0]
+                    lane = sorted((r for r in rows if lane_key(r) == lane_key(row)), key=lambda r: r["sequence"])
+                    _insert_after(rows, row, lane[-1]["row_uid"] if lane else None)  # xếp cuối chuyền chính mới
+                # Năng suất tổng = Σ năng suất từng chuyền (nếu có định nghĩa cho MỌI chuyền), hoặc giá trị nhập trong thao tác
+                if op.get("capacity"):
+                    row["capacity"] = float(op["capacity"])
+                elif cap_resolver is not None and len(lines) > 1:
+                    defs = [cap_resolver({"factory_code": row["factory_code"], "primary_line": ln, "style_cc": row.get("style_cc", ""), "model_code": row.get("model_code", "")}) for ln in lines]
+                    if all(defs):
+                        row["capacity"] = float(sum(d["capacity_per_day"] for d in defs))
+                        row["extra"]["capacity_source"] = {"definition_id": None, "version": None, "source": f"SUM({len(lines)} chuyền)"}
+                recalc_row(row, _prev_in_lane_by_position(rows, row))
+                changed.add(row["row_uid"])
+
+            elif kind == "MERGE_LINES":
+                # Dồn chuyền từ nhiều dòng đã chọn -> MỘT dòng chạy đồng thời trên các chuyền đó (SL, năng suất, nhân công được cộng)
+                uids = list(dict.fromkeys(op.get("rowUids") or []))
+                if len(uids) < 2:
+                    raise OpError("Cần chọn ít nhất 2 dòng để dồn chuyền")
+                group = []
+                for u in uids:
+                    r = by_uid.get(u)
+                    if r is None:
+                        raise OpError(f"Không tìm thấy dòng {u}")
+                    group.append(r)
+                keep = by_uid.get(op.get("primaryUid") or uids[0])
+                if keep is None or all(keep is not r for r in group):
+                    raise OpError("Dòng giữ lại phải nằm trong các dòng được chọn")
+                if not all(r["po_number"] for r in group):
+                    raise OpError("Có dòng chưa có số PO — không thể dồn")
+                if len({(r["factory_code"], r["po_number"]) for r in group}) > 1:
+                    raise OpError("Chỉ dồn được các dòng của cùng 1 PO (cùng xí nghiệp)")
+                if any(r.get("transfer") for r in group):
+                    raise OpError("Có dòng đang chuyển chuyền — gỡ chuyển chuyền trước khi dồn")
+                lines: list[str] = []
+                for r in [keep, *[x for x in group if x is not keep]]:
+                    for ln in r["line_assignments"]:
+                        if ln not in lines:
+                            lines.append(ln)
+                lines = _resolve_lines({"all": op.get("all")} if op.get("all") else {}, rows, keep["factory_code"], keep["primary_line"], lines, factory_lines)
+                others = [r for r in group if r is not keep]
+                merged_from = [{"row_uid": r["row_uid"], "line": r["line_raw"], "quantity": r["quantity"], "capacity": r.get("capacity"), "source_key": r.get("source_key", "")} for r in others]
+                keep["quantity"] = float(sum(r["quantity"] or 0 for r in group))
+                if all(r.get("capacity") for r in group):
+                    keep["capacity"] = float(sum(r["capacity"] for r in group))
+                workers = [((r.get("extra") or {}).get("ref") or {}).get("worker") for r in group]
+                if any(workers):
+                    keep["extra"].setdefault("ref", {})["worker"] = float(sum(w or 0 for w in workers))
+                keep["line_assignments"], keep["line_raw"], keep["transfer"] = lines, format_lines(lines), None
+                keep["extra"]["merged_from"] = [*(keep["extra"].get("merged_from") or []), *merged_from]
+                drop = {r["row_uid"] for r in others}
+                for u in drop:
+                    by_uid.pop(u, None)
+                rows[:] = [r for r in rows if r["row_uid"] not in drop]
+                recalc_row(keep, _prev_in_lane_by_position(rows, keep))
+                changed.add(keep["row_uid"])
+
+            elif kind == "SPLIT_LINES":
+                # Tách chuyền: các chuyền được chọn rời dòng dồn chuyền, thành MỘT DÒNG MỚI (cùng PO) bắt đầu từ ngày tách
+                row = by_uid.get(op["rowUid"])
+                if row is None:
+                    raise OpError("Không tìm thấy dòng")
+                if row.get("transfer"):
+                    raise OpError("Dòng đang chuyển chuyền — gỡ chuyển chuyền trước khi tách")
+                cur = list(row["line_assignments"])
+                if op.get("newLines") or op.get("newAll"):
+                    # Tách SANG chuyền khác (dùng được cho dòng chỉ chạy 1 chuyền): dòng gốc giữ chuyền cũ, dòng mới chạy trên các chuyền được chọn
+                    eff = _to_date(op.get("effectiveDate"))
+                    if eff is None:
+                        raise OpError("Cần chọn ngày tách")
+                    qty_total, q = float(row["quantity"] or 0), float(op.get("quantity") or 0)
+                    if not 0 < q < qty_total:
+                        raise OpError("Số lượng tách phải lớn hơn 0 và nhỏ hơn số lượng của dòng")
+                    req = _clean_lines(op.get("newLines")) if op.get("newLines") else [row["primary_line"]]
+                    new_lines = _resolve_lines({"all": op.get("newAll")}, rows, row["factory_code"], req[0], req, factory_lines)
+                    if op.get("newAll"):
+                        new_lines = [l for l in new_lines if l not in cur]
+                    if not new_lines or any(l in cur for l in new_lines):
+                        raise OpError("Chuyền đích phải khác các chuyền đang chạy của dòng")
+                    defs = [cap_resolver({"factory_code": row["factory_code"], "primary_line": ln, "style_cc": row.get("style_cc", ""), "model_code": row.get("model_code", "")}) for ln in new_lines] if cap_resolver else []
+                    cap = row.get("capacity")
+                    per_line = (cap / len(cur)) if cap else None
+                    cap_new = float(sum(d["capacity_per_day"] for d in defs)) if defs and all(defs) else (per_line * len(new_lines) if per_line else None)
+                    worker = ((row.get("extra") or {}).get("ref") or {}).get("worker")
+                    uid = "D" + re.sub(r"\W", "", str(op["tempRowId"]))[:30]
+                    if uid in by_uid:
+                        raise OpError("tempRowId bị trùng")
+                    new = {**{k: v for k, v in row.items() if k != "extra"}, "row_uid": uid, "sequence": 0, "origin": "DRAFT_NEW", "transfer": None,
+                           "line_assignments": new_lines, "line_raw": format_lines(new_lines), "primary_line": new_lines[0], "quantity": q, "capacity": cap_new,
+                           "begin_prod_date": eff, "end_prod_date": None, "warehouse_date": None, "total_day": None,
+                           "extra": {"ref": {**((row.get("extra") or {}).get("ref") or {}), **({"worker": round(worker / len(cur) * len(new_lines), 1)} if worker else {})},
+                                     "split_from": row["row_uid"], "serial": {}, "overrides": {"begin_prod_date": {"source": "OVERRIDE", "calculated": None}}}}
+                    row["quantity"] = qty_total - q
+                    recalc_row(row, _prev_in_lane_by_position(rows, row))
+                    lane_new = sorted((r for r in rows if lane_key(r) == lane_key(new)), key=lambda r: r["sequence"])
+                    _insert_after(rows, new, lane_new[-1]["row_uid"] if lane_new else None)
+                    by_uid[uid] = new
+                    recalc_row(new, _prev_in_lane_by_position(rows, new))
+                    changed.update({row["row_uid"], uid})
+                    continue
+                take = _clean_lines(op.get("lines"))
+                if any(l not in cur for l in take):
+                    raise OpError("Chỉ tách được các chuyền đang có trong dòng")
+                if len(take) >= len(cur):
+                    raise OpError("Phải để lại ít nhất 1 chuyền cho dòng gốc")
+                stay = [l for l in cur if l not in take]
+                eff = _to_date(op.get("effectiveDate"))
+                if eff is None:
+                    raise OpError("Cần chọn ngày tách")
+                qty_total = float(row["quantity"] or 0)
+                q = float(op.get("quantity") or 0)
+                if not 0 < q < qty_total:
+                    raise OpError("Số lượng tách phải lớn hơn 0 và nhỏ hơn số lượng của dòng")
+                # tỷ trọng năng suất/nhân công của phần tách: theo định nghĩa từng chuyền (nếu đủ), không thì chia đều theo số chuyền
+                per = None
+                if cap_resolver is not None:
+                    defs = {ln: cap_resolver({"factory_code": row["factory_code"], "primary_line": ln, "style_cc": row.get("style_cc", ""), "model_code": row.get("model_code", "")}) for ln in cur}
+                    if all(defs.values()):
+                        per = {ln: float(d["capacity_per_day"]) for ln, d in defs.items()}
+                share = (sum(per[l] for l in take) / sum(per.values())) if per else len(take) / len(cur)
+                cap = row.get("capacity")
+                cap_new = (sum(per[l] for l in take) if per else cap * share) if cap else None
+                cap_old = (cap - cap_new) if (cap and cap_new is not None) else cap
+                worker = ((row.get("extra") or {}).get("ref") or {}).get("worker")
+                uid = "D" + re.sub(r"\W", "", str(op["tempRowId"]))[:30]
+                if uid in by_uid:
+                    raise OpError("tempRowId bị trùng")
+                new = {**{k: v for k, v in row.items() if k != "extra"}, "row_uid": uid, "sequence": 0, "origin": "DRAFT_NEW", "transfer": None,
+                       "line_assignments": take, "line_raw": format_lines(take), "primary_line": take[0], "quantity": q, "capacity": cap_new,
+                       "begin_prod_date": eff, "end_prod_date": None, "warehouse_date": None,
+                       "extra": {"ref": {**((row.get("extra") or {}).get("ref") or {}), **({"worker": round(worker * share, 1)} if worker else {})}, "split_from": row["row_uid"],
+                                 "overrides": {"begin_prod_date": {"source": "OVERRIDE", "calculated": None}}}}
+                new["total_day"] = None
+                new["extra"]["serial"] = {}
+                # phần còn lại của dòng gốc
+                old_lane = lane_key(row)
+                row["line_assignments"], row["line_raw"] = stay, format_lines(stay)
+                row["quantity"], row["capacity"] = qty_total - q, cap_old
+                if worker:
+                    row["extra"].setdefault("ref", {})["worker"] = round(worker * (1 - share), 1)
+                if (row["factory_code"], stay[0]) != old_lane:  # chuyền chính cũ đã bị tách đi -> dòng gốc sang chuyền chính mới
+                    rows.remove(row)
+                    row["primary_line"] = stay[0]
+                    lane = sorted((r for r in rows if lane_key(r) == lane_key(row)), key=lambda r: r["sequence"])
+                    _insert_after(rows, row, lane[-1]["row_uid"] if lane else None)
+                recalc_row(row, _prev_in_lane_by_position(rows, row))
+                lane_new = sorted((r for r in rows if lane_key(r) == lane_key(new)), key=lambda r: r["sequence"])
+                _insert_after(rows, new, lane_new[-1]["row_uid"] if lane_new else None)
+                by_uid[uid] = new
+                recalc_row(new, _prev_in_lane_by_position(rows, new))
+                changed.update({row["row_uid"], uid})
+
+            elif kind == "SET_TRANSFER":
+                # Chuyển chuyền "2 ==> 1": chuyển phần còn lại sang chuyền khác từ ngày hiệu lực
+                row = by_uid.get(op["rowUid"])
+                if row is None:
+                    raise OpError("Không tìm thấy dòng")
+                current = " + ".join(row["line_assignments"])
+                if op.get("clear"):
+                    row["transfer"], row["line_raw"] = None, current
+                else:
+                    to_lines = _clean_lines(op.get("toLines"))
+                    if set(to_lines) == set(row["line_assignments"]):
+                        raise OpError("Chuyền đến phải khác chuyền hiện tại")
+                    eff = _to_date(op.get("effectiveDate"))
+                    remaining = op.get("plannedRemainingQty")
+                    remaining = None if remaining in (None, "") else float(remaining)
+                    if remaining is not None and not 0 <= remaining <= float(row["quantity"] or 0):
+                        raise OpError("Số lượng còn lại chuyển đi phải trong khoảng 0 … số lượng của dòng")
+                    to = " + ".join(to_lines)
+                    row["transfer"] = {"from": current, "to": to, "effective_date": eff.isoformat() if eff else None, "planned_remaining_qty": remaining,
+                                       "status": "EFFECTIVE" if eff and eff <= date.today() else "PLANNED"}
+                    row["line_raw"] = f"{current} ==> {to}"
                 changed.add(row["row_uid"])
 
             elif kind == "RECALC_LANE":
@@ -309,6 +502,62 @@ def _thaw(snap: dict) -> dict:
     return row
 
 
+MAX_LOOSE_LINES = 4  # dồn lẻ tối đa 4 chuyền; muốn nhiều hơn phải dồn TẤT CẢ chuyền của xí nghiệp (hiển thị 1:18)
+
+
+def _natural(s: str):
+    return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", s)]
+
+
+def format_lines(lines: list[str]) -> str:
+    """<= 4 chuyền: "4 + 5 + 9" (giữ thứ tự, chuyền chính đứng đầu). Nhiều hơn: gộp dải số liên tiếp, VD tất cả chuyền -> "1:18"."""
+    if len(lines) <= MAX_LOOSE_LINES:
+        return " + ".join(lines)
+    nums = sorted((int(l) for l in lines if l.isdigit()))
+    others = sorted((l for l in lines if not l.isdigit()), key=_natural)
+    parts: list[str] = []
+    i = 0
+    while i < len(nums):
+        j = i
+        while j + 1 < len(nums) and nums[j + 1] == nums[j] + 1:
+            j += 1
+        parts.append(str(nums[i]) if i == j else f"{nums[i]}:{nums[j]}")
+        i = j + 1
+    return " + ".join([*parts, *others])
+
+
+def _factory_lines(rows: list[dict], factory: str, known: dict[str, set[str]] | None) -> set[str]:
+    out = set((known or {}).get(factory, set()))
+    for r in rows:
+        if r.get("factory_code") == factory:
+            out.add(r["primary_line"])
+            out.update(r.get("line_assignments") or [])
+    return out
+
+
+def _resolve_lines(op: dict, rows: list[dict], factory: str, primary: str, requested: list[str], known) -> list[str]:
+    """Áp quy tắc: dồn lẻ tối đa 4 chuyền; dồn TẤT CẢ chuyền của xí nghiệp thì không giới hạn (cờ `all` hoặc tự nhận biết)."""
+    all_set = _factory_lines(rows, factory, known)
+    if op.get("all"):
+        rest = sorted((l for l in all_set if l != primary), key=_natural)
+        return [primary, *rest]
+    if len(requested) > MAX_LOOSE_LINES and set(requested) != all_set:
+        raise OpError(f"Dồn lẻ tối đa {MAX_LOOSE_LINES} chuyền — muốn dồn nhiều hơn hãy chọn Tất cả chuyền của xí nghiệp")
+    return requested
+
+
+def _clean_lines(value) -> list[str]:
+    """['4', ' 5', '4'] -> ['4', '5'] (bỏ trống/trùng, giữ thứ tự); rỗng -> lỗi."""
+    seen: list[str] = []
+    for x in value or []:
+        s = str(x).strip()
+        if s and s not in seen:
+            seen.append(s)
+    if not seen:
+        raise OpError("Cần ít nhất một chuyền")
+    return seen
+
+
 def _prev_in_lane_by_position(rows: list[dict], row: dict) -> dict | None:
     lane = sorted((r for r in rows if lane_key(r) == lane_key(row)), key=lambda r: r["sequence"])
     idx = next((i for i, r in enumerate(lane) if r is row), None)
@@ -322,7 +571,7 @@ def _mark_override(row: dict, field: str, previous) -> None:
 
 
 # --------------------------------------------------------------------------- Recheck All Plan
-def recheck(rows: list[dict], cal: CalendarResolver, factory_codes: set[str]) -> dict:
+def recheck(rows: list[dict], cal: CalendarResolver, factory_codes: set[str], resource_check=None) -> dict:
     """Tính lại + kiểm tra toàn bộ kế hoạch. Trả {result, issues, counts, trace_id, started_at, completed_at, duration_ms}."""
     t0 = time.perf_counter()
     started = datetime.now(timezone.utc)
@@ -371,6 +620,11 @@ def recheck(rows: list[dict], cal: CalendarResolver, factory_codes: set[str]) ->
                     add("WARNING", r, "transfer", f"Chuyền đích {dest} không làm việc vào ngày hiệu lực {eff:%d/%m/%Y}", "TRANSFER_DEST_UNAVAILABLE")
             if t.get("from") and t.get("from") == t.get("to"):
                 add("ERROR", r, "transfer", "Chuyền đi và chuyền đến trùng nhau", "TRANSFER_SAME_LINE")
+
+    if resource_check is not None:  # năng suất / nhân lực / máy móc (nguồn lực)
+        for r in rows:
+            for sev, col, msg, code in resource_check(r):
+                add(sev, r, col, msg, code)
 
     for key, lane in lanes.items():
         lane.sort(key=lambda x: x["sequence"])

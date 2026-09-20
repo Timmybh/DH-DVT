@@ -9,6 +9,7 @@ export interface Col<T> {
   kind: ColKind;
   digits?: number;
   frozen?: boolean;
+  frozenRight?: boolean; // đóng băng bên phải (luôn thấy khi cuộn ngang)
   get: (r: T) => string | number | null | undefined;
 }
 
@@ -44,8 +45,8 @@ export const PLANNED_COLS: Col<PlanRowDto>[] = [
   { key: "wh_end", label: "End warehouse import", w: 116, kind: "date", get: (r) => r.calc?.end_warehouse_import },
   { key: "chd", label: "CHD", w: 84, kind: "date", get: (r) => r.chd },
   { key: "ehd", label: "EHD/ETD", w: 84, kind: "date", get: (r) => ref(r).ehd_etd },
-  { key: "ahd", label: "AHD", w: 84, kind: "date", get: (r) => ref(r).ahd },
-  { key: "on_time", label: "On time", w: 84, kind: "text", get: (r) => r.calc?.on_time ?? "" },
+  { key: "ahd", label: "AHD", w: 84, kind: "date", frozenRight: true, get: (r) => ref(r).ahd },
+  { key: "on_time", label: "On time", w: 84, kind: "text", frozenRight: true, get: (r) => r.calc?.on_time ?? "" },
 ];
 
 /** Cột lưới Unplanned. */

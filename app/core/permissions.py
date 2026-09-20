@@ -18,6 +18,7 @@ ALL_PERMISSIONS = [
     "calendar.view",
     "calendar.manage",
     "formula.manage",
+    "resource.manage",
     "sync.view",
     "sync.run",
     "sync.retry",

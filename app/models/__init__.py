@@ -19,6 +19,7 @@ from app.models.dashboard_cfg import (
     DashboardLayoutItem,
     DashboardRuleRegistry,
 )
+from app.models.resources import CapacityDefinition, LaborDaily, MachineCapacity, MachineRequirement, MachineType
 from app.models.planning import FormulaDefinition, PlanColumn, PlanningEditSession, PlanningVersion, PlanningVersionRow, WorkingCalendarRule
 
 __all__ = [
@@ -43,6 +44,11 @@ __all__ = [
     "DashboardLayout",
     "DashboardLayoutItem",
     "DashboardRuleRegistry",
+    "CapacityDefinition",
+    "LaborDaily",
+    "MachineCapacity",
+    "MachineRequirement",
+    "MachineType",
     "FormulaDefinition",
     "PlanColumn",
     "PlanningEditSession",

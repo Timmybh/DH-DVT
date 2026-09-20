@@ -1,5 +1,5 @@
-import { ReactNode } from "react";
-import { NavLink } from "react-router-dom";
+import { ReactNode, useEffect, useRef, useState } from "react";
+import { NavLink, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
 export interface TabDef {
@@ -13,6 +13,7 @@ export const PLANNING_TABS: TabDef[] = [
   { to: "/planning", label: "Bảng kế hoạch", perm: "planning.view", end: true },
   { to: "/planning/versions", label: "Phiên bản", perm: "planning.view" },
   { to: "/planning/calendar", label: "Lịch làm việc", perm: "calendar.view" },
+  { to: "/planning/resources", label: "Năng suất & nguồn lực", perm: "planning.view" },
   { to: "/planning/columns", label: "Cấu hình cột & công thức", perm: "planning.view" },
 ];
 
@@ -25,26 +26,47 @@ export const ADMIN_TABS: TabDef[] = [
   { to: "/admin/sso", label: "Đăng nhập / SSO", perm: "admin.sso_manage" },
 ];
 
-/** Thanh tab con của một khu vực (Kế hoạch / Quản trị); chỉ hiện tab người dùng có quyền. */
-export default function SubTabs({ tabs, children }: { tabs: TabDef[]; children: ReactNode }) {
+/** Menu 3 gạch gom các tab con của khu vực đang mở (Kế hoạch / Quản trị) — đặt trên thanh điều hướng chính; chỉ hiện mục người dùng có quyền. */
+export function SubTabsMenu() {
   const { can } = useAuth();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const loc = useLocation();
+  const tabs = loc.pathname.startsWith("/planning") ? PLANNING_TABS : loc.pathname.startsWith("/admin") ? ADMIN_TABS : null;
+  const allowed = (tabs ?? []).filter((t) => can(t.perm));
+  const current = [...allowed].sort((a, b) => b.to.length - a.to.length).find((t) => (t.end ? loc.pathname === t.to : loc.pathname.startsWith(t.to)));
+
+  useEffect(() => setOpen(false), [loc.pathname]);
+  useEffect(() => {
+    if (!open) return;
+    const off = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("mousedown", off);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("mousedown", off); document.removeEventListener("keydown", esc); };
+  }, [open]);
+
+  if (!tabs || allowed.length === 0) return null;
   return (
-    <div>
-      <nav className="mb-5 flex gap-1 overflow-x-auto border-b border-slate-200">
-        {tabs.filter((t) => can(t.perm)).map((t) => (
-          <NavLink
-            key={t.to}
-            to={t.to}
-            end={t.end}
-            className={({ isActive }) =>
-              `-mb-px whitespace-nowrap border-b-2 px-4 py-2 text-sm font-medium ${isActive ? "border-brand text-brand" : "border-transparent text-slate-500 hover:text-slate-800"}`
-            }
-          >
-            {t.label}
-          </NavLink>
-        ))}
-      </nav>
-      {children}
+    <div className="relative" ref={ref}>
+      <button onClick={() => setOpen((v) => !v)} aria-haspopup="menu" aria-expanded={open} aria-label="Menu chức năng" data-testid="subtabs-menu" className="flex items-center gap-2 rounded-lg border border-white/20 px-2.5 py-1.5 text-slate-200 hover:bg-white/10">
+        <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M2 4.5h14M2 9h14M2 13.5h14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
+        <span className="whitespace-nowrap text-sm font-semibold text-white">{current?.label ?? "Chức năng"}</span>
+      </button>
+      {open && (
+        <nav role="menu" className="absolute left-0 top-full z-50 mt-1 min-w-56 rounded-xl border border-slate-200 bg-white p-1 shadow-xl">
+          {allowed.map((t) => (
+            <NavLink key={t.to} to={t.to} end={t.end} role="menuitem" className={({ isActive }) => `block rounded-lg px-3 py-2 text-sm ${isActive ? "bg-indigo-100 font-semibold text-brand" : "text-slate-700 hover:bg-slate-100"}`}>
+              {t.label}
+            </NavLink>
+          ))}
+        </nav>
+      )}
     </div>
   );
+}
+
+/** Vỏ trang con — menu đã nằm trên Navbar nên chỉ hiển thị nội dung. */
+export default function SubTabs({ children }: { tabs?: TabDef[]; children: ReactNode }) {
+  return <div>{children}</div>;
 }
