@@ -31,6 +31,8 @@ export interface AuthUser {
   email: string;
   role: "ADMIN" | "PLANNER" | "VIEWER";
   permissions: string[];
+  must_change_password: boolean;
+  security_warnings: string[];
 }
 
 export interface Tile {
@@ -159,4 +161,117 @@ export interface UserRow {
   is_active: boolean;
   allow_local_login: boolean;
   last_login_at: string | null;
+}
+
+// ---------------------------------------------------------------- Planning
+export interface PlanTransfer {
+  from: string;
+  to: string;
+  effective_date: string | null;
+  planned_remaining_qty: number | null;
+  status: string;
+}
+
+export interface PlanRowDto {
+  row_uid: string;
+  sequence: number;
+  origin: "EXISTING" | "DRAFT_NEW";
+  source_key: string;
+  source_plan_row_id: number | null;
+  factory_code: string;
+  primary_line: string;
+  line_raw: string;
+  line_assignments: string[];
+  transfer: PlanTransfer | null;
+  po_number: string;
+  style_cc: string;
+  model_code: string;
+  description: string;
+  customer: string;
+  sport: string;
+  season: string;
+  quantity: number;
+  capacity: number | null;
+  total_day: number | null;
+  begin_prod_date: string | null;
+  end_prod_date: string | null;
+  warehouse_date: string | null;
+  chd: string | null;
+  note: string;
+  extra: { overrides?: Record<string, { source: string; calculated: unknown }> };
+}
+
+export interface UnplannedDto {
+  id: number;
+  source_key: string;
+  factory_code: string;
+  factory_assignment: "KNOWN" | "UNASSIGNED";
+  mapping_status: "OK" | "WARNING";
+  mapping_note: string;
+  fac_raw: string;
+  po_number: string;
+  style_cc: string;
+  model_code: string;
+  description: string;
+  customer: string;
+  sport: string;
+  season: string;
+  quantity: number;
+  capacity: number | null;
+  chd: string | null;
+  note: string;
+  po_date: string | null;
+}
+
+export interface PlanVersion {
+  id: number;
+  code: string;
+  year: number;
+  week: number;
+  major: number;
+  minor: number | null;
+  parent_id: number | null;
+  status: "COMMITTED" | "ISSUED" | "SUPERSEDED";
+  note: string;
+  created_by: string;
+  created_at: string;
+  row_count: number;
+  recheck_result: "PASS" | "WARNING" | "ERROR" | "";
+  recheck_trace_id: string;
+  recheck_at: string | null;
+  recheck_summary: { counts?: { ERROR: number; WARNING: number; rows: number }; by_rule?: Record<string, number> };
+  issued_at: string | null;
+  issued_by: string;
+  base_version_id: number | null;
+}
+
+export interface EditSessionView {
+  id: string;
+  username: string;
+  status: string;
+  started_at: string;
+  last_heartbeat: string;
+  base_version_id: number | null;
+  is_mine: boolean;
+  timeout_seconds: number;
+}
+
+export interface RecheckIssue {
+  severity: "ERROR" | "WARNING";
+  row_uid: string;
+  column: string;
+  message: string;
+  rule_code: string;
+  po_number: string;
+}
+
+export interface RecheckResult {
+  result: "PASS" | "WARNING" | "ERROR";
+  issues: RecheckIssue[];
+  counts: { ERROR: number; WARNING: number; rows: number };
+  by_rule: Record<string, number>;
+  trace_id: string;
+  duration_ms: number;
+  draft_revision: number;
+  computed_rows: PlanRowDto[];
 }

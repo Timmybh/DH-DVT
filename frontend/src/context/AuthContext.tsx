@@ -7,6 +7,7 @@ interface AuthContextValue {
   can: (permission: string) => boolean;
   login: (username: string, password: string) => Promise<void>;
   loginGoogle: (credential: string) => Promise<void>;
+  changePassword: (current: string, next: string) => Promise<void>;
   logout: () => void;
 }
 
@@ -50,6 +51,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     can: (p) => !!user?.permissions.includes(p),
     login: async (username, password) => accept((await api.post("/auth/login", { username, password })).data),
     loginGoogle: async (credential) => accept((await api.post("/auth/google", { credential })).data),
+    changePassword: async (current_password, new_password) => setUser((await api.post<AuthUser>("/auth/change-password", { current_password, new_password })).data),
     logout: () => {
       api.post("/auth/logout").catch(() => undefined);
       clear();

@@ -10,10 +10,11 @@ from app.models.core import User
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
-def get_current_user(
+def get_current_user_any(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: Session = Depends(get_db),
 ) -> User:
+    """Xác thực token, KHÔNG chặn tài khoản đang bị buộc đổi mật khẩu (dùng cho /auth/me, /auth/change-password, /auth/logout)."""
     if credentials is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Chưa đăng nhập")
     payload = decode_access_token(credentials.credentials)
@@ -22,6 +23,12 @@ def get_current_user(
     user = db.query(User).filter(User.username == payload.get("sub")).first()
     if user is None or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Tài khoản không tồn tại hoặc đã bị khóa")
+    return user
+
+
+def get_current_user(user: User = Depends(get_current_user_any)) -> User:
+    if user.must_change_password:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="PASSWORD_CHANGE_REQUIRED")
     return user
 
 

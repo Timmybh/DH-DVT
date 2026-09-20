@@ -17,6 +17,7 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(20), default="VIEWER")  # ADMIN | PLANNER | VIEWER
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     allow_local_login: Mapped[bool] = mapped_column(Boolean, default=True)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

@@ -33,6 +33,22 @@ Cập nhật lần sau: chạy lại script (không ghi đè `.env`); thêm `-Sk
 
 ## 3. Tạo Application Pool và Site
 
+### 3a. Cách nhanh — script tự động (khuyến nghị)
+
+Mở PowerShell **Run as Administrator** (máy chủ IIS), sau khi đã cài HttpPlatformHandler và chạy `publish.ps1`:
+
+```powershell
+.\deploy\setup-iis.ps1 -SiteRoot C:\inetpub\dvt-dashboard -Port 8080
+# HTTPS: thêm -Port 443 -HostHeader dvt.congty.vn -CertThumbprint <thumbprint chứng chỉ trong LocalMachine\My>
+# Máy chưa bật IIS: thêm -InstallIIS
+```
+
+Script kiểm tra tiền điều kiện (IIS, HttpPlatformHandler, thư mục site, `.env`), tạo App Pool (No Managed Code, AlwaysRunning,
+Idle Time-out = 0, không recycle định kỳ) + Website (Preload), cấp quyền `IIS AppPool\dvt-dashboard`, khởi động và gọi
+`/api/health`. Chạy lại được nhiều lần (idempotent).
+
+### 3b. Làm thủ công (nếu không dùng script)
+
 1. **Application Pool** `dvt-dashboard`: *.NET CLR version = No Managed Code*, Pipeline = Integrated.
    - Advanced Settings: **Start Mode = AlwaysRunning**, **Idle Time-out = 0**, *Regular Time Interval* = 0 (hoặc đặt giờ
      không trùng giờ đồng bộ). Lý do: job đồng bộ eGMF chạy nền trong tiến trình; nếu pool bị idle-stop thì lịch 05:00 không chạy.
@@ -46,18 +62,29 @@ Cập nhật lần sau: chạy lại script (không ghi đè `.env`); thêm `-Sk
 ## 4. Kiểm tra
 
 - `https://<host>/api/health` → `{"status":"ok"}`
-- Mở `https://<host>/`, đăng nhập `admin` / `Admin@123` rồi **đổi mật khẩu ngay** (Người dùng → Đặt lại mật khẩu).
+- Mở `https://<host>/`, đăng nhập `admin` / `Admin@123` — hệ thống sẽ yêu cầu đặt mật khẩu mới ngay.
 - Vào **Sync Log** → *Đồng bộ eGMF ngay*, và nhập file kế hoạch SX (`.xlsb`).
 - Log tiến trình: `C:\inetpub\dvt-dashboard\logs\stdout*.log`.
 
-## 5. Bảo mật khi lên môi trường thật
+## 5. Cấu hình Google SSO
 
-- Đổi `JWT_SECRET`, đổi mật khẩu `admin` mặc định.
+1. Google Cloud Console → *APIs & Services* → *Credentials* → **Create credentials → OAuth client ID** → loại *Web application*.
+2. **Authorized JavaScript origins**: `https://<host-cua-ban>` (đúng scheme/host/port người dùng truy cập). Không cần Redirect URI
+   vì dùng Google Identity Services (ID token).
+3. Copy **Client ID** → vào ứng dụng, menu *Đăng nhập / SSO*: bật Google SSO, dán Client ID, nhập domain email được phép
+   (VD `dongtien.com.vn`), Lưu.
+4. Tạo người dùng đúng email công ty ở mục *Người dùng* (hệ thống **không tự tạo** tài khoản). Nút "Sign in with Google" sẽ hiện ở màn
+   hình đăng nhập.
+5. Khi SSO ổn định: tắt "đăng nhập nội bộ (dự phòng)" (giữ lại 1 tài khoản Admin có quyền nội bộ để cứu hộ nếu Google gián đoạn).
+
+## 6. Bảo mật khi lên môi trường thật
+
+- Đổi `JWT_SECRET` (dashboard hiện cảnh báo cho quản trị nếu còn mặc định). Tài khoản `admin` mặc định **bị buộc đổi mật khẩu** ở lần đăng nhập đầu; tài khoản do quản trị tạo/đặt lại mật khẩu cũng bị buộc đổi.
 - Bật **Google SSO** (menu *Đăng nhập / SSO*: Client ID, domain cho phép), tạo người dùng đúng email; sau khi SSO ổn định thì tắt
   "đăng nhập nội bộ (dự phòng)". Mọi lượt đăng nhập đều nằm trong Audit.
 - Chỉ mở HTTPS; SQL Server cấp tài khoản read-only cho các bảng `LCD_Truc_Quan_XiNghiep_*` và `GDXN_XiNghiep`.
 
-## 6. Xử lý sự cố
+## 7. Xử lý sự cố
 
 | Triệu chứng | Nguyên nhân thường gặp |
 |---|---|

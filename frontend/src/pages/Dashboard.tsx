@@ -7,6 +7,7 @@ import ProgressSection from "../components/ProgressSection";
 import RevenueSection from "../components/RevenueSection";
 import SignalsSidebar from "../components/SignalsSidebar";
 import { StatusBadge } from "../components/Section";
+import { useAuth } from "../context/AuthContext";
 import { dateTimeVi, SOURCE_LABEL } from "../lib/format";
 
 interface Meta {
@@ -16,6 +17,7 @@ interface Meta {
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [meta, setMeta] = useState<Meta | null>(null);
   const [scope, setScope] = useState("TONG");
   const [month, setMonth] = useState("");
@@ -110,6 +112,12 @@ export default function Dashboard() {
       {overview?.revenue.has_demo && (
         <div className="rounded-xl border-2 border-dashed border-orange-300 bg-orange-50 p-3 text-sm font-medium text-orange-800">
           DỮ LIỆU DOANH THU MẪU — chưa đồng bộ được từ eGMF. Số liệu doanh thu bên dưới chỉ để minh họa; sẽ tự thay bằng số thật khi đồng bộ thành công.
+        </div>
+      )}
+      {!!user?.security_warnings.length && (
+        <div className="rounded-xl border border-orange-200 bg-orange-50 p-3 text-xs text-orange-800">
+          <p className="mb-1 font-bold">Khuyến nghị bảo mật (chỉ quản trị thấy)</p>
+          <ul className="list-inside list-disc space-y-0.5">{user.security_warnings.map((w) => <li key={w}>{w}</li>)}</ul>
         </div>
       )}
       {error && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}

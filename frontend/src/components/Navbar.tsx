@@ -20,6 +20,9 @@ export default function Navbar() {
 
         <nav className="flex flex-1 items-center justify-center gap-1 overflow-x-auto">
           <NavLink to="/" end className={linkClass}>Dashboard</NavLink>
+          {can("planning.view") && <NavLink to="/planning" end className={linkClass}>Kế hoạch</NavLink>}
+          {can("planning.view") && <NavLink to="/planning/versions" className={linkClass}>Phiên bản</NavLink>}
+          {can("calendar.view") && <NavLink to="/admin/calendar" className={linkClass}>Lịch làm việc</NavLink>}
           {can("sync.view") && <NavLink to="/sync" className={linkClass}>Sync Log</NavLink>}
           {can("admin.user_manage") && <NavLink to="/admin/users" className={linkClass}>Người dùng</NavLink>}
           {can("audit.view") && <NavLink to="/admin/audit" className={linkClass}>Audit</NavLink>}
@@ -31,6 +34,7 @@ export default function Navbar() {
             <p className="text-sm font-medium leading-none text-slate-900">{user?.full_name}</p>
             <p className="text-xs text-slate-500">{user ? ROLE_LABEL[user.role] : ""}</p>
           </div>
+          <NavLink to="/change-password" className="text-xs text-slate-500 hover:text-brand">Đổi mật khẩu</NavLink>
           <button onClick={logout} className="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
             Đăng xuất
           </button>

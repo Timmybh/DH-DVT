@@ -83,6 +83,7 @@ def create_user(payload: UserCreate, db: Session = Depends(get_db), actor: User 
         password_hash=hash_password(payload.password),
         role=payload.role,
         allow_local_login=payload.allow_local_login,
+        must_change_password=True,
     )
     db.add(user)
     db.commit()
@@ -121,6 +122,7 @@ def reset_password(user_id: int, payload: PasswordReset, db: Session = Depends(g
     if user is None:
         raise HTTPException(404, "Không tìm thấy người dùng")
     user.password_hash = hash_password(payload.new_password)
+    user.must_change_password = True
     db.commit()
     write_audit("PASSWORD_RESET", user=actor, object_type="User", object_id=user.username)
     return {"ok": True}

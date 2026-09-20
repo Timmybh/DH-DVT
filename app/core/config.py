@@ -31,7 +31,12 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     static_dir: str = ""
 
-    # Rủi ro: file kế hoạch cũ hơn số ngày này sẽ có cảnh báo
+    # Planning Core
+    planning_session_timeout_seconds: int = 180  # quá thời gian này không heartbeat -> phiên EXPIRED (§2.1/§14)
+    planning_max_undo: int = 100
+    planning_issue_requires_pass: bool = True  # §19.3: chỉ Issue khi Recheck = PASS
+
+    # Cảnh báo khi file kế hoạch cũ hơn số ngày này / dữ liệu eGMF chưa làm mới sau số giờ này
     plan_stale_days: int = 45
     sync_stale_hours: int = 36
 

@@ -1,8 +1,9 @@
 import logging
 
-from app.core.security import hash_password
+from app.core.security import hash_password, verify_password
 from app.db.session import Base, SessionLocal, engine
 from app.models.core import Factory, SsoConfig, SyncConfig, User
+from app.models.planning import WorkingCalendarRule
 from app.services.sync_core import recover_stale_runs
 
 log = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ def _upgrade_schema() -> None:
             "ALTER TABLE plan_rows ADD COLUMN IF NOT EXISTS mapping_status VARCHAR(8) NOT NULL DEFAULT 'OK'",
             "ALTER TABLE plan_rows ADD COLUMN IF NOT EXISTS mapping_note VARCHAR(200) NOT NULL DEFAULT ''",
             "ALTER TABLE plan_rows ADD COLUMN IF NOT EXISTS fac_raw VARCHAR(20) NOT NULL DEFAULT ''",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE",
         ):
             try:
                 conn.execute(text(ddl))
@@ -52,9 +54,18 @@ def run_seed() -> None:
                     email="admin@dvt.local",
                     password_hash=hash_password(DEFAULT_ADMIN_PASSWORD),
                     role="ADMIN",
+                    must_change_password=True,
                 )
             )
-            log.warning("Đã tạo tài khoản admin mặc định — hãy đổi mật khẩu ngay sau khi đăng nhập")
+            log.warning("Đã tạo tài khoản admin mặc định — bắt buộc đổi mật khẩu ở lần đăng nhập đầu")
+        else:
+            admin = db.query(User).filter(User.username == DEFAULT_ADMIN_USERNAME).first()
+            if not admin.must_change_password and verify_password(DEFAULT_ADMIN_PASSWORD, admin.password_hash):
+                admin.must_change_password = True  # vẫn dùng mật khẩu mặc định -> buộc đổi
+                log.warning("Tài khoản admin vẫn dùng mật khẩu mặc định — đã bật bắt buộc đổi mật khẩu")
+
+        if db.query(WorkingCalendarRule).count() == 0:  # mặc định Company: Chủ nhật nghỉ (admin chỉnh trong lịch làm việc)
+            db.add(WorkingCalendarRule(scope_type="COMPANY", scope_key="", rule_type="WEEKLY_OFF", weekday=6, note="Chủ nhật nghỉ", created_by="system"))
 
         if not db.get(SsoConfig, 1):
             db.add(SsoConfig(id=1))

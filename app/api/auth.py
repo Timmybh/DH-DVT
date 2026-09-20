@@ -5,12 +5,14 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
-from app.core.permissions import permissions_for
-from app.core.security import create_access_token, verify_password
+from app.api.deps import get_current_user_any
+from app.core.config import settings
+from app.core.permissions import permissions_for, validate_password
+from app.core.security import create_access_token, hash_password, verify_password
 from app.db.session import get_db
 from app.models.core import SsoConfig, User
 from app.services.audit import write_audit
+from app.services.sso import authenticate_google
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -24,20 +26,40 @@ class GoogleLoginRequest(BaseModel):
     credential: str
 
 
-def _user_payload(user: User) -> dict:
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+def security_warnings(user: User, db: Session) -> list[str]:
+    """Cảnh báo cấu hình an toàn — chỉ hiển thị cho quản trị."""
+    if user.role != "ADMIN":
+        return []
+    out = []
+    if settings.jwt_secret in ("", "change-me-in-env") or len(settings.jwt_secret) < 32:
+        out.append("JWT_SECRET đang là giá trị mặc định/quá ngắn. Đặt chuỗi ngẫu nhiên ≥ 32 ký tự trong .env (python -c \"import secrets;print(secrets.token_urlsafe(48))\").")
+    cfg = db.get(SsoConfig, 1)
+    if cfg and not cfg.google_enabled and cfg.local_fallback_enabled:
+        out.append("Google SSO chưa bật — đang chỉ dùng đăng nhập nội bộ (phương án dự phòng). Cấu hình ở mục Đăng nhập / SSO.")
+    return out
+
+
+def _user_payload(user: User, db: Session | None = None) -> dict:
     return {
         "username": user.username,
         "full_name": user.full_name,
         "email": user.email,
         "role": user.role,
         "permissions": permissions_for(user.role),
+        "must_change_password": user.must_change_password,
+        "security_warnings": security_warnings(user, db) if db is not None else [],
     }
 
 
 def _token_response(user: User, db: Session) -> dict:
     user.last_login_at = datetime.now(timezone.utc)
     db.commit()
-    return {"access_token": create_access_token(user.username, user.role), "token_type": "bearer", "user": _user_payload(user)}
+    return {"access_token": create_access_token(user.username, user.role), "token_type": "bearer", "user": _user_payload(user, db)}
 
 
 def _sso(db: Session) -> SsoConfig:
@@ -83,43 +105,31 @@ def login_local(payload: LoginRequest, db: Session = Depends(get_db)) -> dict:
 
 @router.post("/google")
 def login_google(payload: GoogleLoginRequest, db: Session = Depends(get_db)) -> dict:
-    cfg = _sso(db)
-    if not (cfg.google_enabled and cfg.google_client_id):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Google SSO chưa được bật")
-    try:
-        from google.auth.transport import requests as google_requests
-        from google.oauth2 import id_token
-
-        info = id_token.verify_oauth2_token(payload.credential, google_requests.Request(), cfg.google_client_id)
-    except Exception as exc:  # noqa: BLE001
-        write_audit("LOGIN_SSO", result="FAILED", detail=f"Token Google không hợp lệ: {exc}"[:300])
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Không xác thực được tài khoản Google")
-
-    email = (info.get("email") or "").lower()
-    if not info.get("email_verified") or "@" not in email:
-        write_audit("LOGIN_SSO", username=email, result="FAILED", detail="Email chưa xác minh")
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Email Google chưa được xác minh")
-
-    domains = [d.strip().lower() for d in cfg.allowed_domains.split(",") if d.strip()]
-    if domains and email.split("@", 1)[1] not in domains:
-        write_audit("LOGIN_SSO", username=email, result="DENIED", detail="Domain không được phép")
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Domain email không được phép truy cập")
-
-    user = db.query(User).filter(func.lower(User.email) == email).first()
-    if user is None or not user.is_active:
-        write_audit("LOGIN_SSO", username=email, result="DENIED", detail="Email chưa được cấp tài khoản")
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Tài khoản chưa được cấp quyền. Liên hệ quản trị viên.")
-
-    write_audit("LOGIN_SSO", user=user, object_type="User", object_id=user.username)
-    return _token_response(user, db)
+    return _token_response(authenticate_google(db, payload.credential), db)
 
 
 @router.get("/me")
-def me(user: User = Depends(get_current_user)) -> dict:
-    return _user_payload(user)
+def me(user: User = Depends(get_current_user_any), db: Session = Depends(get_db)) -> dict:
+    return _user_payload(user, db)
+
+
+@router.post("/change-password")
+def change_password(payload: ChangePasswordRequest, user: User = Depends(get_current_user_any), db: Session = Depends(get_db)) -> dict:
+    if not verify_password(payload.current_password, user.password_hash):
+        write_audit("PASSWORD_CHANGE", user=user, result="FAILED", detail="Sai mật khẩu hiện tại")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Mật khẩu hiện tại không đúng")
+    if err := validate_password(payload.new_password):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, err)
+    if verify_password(payload.new_password, user.password_hash):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Mật khẩu mới phải khác mật khẩu hiện tại")
+    user.password_hash = hash_password(payload.new_password)
+    user.must_change_password = False
+    db.commit()
+    write_audit("PASSWORD_CHANGE", user=user, object_type="User", object_id=user.username)
+    return _user_payload(user, db)
 
 
 @router.post("/logout")
-def logout(user: User = Depends(get_current_user)) -> dict:
+def logout(user: User = Depends(get_current_user_any)) -> dict:
     write_audit("LOGOUT", user=user, object_type="User", object_id=user.username)
     return {"ok": True}
