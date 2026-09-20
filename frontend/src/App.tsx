@@ -12,6 +12,7 @@ import ColumnConfig from "./pages/planning/ColumnConfig";
 import SyncDetail from "./pages/SyncDetail";
 import SyncLog from "./pages/SyncLog";
 import Audit from "./pages/admin/Audit";
+import DashboardConfig from "./pages/admin/DashboardConfig";
 import Calendar from "./pages/admin/Calendar";
 import Sso from "./pages/admin/Sso";
 import Users from "./pages/admin/Users";
@@ -49,6 +50,8 @@ export default function App() {
       <Route path="/planning/calendar" element={<Protected perm="calendar.view"><SubTabs tabs={PLANNING_TABS}><Calendar /></SubTabs></Protected>} />
       <Route path="/planning/columns" element={<Protected perm="planning.view"><SubTabs tabs={PLANNING_TABS}><ColumnConfig /></SubTabs></Protected>} />
       <Route path="/admin" element={<AdminIndex />} />
+      <Route path="/admin/dashboard" element={<Navigate to="/admin/dashboard/indicators" replace />} />
+      <Route path="/admin/dashboard/:section" element={<Protected perm="dashboard.config_view"><SubTabs tabs={ADMIN_TABS}><DashboardConfig /></SubTabs></Protected>} />
       <Route path="/admin/sync" element={<Protected perm="sync.view"><SubTabs tabs={ADMIN_TABS}><SyncLog /></SubTabs></Protected>} />
       <Route path="/admin/sync/:runId" element={<Protected perm="sync.view"><SubTabs tabs={ADMIN_TABS}><SyncDetail /></SubTabs></Protected>} />
       <Route path="/admin/users" element={<Protected perm="admin.user_manage"><SubTabs tabs={ADMIN_TABS}><Users /></SubTabs></Protected>} />

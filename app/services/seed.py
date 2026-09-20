@@ -78,5 +78,8 @@ def run_seed() -> None:
         from app.services import formula_service  # tránh vòng import khi nạp module
 
         formula_service.seed_columns_and_formulas(db)
+        from app.services import dashboard_meta
+
+        dashboard_meta.seed_dashboard_meta(db)
         formula_service.refresh_active(db)
         recover_stale_runs(db)

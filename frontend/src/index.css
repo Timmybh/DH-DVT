@@ -115,3 +115,11 @@ body { font-family: "Montserrat", "Segoe UI", system-ui, sans-serif; color: #e2e
 .pg-zone-over { outline: 2px dashed #818cf8; outline-offset: -3px; }
 .pg input[type="checkbox"] { width: 14px; height: 14px; accent-color: #6366f1; }
 .pg .pg-gf td, .pg .pg-gl td, .pg .pg-end td, .pg .pg-detail td { overflow: visible; }
+
+/* ===== Dashboard runtime: lưới 12 cột theo metadata bố cục ===== */
+.dash-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 1.25rem; grid-auto-rows: minmax(56px, auto); align-items: start; }
+.dash-item { grid-column: var(--gc); grid-row: var(--gr); }
+@media (max-width: 1023px) {
+  .dash-grid { display: flex; flex-direction: column; }
+  .dash-item { order: var(--ord); }
+}

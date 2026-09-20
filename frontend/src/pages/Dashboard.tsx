@@ -1,13 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, Drill, errorMessage, Overview, Signal } from "../api/client";
-import OrderKpiSection from "../components/OrderKpiSection";
-import QaSection from "../components/QaSection";
+import { api, Drill, errorMessage, RuntimeResponse } from "../api/client";
+import DashboardCanvas from "../components/dashboard/DashboardCanvas";
+import { DashActions } from "../components/dashboard/renderers";
 import DrillDrawer, { DrillTarget } from "../components/DrillDrawer";
-import HrSection from "../components/HrSection";
-import ProgressSection from "../components/ProgressSection";
-import RevenueSection from "../components/RevenueSection";
-import SignalsSidebar from "../components/SignalsSidebar";
 import { StatusBadge } from "../components/Section";
 import { useAuth } from "../context/AuthContext";
 import { dateTimeVi, SOURCE_LABEL } from "../lib/format";
@@ -17,14 +13,14 @@ interface Meta {
   factories: { code: string; name: string }[];
 }
 
+/** Dashboard runtime: mọi thành phần hiển thị (vị trí, kiểu hiển thị, dữ liệu) đến từ metadata + Rule Registry ở backend. */
 export default function Dashboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [meta, setMeta] = useState<Meta | null>(null);
   const [scope, setScope] = useState("TONG");
   const [month, setMonth] = useState("");
-  const [overview, setOverview] = useState<Overview | null>(null);
-  const [signals, setSignals] = useState<{ good: Signal[]; warn: Signal[] }>({ good: [], warn: [] });
+  const [runtime, setRuntime] = useState<RuntimeResponse | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [drill, setDrill] = useState<DrillTarget | null>(null);
@@ -33,11 +29,9 @@ export default function Dashboard() {
     setLoading(true);
     setError("");
     try {
-      const params = { scope, month: month || undefined };
-      const [ov, sg] = await Promise.all([api.get<Overview>("/dashboard/overview", { params }), api.get("/dashboard/signals", { params })]);
-      setOverview(ov.data);
-      setSignals(sg.data);
-      if (!month) setMonth(ov.data.month);
+      const r = await api.get<RuntimeResponse>("/dashboard/runtime", { params: { scope, month: month || undefined } });
+      setRuntime(r.data);
+      if (!month) setMonth(r.data.header.month);
     } catch (e) {
       setError(errorMessage(e, "Không tải được dữ liệu dashboard"));
     } finally {
@@ -58,22 +52,34 @@ export default function Dashboard() {
     return () => clearInterval(t);
   }, [load]);
 
-  const handleSignalDrill = (d: Drill) => {
-    if (d.kind === "sync_run") navigate(`/admin/sync/${d.id}`);
-    else if (d.kind === "sync_log") navigate("/admin/sync");
-    else if (d.kind === "revenue") setDrill({ type: "revenue", month: d.month });
-    else if (d.kind === "po") setDrill({ type: "po", risk: d.risk });
-  };
+  const currentMonth = runtime?.header.month ?? month;
+  const actions: DashActions = useMemo(
+    () => ({
+      month: currentMonth,
+      drillRevenue: (code) => setDrill({ type: "revenue", month: currentMonth, scope: code }),
+      drillOrder: (kind, status) => setDrill({ type: "order", kind, status, month: currentMonth }),
+      drillQa: (category) => setDrill({ type: "qa", category, month: currentMonth }),
+      drillPo: (risk) => setDrill({ type: "po", risk }),
+      drillHr: () => setDrill({ type: "hr" }),
+      drillSignal: (d: Drill) => {
+        if (d.kind === "sync_run") navigate(`/admin/sync/${d.id}`);
+        else if (d.kind === "sync_log") navigate("/admin/sync");
+        else if (d.kind === "revenue") setDrill({ type: "revenue", month: d.month });
+        else if (d.kind === "po") setDrill({ type: "po", risk: d.risk });
+      },
+    }),
+    [currentMonth, navigate],
+  );
 
   const tabs = [{ code: "TONG", name: "Tổng công ty" }, ...(meta?.factories ?? [])];
-  const lastSync = overview?.sync.revenue;
-  const lastPlan = overview?.sync.plan;
+  const lastSync = runtime?.header.sync.revenue;
+  const lastPlan = runtime?.header.sync.plan;
 
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold text-slate-900">Dashboard điều hành — {overview?.scope_name ?? "..."}</h1>
+          <h1 className="text-xl font-bold text-slate-900">Dashboard điều hành — {runtime?.header.scope_name ?? "..."}</h1>
           <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
             {[lastSync, lastPlan].filter(Boolean).map((s) => (
               <span key={s!.id} className="flex items-center gap-1.5">
@@ -111,7 +117,7 @@ export default function Dashboard() {
 
       {scope === "TONG" && <p className="text-xs text-slate-400">Góc nhìn Tổng công ty được cộng dồn từ các đơn vị (xí nghiệp). Chọn XN1/XN2/XN3 để xem riêng từng đơn vị.</p>}
 
-      {overview?.revenue.has_demo && (
+      {runtime?.header.has_demo && (
         <div className="rounded-xl border-2 border-dashed border-orange-300 bg-orange-50 p-3 text-sm font-medium text-orange-800">
           DỮ LIỆU DOANH THU MẪU — chưa đồng bộ được từ eGMF. Số liệu doanh thu bên dưới chỉ để minh họa; sẽ tự thay bằng số thật khi đồng bộ thành công.
         </div>
@@ -124,21 +130,8 @@ export default function Dashboard() {
       )}
       {error && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
 
-      {overview && (
-        <div className="flex flex-col gap-5 xl:flex-row xl:items-start">
-          <div className="min-w-0 flex-1 space-y-5">
-            <RevenueSection data={overview.revenue} onDrill={(code) => setDrill({ type: "revenue", month: overview.month, scope: code })} />
-            <OrderKpiSection data={overview.order_kpi} onDrill={(kind, status) => setDrill({ type: "order", kind, status, month: overview.month })} />
-            <QaSection data={overview.qa} onDrill={(category) => setDrill({ type: "qa", category, month: overview.month })} />
-            <ProgressSection data={overview.progress} onDrill={(risk) => setDrill({ type: "po", risk })} />
-            <HrSection data={overview.hr} onDrill={() => setDrill({ type: "hr" })} />
-          </div>
-          <div className="xl:sticky xl:top-4">
-            <SignalsSidebar good={signals.good} warn={signals.warn} onDrill={handleSignalDrill} />
-          </div>
-        </div>
-      )}
-      {!overview && loading && <p className="text-sm text-slate-500">Đang tải dữ liệu...</p>}
+      {runtime && <DashboardCanvas runtime={runtime} actions={actions} />}
+      {!runtime && loading && <p className="text-sm text-slate-500">Đang tải dữ liệu...</p>}
 
       <DrillDrawer target={drill} scope={scope} onClose={() => setDrill(null)} />
     </div>

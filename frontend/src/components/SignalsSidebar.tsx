@@ -6,11 +6,13 @@ interface Props {
   onDrill: (drill: Drill) => void;
 }
 
-export default function SignalsSidebar({ good, warn, onDrill }: Props) {
-  const critical = warn.filter((s) => s.severity === "CRITICAL").length;
+interface CardProps {
+  items: Signal[];
+  onDrill: (drill: Drill) => void;
+}
 
+export function GoodNewsCard({ items: good, onDrill }: CardProps) {
   return (
-    <aside className="w-full shrink-0 space-y-4 xl:w-80">
       <div className="rounded-2xl border border-green-200 bg-green-50/60 p-4">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-sm font-bold text-green-800">Tin tốt</h3>
@@ -30,7 +32,12 @@ export default function SignalsSidebar({ good, warn, onDrill }: Props) {
           ))}
         </div>
       </div>
+  );
+}
 
+export function WarningCard({ items: warn, onDrill }: CardProps) {
+  const critical = warn.filter((s) => s.severity === "CRITICAL").length;
+  return (
       <div className="rounded-2xl border border-slate-200 bg-white p-4">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-sm font-bold text-slate-800">Cảnh báo / Cần chú ý</h3>
@@ -66,6 +73,14 @@ export default function SignalsSidebar({ good, warn, onDrill }: Props) {
           })}
         </div>
       </div>
+  );
+}
+
+export default function SignalsSidebar({ good, warn, onDrill }: Props) {
+  return (
+    <aside className="w-full shrink-0 space-y-4 xl:w-80">
+      <GoodNewsCard items={good} onDrill={onDrill} />
+      <WarningCard items={warn} onDrill={onDrill} />
     </aside>
   );
 }

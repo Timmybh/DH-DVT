@@ -413,3 +413,132 @@ export interface ColumnExplain {
   current: FormulaDef | null;
   versions: FormulaDef[];
 }
+
+// ---------------------------------------------------------------- Dashboard runtime + cấu hình (metadata)
+export interface RuntimeOutputMeta {
+  rule_version?: string;
+  last_calculated_at?: string;
+  data_freshness?: "FRESH" | "STALE" | "UNKNOWN";
+  source_last_sync_at?: string | null;
+  duration_ms?: number;
+}
+
+export interface RuntimeData {
+  status: "OK" | "EMPTY" | "WARNING" | "ERROR" | "STALE";
+  message?: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  payload: any;
+  items: unknown[];
+  meta: RuntimeOutputMeta;
+}
+
+export interface DashIndicator {
+  id: number;
+  indicator_code: string;
+  indicator_name: string;
+  group_code: string;
+  group_name?: string;
+  description: string;
+  display_type: string;
+  rule_code: string;
+  data_source: string;
+  default_scope: "COMPANY" | "FACTORY" | "BOTH";
+  drilldown_type: string;
+  drilldown_target: string;
+  refresh_mode: string;
+  default_enabled: boolean;
+  is_active: boolean;
+  display_order: number;
+  owner: string;
+  data_freshness_requirement: string;
+  config_json: Record<string, unknown>;
+}
+
+export interface RuntimeItem {
+  indicator: DashIndicator;
+  position: { section: string; x: number; y: number; w: number; h: number; order: number; collapsed: boolean };
+  data: RuntimeData;
+}
+
+export interface RuntimeResponse {
+  layout: { id: number; layout_code: string; version: number; status: string; layout_name: string; grid_columns: number } | null;
+  header: {
+    scope: string;
+    scope_name: string;
+    today: string;
+    month: string;
+    has_demo?: boolean;
+    sync: { revenue: SyncBrief | null; plan: SyncBrief | null };
+  };
+  items: RuntimeItem[];
+  message?: string;
+}
+
+export interface DashGroup {
+  id: number;
+  group_code: string;
+  group_name: string;
+  description: string;
+  default_enabled: boolean;
+  display_order: number;
+  layout_mode: string;
+  collapsible: boolean;
+  is_active: boolean;
+}
+
+export interface DashRule {
+  id: number;
+  rule_code: string;
+  rule_name: string;
+  rule_module: string;
+  rule_function: string;
+  rule_version: string;
+  description: string;
+  input_contract: string;
+  output_contract: string;
+  is_active: boolean;
+  registered: boolean;
+  last_test: { at?: string; by?: string; status?: string; duration_ms?: number; scope?: string };
+}
+
+export interface DashLayoutItem {
+  id?: number;
+  indicator_code: string;
+  section: string;
+  grid_x: number;
+  grid_y: number;
+  width: number;
+  height: number;
+  order_no: number;
+  is_visible: boolean;
+  collapsed: boolean;
+  config_override_json: Record<string, unknown>;
+}
+
+export interface DashLayout {
+  id: number;
+  layout_code: string;
+  layout_name: string;
+  scope_type: "COMPANY" | "FACTORY";
+  scope_value: string;
+  version: number;
+  status: "DRAFT" | "PUBLISHED" | "RETIRED";
+  is_default: boolean;
+  description: string;
+  created_by: string;
+  created_at: string;
+  published_by: string;
+  published_at: string | null;
+  items?: DashLayoutItem[];
+}
+
+export interface DashOptions {
+  display_types: string[];
+  scopes: string[];
+  drilldowns: string[];
+  refresh_modes: string[];
+  sections: string[];
+  layout_modes: string[];
+  layout_scopes: string[];
+  grid_columns: number;
+}

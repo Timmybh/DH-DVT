@@ -12,6 +12,13 @@ from app.models.data import (
     SyncRun,
     SyncRunItem,
 )
+from app.models.dashboard_cfg import (
+    DashboardIndicator,
+    DashboardIndicatorGroup,
+    DashboardLayout,
+    DashboardLayoutItem,
+    DashboardRuleRegistry,
+)
 from app.models.planning import FormulaDefinition, PlanColumn, PlanningEditSession, PlanningVersion, PlanningVersionRow, WorkingCalendarRule
 
 __all__ = [
@@ -31,6 +38,11 @@ __all__ = [
     "RevenueYearly",
     "SyncRun",
     "SyncRunItem",
+    "DashboardIndicator",
+    "DashboardIndicatorGroup",
+    "DashboardLayout",
+    "DashboardLayoutItem",
+    "DashboardRuleRegistry",
     "FormulaDefinition",
     "PlanColumn",
     "PlanningEditSession",

@@ -2,6 +2,11 @@ import re
 
 ALL_PERMISSIONS = [
     "dashboard.view",
+    "dashboard.config_view",
+    "dashboard.config_manage",
+    "dashboard.layout_manage",
+    "dashboard.rule_test",
+    "dashboard.publish",
     "planning.view",
     "planning.edit",
     "planning.recheck",

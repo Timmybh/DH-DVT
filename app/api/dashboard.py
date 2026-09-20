@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_perm
 from app.db.session import get_db
 from app.models.core import Factory, User
+from app.core.permissions import permissions_for
 from app.services import dashboard as svc
+from app.services import dashboard_meta
 from app.services.rules import parse_month
 from app.services.signals import build_signals
 
@@ -38,6 +40,24 @@ def _revenue_summary_payload(db: Session, factories, is_total: bool, year: int, 
         "summary": summary["rows"],
         "summary_ytd": summary_ytd["rows"],
     }
+
+
+@router.get("/runtime")
+def runtime(
+    scope: str = "TONG",
+    month: str | None = None,
+    period: str = Query("MONTH", pattern="^(MONTH|YTD)$"),
+    layout_id: int | None = None,
+    db: Session = Depends(get_db),
+    user: User = Viewer,
+):
+    """Dựng Dashboard từ metadata: chọn bố cục Published theo phạm vi, chạy các rule đã đăng ký, trả vị trí + dữ liệu.
+
+    `layout_id` (xem trước bản nháp) chỉ dành cho người có quyền xem cấu hình; người dùng thường luôn nhận bố cục Published.
+    """
+    if layout_id is not None and "dashboard.config_view" not in permissions_for(user.role):
+        raise HTTPException(403, "Không có quyền xem trước bố cục nháp")
+    return dashboard_meta.build_runtime(db, user, scope, month, period, layout_id)
 
 
 @router.get("/overview")
