@@ -30,6 +30,7 @@ def _upgrade_schema() -> None:
             "ALTER TABLE plan_rows ADD COLUMN IF NOT EXISTS fac_raw VARCHAR(20) NOT NULL DEFAULT ''",
             "ALTER TABLE plan_rows ADD COLUMN IF NOT EXISTS grid JSON",
             "ALTER TABLE planning_versions ADD COLUMN IF NOT EXISTS returned JSON",
+            "ALTER TABLE planning_versions ADD COLUMN IF NOT EXISTS formula_set JSON",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE",
         ):
             try:
@@ -74,4 +75,8 @@ def run_seed() -> None:
         if not db.get(SyncConfig, 1):
             db.add(SyncConfig(id=1))
         db.commit()
+        from app.services import formula_service  # tránh vòng import khi nạp module
+
+        formula_service.seed_columns_and_formulas(db)
+        formula_service.refresh_active(db)
         recover_stale_runs(db)

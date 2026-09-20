@@ -14,6 +14,7 @@ from app.models.core import Factory, User
 from app.models.data import PlanRow
 from app.models.planning import PlanningEditSession, PlanningVersion, PlanningVersionRow, WorkingCalendarRule
 from app.services.audit import write_audit
+from app.services import formula_runtime as fx
 from app.services.calendar import CalendarResolver, Rule
 from app.services.dashboard import current_batch, today_local
 from app.services.planning_engine import (
@@ -177,6 +178,7 @@ def version_view(v: PlanningVersion) -> dict:
         "row_count": v.row_count, "recheck_result": v.recheck_result, "recheck_trace_id": v.recheck_trace_id,
         "recheck_at": v.recheck_at.isoformat() if v.recheck_at else None, "recheck_summary": v.recheck_summary or {},
         "issued_at": v.issued_at.isoformat() if v.issued_at else None, "issued_by": v.issued_by, "base_version_id": v.base_version_id,
+        "formula_set": v.formula_set or {},
     }
 
 
@@ -202,6 +204,47 @@ def _store_recheck(v: PlanningVersion, result: dict) -> None:
 
 
 # ------------------------------------------------------------------ baseline từ file Excel đã nhập
+def _baseline_extra(pr: PlanRow) -> dict:
+    """Dữ liệu tham chiếu + số serial (ngày có phần lẻ) lấy từ workbook để chuỗi công thức khớp đúng bản gốc."""
+    ref = plan_ref(pr)
+    serial = {}
+    if ref.get("begin_serial") is not None:
+        serial["begin_prod_date"] = ref["begin_serial"]
+    if ref.get("end_serial") is not None:
+        serial["end_prod_date"] = ref["end_serial"]
+    return {"ref": ref, "serial": serial}
+
+
+def _reconcile_with_formulas(rows: list[dict]) -> dict:
+    """So giá trị workbook với công thức hiệu lực theo thứ tự chuyền. Chỗ lệch = mốc nhập tay trong workbook -> ghi thành OVERRIDE
+    (giữ nguyên giá trị workbook, lưu kèm kết quả công thức) thay vì âm thầm thay đổi.
+    """
+    fs = fx.active()
+    counts = {"total_day": 0, "begin_prod_date": 0, "end_prod_date": 0}
+    lanes: dict[tuple[str, str], list[dict]] = {}
+    for r in rows:
+        lanes.setdefault((r["factory_code"], r["primary_line"]), []).append(r)
+    for lane in lanes.values():
+        prev = None
+        for r in sorted(lane, key=lambda x: x["sequence"]):
+            for code, field in (("TOTAL_DAY", "total_day"), ("BEGIN_PROD_DATE", "begin_prod_date"), ("END_BEGIN_DATE", "end_prod_date")):
+                if not fs.has(code) or (code == "BEGIN_PROD_DATE" and prev is None):
+                    continue
+                try:
+                    exp = fs.calculated(r, prev, code)
+                except Exception:  # noqa: BLE001 - thiếu đầu vào
+                    continue
+                got = fs.stored(r, code)
+                if exp in (None, "") or got is None or isinstance(exp, str):
+                    continue
+                if abs(float(got) - float(exp)) > (1e-4 if field != "total_day" else 1e-6):
+                    calc_shown = exp if field == "total_day" else (fx.defs.serial_to_iso(float(exp)) or None)
+                    r["extra"].setdefault("overrides", {})[field] = {"source": "WORKBOOK", "calculated": calc_shown}
+                    counts[field] += 1
+            prev = r
+    return counts
+
+
 def create_baseline(db: Session, user: User, from_date: date | None, note: str) -> tuple[PlanningVersion, dict]:
     batch = current_batch(db)
     if batch is None:
@@ -231,10 +274,11 @@ def create_baseline(db: Session, user: User, from_date: date | None, note: str) 
                 "po_number": pr.po_number, "style_cc": pr.style_cc, "model_code": pr.model_code, "description": pr.description,
                 "customer": pr.customer, "sport": pr.sport, "season": pr.season, "quantity": pr.quantity, "capacity": pr.capacity,
                 "total_day": pr.total_day, "begin_prod_date": pr.begin_prod_date, "end_prod_date": pr.end_prod_date,
-                "warehouse_date": pr.warehouse_date, "chd": pr.chd, "note": pr.note, "extra": {},
+                "warehouse_date": pr.warehouse_date, "chd": pr.chd, "note": pr.note, "extra": _baseline_extra(pr),
             }
         )
-    # thứ tự ban đầu trong chuyền = theo ngày vào chuyền (thứ tự nguồn)
+    # thứ tự ban đầu trong chuyền = thứ tự dòng trong workbook (chuỗi BEGIN/END của workbook nối theo thứ tự này)
+    rows.sort(key=lambda r: (r["factory_code"], r["primary_line"], r["source_plan_row_id"] or 0))
     lanes: dict[tuple[str, str], list[dict]] = {}
     for r in rows:
         lanes.setdefault((r["factory_code"], r["primary_line"]), []).append(r)
@@ -242,11 +286,13 @@ def create_baseline(db: Session, user: User, from_date: date | None, note: str) 
         for i, r in enumerate(lane, start=1):
             r["sequence"] = i
     rows = sort_rows(rows)
+    workbook_overrides = _reconcile_with_formulas(rows)
 
     today = today_local()
     year, week = today.isocalendar()[0], today.isocalendar()[1]
     code = next_code(db, year, week, "Master", None, "V")
-    version = PlanningVersion(**code, status="COMMITTED", note=note or f"Nền từ file {batch.filename}", created_by=user.username, row_count=len(rows))
+    version = PlanningVersion(**code, status="COMMITTED", note=note or f"Nền từ file {batch.filename}", created_by=user.username, row_count=len(rows),
+                              formula_set=fx.active().version_set())
     db.add(version)
     db.flush()
     _insert_rows(db, version.id, rows)
@@ -254,7 +300,7 @@ def create_baseline(db: Session, user: User, from_date: date | None, note: str) 
     _store_recheck(version, result)
     db.commit()
     write_audit("PLANNING_BASELINE", user=user, object_type="PlanningVersion", object_id=version.code, detail=f"{len(rows)} dòng, recheck={result['result']}", trace_id=result["trace_id"])
-    return version, {"rows": len(rows), "excluded": excluded, "recheck": result["result"]}
+    return version, {"rows": len(rows), "excluded": excluded, "recheck": result["result"], "workbook_overrides": workbook_overrides}
 
 
 # ------------------------------------------------------------------ Unplanned pool
@@ -284,9 +330,11 @@ def plan_ref(pr: PlanRow) -> dict:
 
 def refs_for_rows(db: Session, rows: list[dict]) -> dict[str, dict]:
     """Trả {row_uid: ref}. Ưu tiên dòng nguồn ghi lúc tạo phiên bản; nếu dòng đó chưa có cột lưới (file đã nhập lại) thì tra theo khóa nghiệp vụ trong lô hiện tại."""
+    rows_all, rows = rows, [r for r in rows if not (r.get("extra") or {}).get("ref")]  # ref đã lưu trong dòng phiên bản thì dùng luôn
+    out0: dict[str, dict] = {r["row_uid"]: r["extra"]["ref"] for r in rows_all if (r.get("extra") or {}).get("ref")}
     ids = {r["source_plan_row_id"] for r in rows if r.get("source_plan_row_id")}
     by_id = {pr.id: pr for pr in db.query(PlanRow).filter(PlanRow.id.in_(ids)).all()} if ids else {}
-    out: dict[str, dict] = {}
+    out: dict[str, dict] = dict(out0)
     need = [r for r in rows if not (by_id.get(r.get("source_plan_row_id")) and by_id[r["source_plan_row_id"]].grid)]
     by_key: dict[str, PlanRow] = {}
     if need:
@@ -418,6 +466,12 @@ def build_draft(db: Session, base_version_id: int, ops: list[dict], with_returne
     return (rows, returned) if with_returned else rows
 
 
+def row_calc(r: dict, ref: dict | None = None) -> dict:
+    """Giá trị của các cột chỉ tính (OFF_DAYS, ON_TIME) theo công thức đang hiệu lực, để hiển thị."""
+    row = dict(r, extra={**(r.get("extra") or {}), **({"ref": ref} if ref else {})})
+    return fx.active().display(row)
+
+
 def _row_out(r: dict) -> dict:
     out = {}
     for k, v in r.items():
@@ -433,7 +487,7 @@ def run_recheck(db: Session, user: User, session: PlanningEditSession, base_vers
     db.commit()
     changed_uids = {op.get("tempRowId") and "D" + "".join(c for c in str(op["tempRowId"]) if c.isalnum())[:30] for op in ops if op.get("type") == "ADD_FROM_UNPLANNED"}
     changed_uids |= {op["rowUid"] for op in ops if op.get("rowUid")}
-    computed = [_row_out(r) for r in rows if r["row_uid"] in changed_uids]
+    computed = [{**_row_out(r), "calc": row_calc(r)} for r in rows if r["row_uid"] in changed_uids]
     write_audit("PLANNING_RECHECK", user=user, object_type="EditSession", object_id=session.id, result=result["result"], detail=f"rev={draft_revision} rows={len(rows)}", trace_id=result["trace_id"])
     return {**result, "draft_revision": draft_revision, "computed_rows": computed}
 
@@ -450,7 +504,8 @@ def commit_draft(db: Session, user: User, session: PlanningEditSession, base_ver
         raise HTTPException(422, "Recheck tại thời điểm Commit có ERROR — không thể Commit.")
     today = today_local()
     code = next_code(db, today.isocalendar()[0], today.isocalendar()[1], base.family, base, kind)
-    version = PlanningVersion(**code, status="COMMITTED", note=note[:300], created_by=user.username, source_session_id=session.id, base_version_id=base.id, row_count=len(rows), returned=[_row_out(r) for r in returned])
+    version = PlanningVersion(**code, status="COMMITTED", note=note[:300], created_by=user.username, source_session_id=session.id, base_version_id=base.id, row_count=len(rows), returned=[_row_out(r) for r in returned],
+                              formula_set=fx.active().version_set())
     db.add(version)
     db.flush()
     _insert_rows(db, version.id, rows)

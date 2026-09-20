@@ -9,7 +9,7 @@ from app.models.data import (
     SyncRun,
     SyncRunItem,
 )
-from app.models.planning import PlanningEditSession, PlanningVersion, PlanningVersionRow, WorkingCalendarRule
+from app.models.planning import FormulaDefinition, PlanColumn, PlanningEditSession, PlanningVersion, PlanningVersionRow, WorkingCalendarRule
 
 __all__ = [
     "AuditLog",
@@ -25,6 +25,8 @@ __all__ = [
     "RevenueYearly",
     "SyncRun",
     "SyncRunItem",
+    "FormulaDefinition",
+    "PlanColumn",
     "PlanningEditSession",
     "PlanningVersion",
     "PlanningVersionRow",

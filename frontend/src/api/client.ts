@@ -220,6 +220,7 @@ export interface RowRef {
 
 export interface PlanRowDto {
   ref?: RowRef;
+  calc?: { off_days?: number | null; on_time?: string | null }; // cột chỉ tính theo công thức (không lưu DB)
   row_uid: string;
   sequence: number;
   origin: "EXISTING" | "DRAFT_NEW";
@@ -325,4 +326,63 @@ export interface RecheckResult {
   duration_ms: number;
   draft_revision: number;
   computed_rows: PlanRowDto[];
+}
+
+// ---------------------------------------------------------------- Column Configuration / Formula
+export interface PlanColumnCfg {
+  code: string;
+  label: string;
+  workbook_header: string;
+  value_type: "number" | "date" | "text";
+  input_type: "MANUAL" | "LIST" | "CALCULATED";
+  list_source: string;
+  source: string;
+  is_visible: boolean;
+  formula: string | null;
+  formula_id: number | null;
+  formula_version: number | null;
+  has_draft: boolean;
+  sample: number | string | null;
+}
+
+export interface CaseResult {
+  kind: string;
+  ok: boolean;
+  expected: number | string | null;
+  actual: number | string | null;
+  inputs: Record<string, unknown> | null;
+  prev: Record<string, unknown> | null;
+  source_row: number | null;
+  synthetic: boolean;
+}
+
+export interface FormulaDef {
+  id: number;
+  column_code: string;
+  version: number;
+  status: "DRAFT" | "PUBLISHED" | "RETIRED";
+  expression: string;
+  result_type: string;
+  rounding_policy: string;
+  calendar_policy: string;
+  description: string;
+  workbook_formula: string;
+  source_document: string;
+  source_sheet: string;
+  source_columns: string;
+  dependencies: { columns?: string[]; semantic?: string[]; functions?: string[] };
+  tolerance: number;
+  verification: { tested?: number; matched?: number; rate?: number; note?: string; last_run?: { cases: number; passed: number; at: string } };
+  created_by: string;
+  created_at: string;
+  published_by: string;
+  published_at: string | null;
+  case_count: number;
+  cases?: CaseResult[];
+}
+
+export interface ColumnExplain {
+  column: { code: string; label: string; workbook_header: string; input_type: string; list_source: string; value_type: string };
+  current: FormulaDef | null;
+  versions: FormulaDef[];
 }

@@ -1,0 +1,253 @@
+{
+ "source_document": "01 Thang-12 (01.12.2025) XN CHỐT.xlsb",
+ "source_sheet": "KẾ HOẠCH",
+ "rows_scanned": 18053,
+ "tolerance": 0.0001,
+ "verification": {
+  "TOTAL_DAY": {
+   "tested": 18053,
+   "matched": 18053,
+   "rate": 1.0
+  },
+  "OFF_DAYS": {
+   "tested": 17854,
+   "matched": 17827,
+   "rate": 0.9985
+  },
+  "END_BEGIN_DATE": {
+   "tested": 17840,
+   "matched": 17840,
+   "rate": 1.0
+  },
+  "ON_TIME": {
+   "tested": 16581,
+   "matched": 16581,
+   "rate": 1.0
+  },
+  "BEGIN_PROD_DATE": {
+   "tested": 17846,
+   "matched": 15993,
+   "rate": 0.8962
+  }
+ },
+ "cases": {
+  "TOTAL_DAY": [
+   {
+    "kind": "normal",
+    "inputs": {
+     "QUANTITY": 1110.0,
+     "CAPACITY": 1200.0
+    },
+    "expected": 0.925,
+    "source_row": 4
+   },
+   {
+    "kind": "threshold_1_day",
+    "inputs": {
+     "QUANTITY": 1200.0,
+     "CAPACITY": 1200.0
+    },
+    "expected": 1.0,
+    "source_row": 7
+   },
+   {
+    "kind": "small",
+    "inputs": {
+     "QUANTITY": 48.0,
+     "CAPACITY": 1000.0
+    },
+    "expected": 0.048,
+    "source_row": 10
+   },
+   {
+    "kind": "large",
+    "inputs": {
+     "QUANTITY": 5055.0,
+     "CAPACITY": 600.0
+    },
+    "expected": 8.425,
+    "source_row": 227
+   },
+   {
+    "kind": "capacity_zero",
+    "inputs": {
+     "QUANTITY": 100,
+     "CAPACITY": 0
+    },
+    "expected": "",
+    "synthetic": true
+   },
+   {
+    "kind": "capacity_blank",
+    "inputs": {
+     "QUANTITY": 100,
+     "CAPACITY": null
+    },
+    "expected": "",
+    "synthetic": true
+   }
+  ],
+  "OFF_DAYS": [
+   {
+    "kind": "small",
+    "inputs": {
+     "TOTAL_DAY": 0.925
+    },
+    "expected": 0.13214285714285715,
+    "source_row": 4
+   },
+   {
+    "kind": "normal",
+    "inputs": {
+     "TOTAL_DAY": 1.0
+    },
+    "expected": 0.14285714285714285,
+    "source_row": 7
+   },
+   {
+    "kind": "large",
+    "inputs": {
+     "TOTAL_DAY": 8.425
+    },
+    "expected": 1.2035714285714287,
+    "source_row": 227
+   },
+   {
+    "kind": "total_day_blank",
+    "inputs": {
+     "TOTAL_DAY": null
+    },
+    "expected": "",
+    "synthetic": true
+   }
+  ],
+  "END_BEGIN_DATE": [
+   {
+    "kind": "normal",
+    "inputs": {
+     "BEGIN_PROD_DATE": 45990.0,
+     "TOTAL_DAY": 0.925,
+     "OFF_DAYS": 0.13214285714285715
+    },
+    "expected": 45991.05714285715,
+    "source_row": 4
+   },
+   {
+    "kind": "long",
+    "inputs": {
+     "BEGIN_PROD_DATE": 46095.362768253966,
+     "TOTAL_DAY": 8.425,
+     "OFF_DAYS": 1.2035714285714287
+    },
+    "expected": 46104.99133968254,
+    "source_row": 227
+   }
+  ],
+  "BEGIN_PROD_DATE": [
+   {
+    "kind": "first_in_lane_manual",
+    "inputs": {},
+    "manual": 45990.0,
+    "prev": null,
+    "expected": 45990.0,
+    "source_row": 4
+   },
+   {
+    "kind": "prev_total_day_lt_1_same_end",
+    "inputs": {},
+    "manual": 45991.05714285715,
+    "prev": {
+     "END_BEGIN_DATE": 45991.05714285715,
+     "TOTAL_DAY": 0.925
+    },
+    "expected": 45991.05714285715,
+    "source_row": 5
+   },
+   {
+    "kind": "prev_total_day_ge_1_plus_1_9",
+    "inputs": {},
+    "manual": 45993.253968253965,
+    "prev": {
+     "END_BEGIN_DATE": 45993.142857142855,
+     "TOTAL_DAY": 1.0
+    },
+    "expected": 45993.253968253965,
+    "source_row": 8
+   }
+  ],
+  "ON_TIME": [
+   {
+    "kind": "ON TIME",
+    "inputs": {
+     "EHD_ETD": 46016.0,
+     "CHD": 46016.0
+    },
+    "expected": "ON TIME",
+    "source_row": 4
+   },
+   {
+    "kind": "DELAY",
+    "inputs": {
+     "EHD_ETD": 46006.0,
+     "CHD": 45978.0
+    },
+    "expected": "DELAY",
+    "source_row": 31
+   },
+   {
+    "kind": "ADVANCE",
+    "inputs": {
+     "EHD_ETD": 46016.0,
+     "CHD": 46023.0
+    },
+    "expected": "ADVANCE",
+    "source_row": 838
+   },
+   {
+    "kind": "diff_4.5_on_time",
+    "inputs": {
+     "EHD_ETD": 104.5,
+     "CHD": 100.0
+    },
+    "expected": "ON TIME",
+    "synthetic": true
+   },
+   {
+    "kind": "diff_5_delay",
+    "inputs": {
+     "EHD_ETD": 105.0,
+     "CHD": 100.0
+    },
+    "expected": "DELAY",
+    "synthetic": true
+   },
+   {
+    "kind": "diff_minus_4_on_time",
+    "inputs": {
+     "EHD_ETD": 96.0,
+     "CHD": 100.0
+    },
+    "expected": "ON TIME",
+    "synthetic": true
+   },
+   {
+    "kind": "diff_minus_4.5_advance",
+    "inputs": {
+     "EHD_ETD": 95.5,
+     "CHD": 100.0
+    },
+    "expected": "ADVANCE",
+    "synthetic": true
+   },
+   {
+    "kind": "missing_input",
+    "inputs": {
+     "EHD_ETD": null,
+     "CHD": 100.0
+    },
+    "expected": "",
+    "synthetic": true
+   }
+  ]
+ }
+}

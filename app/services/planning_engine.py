@@ -15,6 +15,7 @@ from collections import Counter
 from datetime import date, datetime, timezone
 from typing import Iterable
 
+from app.services import formula_runtime as fx
 from app.services.calendar import CalendarResolver
 from app.services.rules import strip_accents
 
@@ -92,23 +93,26 @@ def reindex(rows: list[dict]) -> list[dict]:
     return out
 
 
-# --------------------------------------------------------------------------- tự tính (công thức tối thiểu)
+# --------------------------------------------------------------------------- tự tính (theo Formula Definition đang Publish)
+CALC_CODE = {"total_day": "TOTAL_DAY", "begin_prod_date": "BEGIN_PROD_DATE", "end_prod_date": "END_BEGIN_DATE"}
+
+
 def calc_total_day(quantity, capacity) -> float | None:
-    return round(quantity / capacity, 4) if quantity and capacity else None
-
-
-def calc_begin(prev: dict | None, cal: CalendarResolver, xn: str, line: str) -> date | None:
-    """BEGIN_PROD_DATE = PREVIOUS_SEQUENCE.END_PROD_DATE + 1 Working Day."""
-    if prev is None or prev.get("end_prod_date") is None:
+    """TOTAL_DAY theo công thức hiệu lực (giá trị thô, không làm tròn)."""
+    row = {"quantity": quantity, "capacity": capacity}
+    try:
+        v = fx.active().calculated(row, None, "TOTAL_DAY")
+    except Exception:  # noqa: BLE001 - FormulaError: thiếu dữ liệu
         return None
-    return cal.add_working_days(prev["end_prod_date"], 1, xn, line)
+    return None if v == "" else v
 
 
-def calc_end(begin: date | None, total_day, cal: CalendarResolver, xn: str, line: str) -> date | None:
-    if begin is None or not total_day:
-        return None
-    days = max(1, math.ceil(total_day - 1e-9))
-    return cal.add_working_days(begin, days - 1, xn, line)
+def recalc_row(row: dict, prev: dict | None) -> None:
+    """Tính lại TOTAL_DAY → BEGIN_PROD_DATE → END_BEGIN_DATE của một dòng (bỏ qua cột đang override)."""
+    fs = fx.active()
+    for code in ("TOTAL_DAY", "BEGIN_PROD_DATE", "END_BEGIN_DATE"):
+        if fs.has(code):
+            fs.apply(row, prev, code)
 
 
 def _prev_in_lane(rows: list[dict], row: dict) -> dict | None:
@@ -186,14 +190,12 @@ def apply_ops(
                     "transfer": None,
                     "po_number": src["po_number"], "style_cc": src["style_cc"], "model_code": src["model_code"],
                     "description": src["description"], "customer": src["customer"], "sport": src["sport"], "season": src["season"],
-                    "quantity": src["quantity"], "capacity": capacity, "total_day": calc_total_day(src["quantity"], capacity),
+                    "quantity": src["quantity"], "capacity": capacity, "total_day": None,
                     "begin_prod_date": None, "end_prod_date": None, "warehouse_date": None, "chd": src.get("chd"),
-                    "note": src.get("note", ""), "extra": {},
+                    "note": src.get("note", ""), "extra": {"ref": src.get("ref") or {}},
                 }
                 _insert_after(rows, row, op.get("afterRowUid"))
-                prev = _prev_in_lane_by_position(rows, row)
-                row["begin_prod_date"] = calc_begin(prev, cal, factory, line)
-                row["end_prod_date"] = calc_end(row["begin_prod_date"], row["total_day"], cal, factory, line)
+                recalc_row(row, _prev_in_lane_by_position(rows, row))
                 by_uid[uid] = row
                 changed.add(uid)
 
@@ -233,9 +235,7 @@ def apply_ops(
                 row = _thaw(snap)
                 row["factory_code"], row["primary_line"], row["line_raw"], row["line_assignments"], row["transfer"] = factory, line, line, [line], None
                 _insert_after(rows, row, op.get("afterRowUid"))
-                prev = _prev_in_lane_by_position(rows, row)
-                row["begin_prod_date"] = calc_begin(prev, cal, factory, line)
-                row["end_prod_date"] = calc_end(row["begin_prod_date"], row.get("total_day"), cal, factory, line)
+                recalc_row(row, _prev_in_lane_by_position(rows, row))
                 by_uid[row["row_uid"]] = row
                 changed.add(row["row_uid"])
 
@@ -252,6 +252,7 @@ def apply_ops(
                 elif field in DATE_FIELDS:
                     _mark_override(row, field, row.get(field))
                     row[field] = _to_date(value)
+                    (row["extra"].get("serial") or {}).pop(field, None)  # giá trị nhập tay là ngày nguyên
                 elif field in ("quantity", "capacity", "total_day"):
                     num = float(value) if value not in (None, "") else None
                     if field == "total_day":
@@ -266,16 +267,13 @@ def apply_ops(
                 field = op.get("field")
                 if row is None or field not in CALCULATED_FIELDS:
                     raise OpError("Dòng hoặc cột không hợp lệ")
-                xn, line = row["factory_code"], row["primary_line"]
-                if field == "total_day":
-                    row[field] = calc_total_day(row["quantity"], row["capacity"])
-                elif field == "begin_prod_date":
-                    row[field] = calc_begin(_prev_in_lane_by_position(rows, row), cal, xn, line)
-                elif field == "end_prod_date":
-                    row[field] = calc_end(row["begin_prod_date"], row["total_day"], cal, xn, line)
-                else:
+                if field not in CALC_CODE:
                     raise OpError("Cột này chưa có công thức tự tính")
                 (row["extra"].get("overrides") or {}).pop(field, None)
+                fs = fx.active()
+                if not fs.has(CALC_CODE[field]):
+                    raise OpError("Cột này chưa có công thức được Publish")
+                fs.apply(row, _prev_in_lane_by_position(rows, row), CALC_CODE[field])
                 changed.add(row["row_uid"])
             else:
                 raise OpError(f"Loại thao tác không hỗ trợ: {kind}")
@@ -341,11 +339,7 @@ def recheck(rows: list[dict], cal: CalendarResolver, factory_codes: set[str]) ->
             add("WARNING", r, "capacity", "Thiếu năng suất chuyền/ngày (CAPACITY)", "CAPACITY_MISSING")
         if b and xn and line and not cal.is_working_day(b, xn, line):
             add("WARNING", r, "begin_prod_date", f"Ngày vào chuyền {b:%d/%m/%Y} là ngày OFF theo lịch làm việc", "BEGIN_ON_OFF_DAY")
-        expected = calc_total_day(r["quantity"], r.get("capacity"))
-        tot = r.get("total_day")
-        overridden = "total_day" in (r.get("extra", {}).get("overrides") or {})
-        if expected is not None and tot is not None and abs(tot - expected) > 0.01 and not overridden:
-            add("WARNING", r, "total_day", f"TOTAL_DAY={tot:.2f} khác kết quả tự tính {expected:.2f} (giữ nguyên giá trị kế hoạch, dùng Return to Auto Calculate nếu muốn cập nhật)", "CALC_MISMATCH")
+        # (kiểm tra lệch công thức: xem vòng lặp theo chuyền bên dưới — cần dòng đứng trước theo thứ tự nghiệp vụ)
         end_or_wh = r.get("warehouse_date") or e
         if end_or_wh and r.get("chd") and end_or_wh > r["chd"]:
             add("WARNING", r, "chd", f"Kết thúc {end_or_wh:%d/%m/%Y} sau ngày khách yêu cầu (CHD) {r['chd']:%d/%m/%Y}", "LATE_VS_CHD")
@@ -368,6 +362,25 @@ def recheck(rows: list[dict], cal: CalendarResolver, factory_codes: set[str]) ->
         seqs = [x["sequence"] for x in lane]
         if len(set(seqs)) != len(seqs):
             add("ERROR", lane[0], "sequence", f"Trùng thứ tự trong chuyền {key[0]}/{key[1]}", "SEQ_DUP")
+        fs = fx.active()
+        prev_row = None
+        for cur in lane:
+            for col, field, label in (("TOTAL_DAY", "total_day", "TOTAL_DAY"), ("BEGIN_PROD_DATE", "begin_prod_date", "BEGIN_PROD_DATE"), ("END_BEGIN_DATE", "end_prod_date", "END_BEGIN_DATE")):
+                if not fs.has(col) or fs.is_overridden(cur, col):
+                    continue
+                if col == "BEGIN_PROD_DATE" and prev_row is None:
+                    continue  # dòng đầu chuyền là mốc nhập tay
+                try:
+                    exp = fs.calculated(cur, prev_row, col)
+                except Exception:  # noqa: BLE001 - thiếu dữ liệu đầu vào: đã có cảnh báo riêng (CAPACITY_MISSING...)
+                    continue
+                got = fs.stored(cur, col)
+                if exp in (None, "") or got is None or isinstance(exp, str):
+                    continue
+                tol = 0.01
+                if abs(float(got) - float(exp)) > tol:
+                    add("WARNING", cur, field, f"{label} hiện tại khác kết quả công thức v{fs.formulas[col].version} (giữ nguyên giá trị kế hoạch, dùng Return to Auto Calculate nếu muốn cập nhật)", "CALC_MISMATCH")
+            prev_row = cur
         for prev, cur in zip(lane, lane[1:]):
             if prev.get("end_prod_date") and cur.get("begin_prod_date") and cur["begin_prod_date"] < prev["end_prod_date"]:
                 add("WARNING", cur, "begin_prod_date", f"Chồng lấn với dòng trước ({prev.get('po_number') or prev['row_uid']}) trên chuyền {key[0]}/{key[1]}", "LINE_OVERLAP")

@@ -12,7 +12,6 @@ export interface Col<T> {
   get: (r: T) => string | number | null | undefined;
 }
 
-const offDays = (totalDay: number | null | undefined): number | null => (totalDay === null || totalDay === undefined ? null : Math.floor(totalDay / 7 + 0.5));
 const ref = (r: { ref?: RowRef }): RowRef => r.ref ?? {};
 
 /** Cột lưới Planned — theo thứ tự trong file Excel kế hoạch SX. */
@@ -28,7 +27,7 @@ export const PLANNED_COLS: Col<PlanRowDto>[] = [
   { key: "worker", label: "Worker", w: 68, kind: "num", get: (r) => ref(r).worker },
   { key: "capacity", label: "Capacity", w: 80, kind: "num", get: (r) => r.capacity },
   { key: "total_day", label: "Total day", w: 76, kind: "num", digits: 2, get: (r) => r.total_day },
-  { key: "off_days", label: "Off days", w: 70, kind: "num", get: (r) => offDays(r.total_day) },
+  { key: "off_days", label: "Off days", w: 70, kind: "num", digits: 3, get: (r) => r.calc?.off_days },
   { key: "fabric_ready", label: "Fabric ready", w: 88, kind: "date", get: (r) => ref(r).fabric_ready },
   { key: "acc_ready", label: "Acc ready", w: 84, kind: "date", get: (r) => ref(r).acc_ready },
   { key: "no_issue", label: "No issue", w: 92, kind: "text", get: (r) => ref(r).no_issue },
@@ -45,7 +44,7 @@ export const PLANNED_COLS: Col<PlanRowDto>[] = [
   { key: "chd", label: "CHD", w: 84, kind: "date", get: (r) => r.chd },
   { key: "ehd", label: "EHD/ETD", w: 84, kind: "date", get: (r) => ref(r).ehd_etd },
   { key: "ahd", label: "AHD", w: 84, kind: "date", get: (r) => ref(r).ahd },
-  { key: "on_time", label: "On time", w: 84, kind: "text", get: (r) => ref(r).on_time },
+  { key: "on_time", label: "On time", w: 84, kind: "text", get: (r) => r.calc?.on_time ?? "" },
 ];
 
 /** Cột lưới Unplanned. */

@@ -12,6 +12,7 @@ ALL_PERMISSIONS = [
     "mapping.manage",
     "calendar.view",
     "calendar.manage",
+    "formula.manage",
     "sync.view",
     "sync.run",
     "sync.retry",

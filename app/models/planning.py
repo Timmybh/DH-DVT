@@ -72,6 +72,7 @@ class PlanningVersion(Base):
     recheck_summary: Mapped[dict] = mapped_column(JSON, default=dict)
     issued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     issued_by: Mapped[str] = mapped_column(String(100), default="")
+    formula_set: Mapped[dict] = mapped_column(JSON, default=dict)  # {"TOTAL_DAY": 1, ...} phiên bản công thức đã dùng để tính
     returned: Mapped[list] = mapped_column(JSON, default=list)  # dòng đã trả về Unplanned (ảnh chụp dòng) kể từ phiên bản này
 
 
@@ -110,3 +111,49 @@ class PlanningVersionRow(Base):
     chd: Mapped[date | None] = mapped_column(Date, nullable=True)
     note: Mapped[str] = mapped_column(String(400), default="")
     extra: Mapped[dict] = mapped_column(JSON, default=dict)  # overrides: {"begin_prod_date": {"source":"OVERRIDE","calculated":"..."}}
+
+
+class PlanColumn(Base):
+    """Danh mục cột Planning (Column Configuration, handoff §7). Không lưu công thức — liên kết qua FormulaDefinition."""
+
+    __tablename__ = "planning_columns"
+
+    code: Mapped[str] = mapped_column(String(40), primary_key=True)
+    label: Mapped[str] = mapped_column(String(80))
+    workbook_header: Mapped[str] = mapped_column(String(80), default="")
+    value_type: Mapped[str] = mapped_column(String(10), default="text")  # number | date | text
+    input_type: Mapped[str] = mapped_column(String(12), default="MANUAL")  # MANUAL | LIST | CALCULATED
+    list_source: Mapped[str] = mapped_column(String(60), default="")  # tên đối tượng nghiệp vụ (Factory, Production Line...)
+    source: Mapped[str] = mapped_column(String(60), default="")  # row:<trường> | ref:<khóa> | calc
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    is_visible: Mapped[bool] = mapped_column(default=True)
+
+
+class FormulaDefinition(Base):
+    """Định nghĩa công thức có phiên bản (handoff §8, §8.1). Bản PUBLISHED là bất biến."""
+
+    __tablename__ = "planning_formulas"
+    __table_args__ = (Index("ux_formula_code_version", "column_code", "version", unique=True),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    column_code: Mapped[str] = mapped_column(String(40), index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(10), default="DRAFT", index=True)  # DRAFT | PUBLISHED | RETIRED
+    expression: Mapped[str] = mapped_column(Text)
+    result_type: Mapped[str] = mapped_column(String(10), default="number")
+    rounding_policy: Mapped[str] = mapped_column(String(80), default="")
+    calendar_policy: Mapped[str] = mapped_column(String(120), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    workbook_formula: Mapped[str] = mapped_column(Text, default="")  # công thức gốc trong workbook (nguyên văn / suy ra)
+    source_document: Mapped[str] = mapped_column(String(200), default="")
+    source_sheet: Mapped[str] = mapped_column(String(60), default="")
+    source_columns: Mapped[str] = mapped_column(String(200), default="")
+    dependencies: Mapped[dict] = mapped_column(JSON, default=dict)
+    canonical_cases: Mapped[list] = mapped_column(JSON, default=list)
+    tolerance: Mapped[float] = mapped_column(Float, default=1e-4)
+    verification: Mapped[dict] = mapped_column(JSON, default=dict)  # {tested, matched, rate, note, last_run}
+    effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    published_by: Mapped[str] = mapped_column(String(100), default="")
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

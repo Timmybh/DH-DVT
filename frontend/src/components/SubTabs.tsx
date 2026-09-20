@@ -13,6 +13,7 @@ export const PLANNING_TABS: TabDef[] = [
   { to: "/planning", label: "Bảng kế hoạch", perm: "planning.view", end: true },
   { to: "/planning/versions", label: "Phiên bản", perm: "planning.view" },
   { to: "/planning/calendar", label: "Lịch làm việc", perm: "calendar.view" },
+  { to: "/planning/columns", label: "Cấu hình cột & công thức", perm: "planning.view" },
 ];
 
 export const ADMIN_TABS: TabDef[] = [

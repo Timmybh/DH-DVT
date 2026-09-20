@@ -2,6 +2,8 @@ from datetime import date
 
 import pytest
 
+from app.services import formula_runtime as fx
+from app.services.formula import to_serial
 from app.services.calendar import CalendarResolver, Rule
 from app.services.planning_engine import (
     OpError,
@@ -27,6 +29,16 @@ def row(uid, seq, xn="XN1", line="7", qty=1000, cap=500, begin=None, end=None, *
     }
 
 
+def calc_row(uid, seq, begin, **kw):
+    """Dòng nhất quán với công thức workbook: END = BEGIN + TOTAL_DAY + OFF_DAYS (giữ số lẻ ngày, không qua lịch)."""
+    r = row(uid, seq, begin=begin, **kw)
+    fs = fx.active()
+    fs.set_stored(r, "BEGIN_PROD_DATE", to_serial(begin))
+    fs.apply(r, None, "TOTAL_DAY")
+    fs.apply(r, None, "END_BEGIN_DATE")
+    return r
+
+
 def unplanned(pid=1, xn="", qty=800, cap=400):
     return {"id": pid, "source_key": source_key("PO9", "S9", "M9", "CUST", qty), "po_number": "PO9", "style_cc": "S9", "model_code": "M9",
             "description": "new", "customer": "CUST", "sport": "", "season": "", "quantity": qty, "capacity": cap, "chd": None,
@@ -49,8 +61,12 @@ def test_case_a_known_xn_inserts_and_autocalculates_from_previous_sequence():
     rows, changed = apply_ops(base, {1: unplanned()}, ops, CAL, FACTORIES)
     new = next(r for r in rows if r["origin"] == "DRAFT_NEW")
     assert (new["factory_code"], new["primary_line"], new["sequence"]) == ("XN1", "7", 2)
-    assert new["begin_prod_date"] == date(2026, 9, 19)  # Thứ bảy = ngày làm việc kế tiếp
-    assert new["total_day"] == 2.0 and new["end_prod_date"] == date(2026, 9, 21)  # bỏ Chủ nhật 20/09
+    # đúng workbook: BEGIN = END BE. dòng trước + 1/9 (dòng trước TOTAL_DAY = 2 ≥ 1), không qua lịch làm việc
+    assert new["begin_prod_date"] == date(2026, 9, 18)
+    assert abs(new["extra"]["serial"]["begin_prod_date"] - (to_serial(date(2026, 9, 18)) + 1 / 9)) < 1e-9
+    assert new["total_day"] == 2.0
+    assert abs(new["extra"]["serial"]["end_prod_date"] - (new["extra"]["serial"]["begin_prod_date"] + 2 + 2 / 7)) < 1e-9
+    assert new["end_prod_date"] == date(2026, 9, 20)
     assert changed == {new["row_uid"]}
 
 
@@ -90,7 +106,7 @@ def test_edit_calculated_field_marks_override_and_return_to_auto():
     assert b["begin_prod_date"] == date(2026, 9, 30) and "begin_prod_date" in b["extra"]["overrides"]
     back, _ = apply_ops(rows, {}, [{"type": "RETURN_TO_AUTO_CALC", "rowUid": "b", "field": "begin_prod_date"}], CAL, FACTORIES)
     b2 = next(r for r in back if r["row_uid"] == "b")
-    assert b2["begin_prod_date"] == date(2026, 9, 19) and "begin_prod_date" not in b2["extra"].get("overrides", {})
+    assert b2["begin_prod_date"] == date(2026, 9, 18) and "begin_prod_date" not in b2["extra"].get("overrides", {})
 
 
 def test_invalid_op_reports_index():
@@ -99,7 +115,7 @@ def test_invalid_op_reports_index():
 
 
 def test_recheck_levels():
-    good = [row("a", 1, begin=date(2026, 9, 14), end=date(2026, 9, 15))]
+    good = [calc_row("a", 1, date(2026, 9, 14))]
     assert recheck(good, CAL, FACTORIES)["result"] == "PASS"
 
     err = recheck([row("a", 1, qty=0)], CAL, FACTORIES)
@@ -112,10 +128,11 @@ def test_recheck_levels():
 
 
 def test_recheck_calc_mismatch_keeps_value_and_warns():
-    r = row("a", 1, qty=1000, cap=500, begin=date(2026, 9, 14), end=date(2026, 9, 15))
+    r = calc_row("a", 1, date(2026, 9, 14), qty=1000, cap=500)
     r["total_day"] = 3.0  # khác 1000/500 = 2.0
     assert "CALC_MISMATCH" in recheck([r], CAL, FACTORIES)["by_rule"]
-    r["extra"] = {"overrides": {"total_day": {"source": "OVERRIDE"}}}
+    r["extra"]["overrides"] = {"total_day": {"source": "OVERRIDE"}}
+    fx.active().apply(r, None, "END_BEGIN_DATE")  # END tính lại từ TOTAL_DAY đang override
     assert "CALC_MISMATCH" not in recheck([r], CAL, FACTORIES)["by_rule"]
 
 

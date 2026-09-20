@@ -142,7 +142,7 @@ def version_rows(
     rows = query.order_by(PlanningVersionRow.factory_code, PlanningVersionRow.primary_line, PlanningVersionRow.sequence).offset(offset).limit(limit).all()
     dicts = [svc.row_to_dict(r) for r in rows]
     refs = svc.refs_for_rows(db, dicts)
-    return {"total": total, "rows": [{**svc._row_out(d), "ref": refs.get(d["row_uid"], {})} for d in dicts]}
+    return {"total": total, "rows": [{**svc._row_out(d), "ref": refs.get(d["row_uid"], {}), "calc": svc.row_calc(d, refs.get(d["row_uid"]))} for d in dicts]}
 
 
 @router.post("/versions/{version_id}/recheck")

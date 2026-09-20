@@ -132,6 +132,7 @@ export function applyOpsLocal(
         r.warehouse_date = c.warehouse_date;
         r.total_day = c.total_day;
         r.extra = c.extra;
+        r.calc = c.calc;
       }
       out.push(r);
     });
