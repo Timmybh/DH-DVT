@@ -2,7 +2,7 @@
 
 Dashboard cho Ban Tổng giám đốc theo dõi tình hình công ty: **Doanh thu/Thực hiện, Tiến độ thực hiện, Nhân sự, Cảnh báo**,
 xem được ở góc nhìn **Tổng công ty** (cộng dồn từ đơn vị) hoặc từng **Xí nghiệp**. Backend Python (FastAPI) + PostgreSQL,
-frontend React, chạy trên **IIS**. Thiết kế tham chiếu: [`docs/DVT_Planning_Core_Design_Handoff.md`](docs/DVT_Planning_Core_Design_Handoff.md).
+frontend React, chạy trên **IIS**. Thiết kế tham chiếu: [`docs/DVT_Planning_Core_Design_Handoff.md`](docs/DVT_Planning_Core_Design_Handoff.md) và bản chỉnh sửa [`docs/DVT_Unplanned_Design_Correction.md`](docs/DVT_Unplanned_Design_Correction.md) (Planning status, Factory assignment, Mapping status là **ba chiều độc lập**).
 
 ## Đã có (theo handoff)
 

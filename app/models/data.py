@@ -117,11 +117,16 @@ class PlanImportBatch(Base):
 
 class PlanRow(Base):
     __tablename__ = "plan_rows"
-    __table_args__ = (Index("ix_plan_rows_batch_stage", "batch_id", "stage"),)
+    __table_args__ = (Index("ix_plan_rows_batch_pstatus", "batch_id", "planning_status"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     batch_id: Mapped[int] = mapped_column(ForeignKey("plan_import_batches.id", ondelete="CASCADE"), index=True)
-    stage: Mapped[str] = mapped_column(String(10))  # NEW | PLANNED
+    # Ba chiều ĐỘC LẬP — không gộp thành một phân loại "chưa khớp/chưa lên KH":
+    planning_status: Mapped[str] = mapped_column(String(10))  # UNPLANNED (Chưa lên KH) | PLANNED
+    factory_assignment: Mapped[str] = mapped_column(String(12), default="KNOWN")  # KNOWN | UNASSIGNED (chưa xác định XN)
+    mapping_status: Mapped[str] = mapped_column(String(8), default="OK")  # OK | WARNING
+    mapping_note: Mapped[str] = mapped_column(String(200), default="")
+    fac_raw: Mapped[str] = mapped_column(String(20), default="")  # giá trị FAC/XN gốc trong file
     factory_id: Mapped[int | None] = mapped_column(ForeignKey("factories.id"), nullable=True, index=True)
     line_raw: Mapped[str] = mapped_column(String(60), default="")
     po_date: Mapped[date | None] = mapped_column(Date, nullable=True)

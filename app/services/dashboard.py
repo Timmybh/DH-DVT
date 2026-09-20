@@ -137,27 +137,42 @@ def progress_overview(db: Session, factories: list[Factory], is_total: bool) -> 
         return {"available": False}
     fids = [f.id for f in factories]
 
-    q = db.query(PlanRow.stage, PlanRow.risk, func.count(PlanRow.id), func.coalesce(func.sum(PlanRow.quantity), 0.0)).filter(
-        PlanRow.batch_id == batch.id
-    )
-    if not is_total:
-        q = q.filter(PlanRow.factory_id.in_(fids))
-    stages = {"NEW": 0, "PLANNED": 0}
+    def scoped(q):
+        return q if is_total else q.filter(PlanRow.factory_id.in_(fids))
+
+    # --- Planning status x Factory assignment (hai chiều độc lập)
+    counts = {"UNPLANNED": {"KNOWN": 0, "UNASSIGNED": 0}, "PLANNED": {"KNOWN": 0, "UNASSIGNED": 0}}
+    q = scoped(db.query(PlanRow.planning_status, PlanRow.factory_assignment, func.count(PlanRow.id)).filter(PlanRow.batch_id == batch.id))
+    for ps, fa, cnt in q.group_by(PlanRow.planning_status, PlanRow.factory_assignment).all():
+        counts[ps][fa] = cnt
+    unplanned = sum(counts["UNPLANNED"].values())
+    planned = sum(counts["PLANNED"].values())
+
+    # --- Rủi ro giao hàng (chiều thứ ba của dữ liệu vận hành, không liên quan mapping)
     risks = {"OK": 0, "ADVANCE": 0, "LATE": 0, "MATERIAL": 0}
     risk_qty = {"OK": 0.0, "ADVANCE": 0.0, "LATE": 0.0, "MATERIAL": 0.0}
     planned_qty = 0.0
-    for stage, risk, cnt, qty in q.group_by(PlanRow.stage, PlanRow.risk).all():
-        stages[stage] = stages.get(stage, 0) + cnt
+    q = scoped(
+        db.query(PlanRow.planning_status, PlanRow.risk, func.count(PlanRow.id), func.coalesce(func.sum(PlanRow.quantity), 0.0)).filter(
+            PlanRow.batch_id == batch.id
+        )
+    )
+    for ps, risk, cnt, qty in q.group_by(PlanRow.planning_status, PlanRow.risk).all():
         risks[risk] = risks.get(risk, 0) + cnt
         risk_qty[risk] = risk_qty.get(risk, 0.0) + float(qty)
-        if stage == "PLANNED":
+        if ps == "PLANNED":
             planned_qty += float(qty)
+
+    # --- Mapping status (cảnh báo dữ liệu nguồn)
+    mapping_warnings = scoped(
+        db.query(func.count(PlanRow.id)).filter(PlanRow.batch_id == batch.id, PlanRow.mapping_status == "WARNING")
+    ).scalar() or 0
 
     per_factory = []
     for f in factories:
         rows = (
             db.query(PlanRow.risk, func.count(PlanRow.id), func.coalesce(func.sum(PlanRow.quantity), 0.0))
-            .filter(PlanRow.batch_id == batch.id, PlanRow.factory_id == f.id, PlanRow.stage == "PLANNED")
+            .filter(PlanRow.batch_id == batch.id, PlanRow.factory_id == f.id, PlanRow.planning_status == "PLANNED")
             .group_by(PlanRow.risk)
             .all()
         )
@@ -168,14 +183,16 @@ def progress_overview(db: Session, factories: list[Factory], is_total: bool) -> 
             qty += float(q_)
         per_factory.append({"code": f.code, "name": f.name, "po": sum(d.values()), "qty": qty, **{k.lower(): v for k, v in d.items()}})
 
-    total_po = stages["PLANNED"] + stages["NEW"]
+    total_po = planned + unplanned
     s = batch.summary or {}
     return {
         "available": True,
         "batch": {"filename": batch.filename, "imported_at": batch.imported_at.isoformat(), "labor_as_of": s.get("labor_as_of", "")},
         "pipeline": {
-            "new": stages["NEW"],
-            "planned": stages["PLANNED"],
+            "new": unplanned,
+            "new_known": counts["UNPLANNED"]["KNOWN"],
+            "new_unassigned": counts["UNPLANNED"]["UNASSIGNED"],
+            "planned": planned,
             "sewn": s.get("sewn_count") if is_total else None,
             "shipped": s.get("shipped_count") if is_total else None,
         },
@@ -183,7 +200,8 @@ def progress_overview(db: Session, factories: list[Factory], is_total: bool) -> 
         "planned_qty": planned_qty,
         "risks": risks,
         "risk_qty": risk_qty,
-        "late_pct": (risks["LATE"] / stages["PLANNED"] * 100.0) if stages["PLANNED"] else 0.0,
+        "late_pct": (risks["LATE"] / total_po * 100.0) if total_po else 0.0,
+        "mapping_warnings": mapping_warnings,
         "by_factory": per_factory,
     }
 
@@ -233,6 +251,7 @@ def sync_brief(run: SyncRun | None) -> dict | None:
 
 # ------------------------------------------------------------------ drill-down
 def drill_po(db: Session, factories: list[Factory], is_total: bool, risk: str, limit: int = 300) -> dict:
+    """risk: ALL | OK | ADVANCE | LATE | MATERIAL (rủi ro giao hàng) | UNPLANNED | UNASSIGNED | MAPPING (ba chiều còn lại)."""
     batch = current_batch(db)
     if batch is None:
         return {"rows": [], "total": 0}
@@ -240,7 +259,13 @@ def drill_po(db: Session, factories: list[Factory], is_total: bool, risk: str, l
     q = db.query(PlanRow).filter(PlanRow.batch_id == batch.id)
     if not is_total:
         q = q.filter(PlanRow.factory_id.in_([f.id for f in factories]))
-    if risk != "ALL":
+    if risk == "UNPLANNED":
+        q = q.filter(PlanRow.planning_status == "UNPLANNED")
+    elif risk == "UNASSIGNED":
+        q = q.filter(PlanRow.factory_assignment == "UNASSIGNED")
+    elif risk == "MAPPING":
+        q = q.filter(PlanRow.mapping_status == "WARNING")
+    elif risk != "ALL":
         q = q.filter(PlanRow.risk == risk)
     total = q.count()
     order = PlanRow.gap_days.asc().nullslast() if risk in ("LATE", "ALL") else PlanRow.chd.asc().nullslast()
@@ -249,7 +274,9 @@ def drill_po(db: Session, factories: list[Factory], is_total: bool, risk: str, l
         "total": total,
         "rows": [
             {
-                "factory": fmap.get(r.factory_id, "—"),
+                "factory": fmap.get(r.factory_id) or "Chưa xác định XN",
+                "planning_status": r.planning_status,
+                "mapping_status": r.mapping_status,
                 "line": r.line_raw,
                 "po_number": r.po_number,
                 "customer": r.customer,
@@ -261,7 +288,7 @@ def drill_po(db: Session, factories: list[Factory], is_total: bool, risk: str, l
                 "gap_days": r.gap_days,
                 "status": r.status_text,
                 "risk": r.risk,
-                "reason": r.risk_reason or r.note,
+                "reason": r.mapping_note or r.risk_reason or r.note,
             }
             for r in rows
         ],

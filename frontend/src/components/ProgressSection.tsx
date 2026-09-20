@@ -24,8 +24,13 @@ export default function ProgressSection({ data, onDrill }: Props) {
     );
   }
   const { pipeline, risks, risk_qty } = data;
-  const steps = [
-    { label: "PO mới (chưa xếp lịch)", value: pipeline.new },
+  const steps: { label: string; value: number | null; sub?: string; drill?: string }[] = [
+    {
+      label: "Chưa lên KH (PO mới)",
+      value: pipeline.new,
+      sub: `${num(pipeline.new_known)} đã biết XN · ${num(pipeline.new_unassigned)} chưa xác định XN`,
+      drill: "UNPLANNED",
+    },
     { label: "Đã xếp kế hoạch", value: pipeline.planned },
     { label: "May xong", value: pipeline.sewn },
     { label: "Đã xuất", value: pipeline.shipped },
@@ -46,9 +51,14 @@ export default function ProgressSection({ data, onDrill }: Props) {
     >
       <div className="grid grid-cols-2 items-stretch gap-2 sm:grid-cols-4">
         {steps.map((s, i) => (
-          <div key={s.label} className="relative rounded-xl border border-slate-200 bg-slate-50 p-3">
+          <div
+            key={s.label}
+            onClick={s.drill ? () => onDrill(s.drill!) : undefined}
+            className={`relative rounded-xl border border-slate-200 bg-slate-50 p-3 ${s.drill ? "cursor-pointer transition hover:border-brand hover:shadow-sm" : ""}`}
+          >
             <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">{s.label}</p>
             <p className="mt-1 text-2xl font-bold text-slate-900">{num(s.value)}</p>
+            {s.sub && <p className="text-[11px] text-slate-500">{s.sub}</p>}
             {i < steps.length - 1 && <span className="absolute -right-2.5 top-1/2 z-10 hidden -translate-y-1/2 text-slate-300 sm:block">›</span>}
           </div>
         ))}
@@ -91,6 +101,11 @@ export default function ProgressSection({ data, onDrill }: Props) {
             </BarChart>
           </ResponsiveContainer>
         </div>
+      )}
+      {!!data.mapping_warnings && (
+        <button onClick={() => onDrill("MAPPING")} className="mt-3 rounded-lg bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100">
+          {num(data.mapping_warnings)} dòng có cảnh báo mapping XN (dữ liệu nguồn) — xem chi tiết
+        </button>
       )}
       <p className="mt-3 text-[11px] text-slate-400">
         Nguồn: {data.batch?.filename} · nhập lúc {dateTimeVi(data.batch?.imported_at)}

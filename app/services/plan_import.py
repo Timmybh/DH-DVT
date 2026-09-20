@@ -1,8 +1,8 @@
 """Nhập file Excel kế hoạch SX (.xlsb/.xlsx) — cấu trúc theo file "XN CHỐT".
 
 Sheet sử dụng:
-  KẾ HOẠCH     : PO đã xếp chuyền/thời gian (stage PLANNED)
-  PO MỚI       : PO chưa xếp lịch          (stage NEW)
+  KẾ HOẠCH     : PO đã xếp chuyền/thời gian (planning_status PLANNED)
+  PO MỚI       : PO chưa lên KH (planning_status UNPLANNED) — có thể đã biết XN hoặc chưa
   PO MAY XONG  : đã may xong, chờ xuất      (chỉ đếm)
   ĐÃ XUẤT      : lịch sử giao hàng          (chỉ đếm)
   LAO ĐỘNG     : công nhân có mặt theo Xí nghiệp/Tổ (Nhân sự)
@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.models.core import Factory
 from app.models.data import LaborHeadcount, PlanImportBatch, PlanRow, SyncRun
-from app.services.rules import classify_row, excel_serial_to_date, strip_accents, to_float
+from app.services.rules import assess_factory, classify_row, excel_serial_to_date, strip_accents, to_float
 from app.services.sync_core import add_items, fail_run, finish_run, start_run
 
 log = logging.getLogger(__name__)
@@ -109,7 +109,7 @@ class ParsedPlan:
     sheets_found: list[str] = field(default_factory=list)
 
 
-def _parse_plan_rows(rows: Iterator[list], stage: str) -> list[dict]:
+def _parse_plan_rows(rows: Iterator[list], planning_status: str) -> list[dict]:
     out = []
     for i, row in enumerate(rows):
         if i < 2:  # dòng tiêu đề + dòng đánh số cột
@@ -130,7 +130,7 @@ def _parse_plan_rows(rows: Iterator[list], stage: str) -> list[dict]:
         fac_num = to_float(_g(row, C_FAC))
         out.append(
             dict(
-                stage=stage,
+                planning_status=planning_status,
                 fac_num=int(fac_num) if fac_num is not None and fac_num == int(fac_num) else None,
                 fac_raw=_s(_g(row, C_FAC))[:20],
                 line_raw=_s(_g(row, C_LINE))[:60],
@@ -186,7 +186,7 @@ def parse_plan_workbook(path: Path) -> ParsedPlan:
 
         if (name := wb.find("PO MỚI")) is not None:
             parsed.sheets_found.append(name)
-            parsed.new = _parse_plan_rows(wb.rows(name), "NEW")
+            parsed.new = _parse_plan_rows(wb.rows(name), "UNPLANNED")
         if (name := wb.find("PO MAY XONG")) is not None:
             parsed.sheets_found.append(name)
             parsed.sewn_count, parsed.sewn_qty = _count_rows(wb.rows(name))
@@ -222,6 +222,8 @@ def _sync(db: Session, run: SyncRun, path: Path, filename: str, username: str) -
         summary={
             "planned": len(parsed.planned),
             "new": len(parsed.new),
+            "unplanned_known": 0,
+            "unplanned_unassigned": 0,
             "sewn_count": parsed.sewn_count,
             "sewn_qty": parsed.sewn_qty,
             "shipped_count": parsed.shipped_count,
@@ -233,28 +235,36 @@ def _sync(db: Session, run: SyncRun, path: Path, filename: str, username: str) -
     db.add(batch)
     db.flush()
 
-    unmatched_plan, matched = [], 0
-    stats = {"PLANNED": {"matched": 0, "unmatched": 0}, "NEW": {"matched": 0, "unmatched": 0}}
+    # Ba chiều độc lập: planning_status (theo sheet) · factory_assignment (đã biết XN?) · mapping_status (dữ liệu nguồn có vấn đề?)
+    warnings, matched = [], 0
+    stats = {
+        "PLANNED": {"matched": 0, "unmatched": 0},
+        "UNPLANNED": {"matched": 0, "unmatched": 0},
+    }
+    unplanned_known = unplanned_unassigned = 0
     rows = []
     for r in parsed.planned + parsed.new:
         fid = fmap.get(r["fac_num"]) if r["fac_num"] is not None else None
-        # PO MỚI chưa xếp chuyền nên không bắt buộc có Xí nghiệp; KẾ HOẠCH thì bắt buộc.
-        if r["stage"] == "PLANNED" and fid is None:
-            stats["PLANNED"]["unmatched"] += 1
-            unmatched_plan.append(
+        assignment, mapping, note = assess_factory(r["planning_status"], fid is not None, r["fac_raw"])
+        if mapping == "WARNING":
+            stats[r["planning_status"]]["unmatched"] += 1
+            warnings.append(
                 (
                     f"PO {r['po_number'] or '?'} / style {r['style_cc']}",
-                    f"KẾ HOẠCH: cột FAC/XN = '{r['fac_raw']}' không thuộc XN1/XN2/XN3 — {r['customer']} · SL {r['quantity']:,.0f} · {r['description'][:60]}",
+                    f"{'KẾ HOẠCH' if r['planning_status'] == 'PLANNED' else 'PO MỚI'}: {note} — {r['customer']} · SL {r['quantity']:,.0f} · {r['description'][:60]}",
                     {"po": r["po_number"], "qty": r["quantity"], "fac": r["fac_raw"]},
                 )
             )
         else:
-            stats[r["stage"]]["matched"] += 1
+            stats[r["planning_status"]]["matched"] += 1
             matched += 1
-        row = {k: v for k, v in r.items() if k not in ("fac_num", "fac_raw")}
-        row["factory_id"] = fid
-        row["batch_id"] = batch.id
+        if r["planning_status"] == "UNPLANNED":
+            unplanned_known += assignment == "KNOWN"
+            unplanned_unassigned += assignment == "UNASSIGNED"
+        row = {k: v for k, v in r.items() if k != "fac_num"}
+        row.update(factory_id=fid, batch_id=batch.id, factory_assignment=assignment, mapping_status=mapping, mapping_note=note)
         rows.append(row)
+    unmatched_plan = warnings
     for i in range(0, len(rows), 2000):
         db.bulk_insert_mappings(PlanRow, rows[i : i + 2000])
 
@@ -269,7 +279,8 @@ def _sync(db: Session, run: SyncRun, path: Path, filename: str, username: str) -
     if labor_rows:
         db.bulk_insert_mappings(LaborHeadcount, labor_rows)
 
-    add_items(db, run.id, "UNMATCHED", "KẾ HOẠCH", unmatched_plan)
+    batch.summary = {**batch.summary, "unplanned_known": unplanned_known, "unplanned_unassigned": unplanned_unassigned}
+    add_items(db, run.id, "UNMATCHED", "KẾ HOẠCH / PO MỚI", unmatched_plan)
     add_items(db, run.id, "UNMATCHED", "LAO ĐỘNG", unmatched_labor)
 
     run.total_records = len(rows) + len(labor_rows)
@@ -281,7 +292,7 @@ def _sync(db: Session, run: SyncRun, path: Path, filename: str, username: str) -
         "filename": filename,
         "objects": [
             {"name": "KẾ HOẠCH", "read": len(parsed.planned), **stats["PLANNED"]},
-            {"name": "PO MỚI", "read": len(parsed.new), **stats["NEW"]},
+            {"name": "PO MỚI", "read": len(parsed.new), **stats["UNPLANNED"]},
             {"name": "PO MAY XONG", "read": parsed.sewn_count, "matched": parsed.sewn_count, "unmatched": 0},
             {"name": "ĐÃ XUẤT", "read": parsed.shipped_count, "matched": parsed.shipped_count, "unmatched": 0},
             {"name": "LAO ĐỘNG", "read": len(parsed.labor), "matched": labor_matched, "unmatched": len(unmatched_labor)},

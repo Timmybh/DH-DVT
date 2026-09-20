@@ -104,3 +104,21 @@ def parse_month(value: str | None, today: date) -> tuple[int, int]:
     except ValueError:
         pass
     return today.year, today.month
+
+
+def assess_factory(planning_status: str, factory_known: bool, fac_raw: str) -> tuple[str, str, str]:
+    """Tách 2 chiều độc lập cho 1 dòng kế hoạch: (factory_assignment, mapping_status, mapping_note).
+
+    - factory_assignment: KNOWN nếu đã xác định được XN, ngược lại UNASSIGNED.
+    - mapping_status: chỉ WARNING khi dữ liệu nguồn có vấn đề (FAC/XN lạ, hoặc dòng đã xếp KH mà thiếu XN).
+      Một PO chưa lên KH và chưa có XN là trạng thái HỢP LỆ -> mapping OK.
+    Planning status (UNPLANNED/PLANNED) do sheet nguồn quyết định, không suy ra từ hai chiều này.
+    """
+    if factory_known:
+        return "KNOWN", "OK", ""
+    raw = (fac_raw or "").strip()
+    if raw:
+        return "UNASSIGNED", "WARNING", f"FAC/XN '{raw}' không thuộc danh mục XN1/XN2/XN3"
+    if planning_status == "PLANNED":
+        return "UNASSIGNED", "WARNING", "Dòng đã xếp kế hoạch nhưng thiếu XN"
+    return "UNASSIGNED", "OK", ""

@@ -151,7 +151,7 @@ def build_signals(db: Session, factories: list[Factory], is_total: bool, month: 
                 "WARN",
                 "CRITICAL" if prog["late_pct"] >= 15 else "WARNING",
                 f"{risks['LATE']} PO có nguy cơ trễ hạn giao",
-                f"EHD/CHD âm · chiếm {prog['late_pct']:.0f}% PO đã xếp kế hoạch",
+                f"EHD/CHD âm · chiếm {prog['late_pct']:.0f}% tổng PO",
                 {"kind": "po", "risk": "LATE"},
             )
         if risks["MATERIAL"]:
@@ -171,6 +171,15 @@ def build_signals(db: Session, factories: list[Factory], is_total: bool, month: 
                 f"{risks['ADVANCE']} PO hoàn thành sớm hơn kế hoạch",
                 f"Trong {planned:,} PO đã xếp kế hoạch",
                 {"kind": "po", "risk": "ADVANCE"},
+            )
+        if prog["mapping_warnings"]:
+            add(
+                "plan.mapping",
+                "WARN",
+                "WARNING",
+                f"{prog['mapping_warnings']} dòng kế hoạch có cảnh báo mapping XN",
+                "Dữ liệu nguồn (FAC/XN) cần rà soát — không ảnh hưởng trạng thái lên KH",
+                {"kind": "po", "risk": "MAPPING"},
             )
         imported = current_batch(db).imported_at
         age_days = (utcnow() - imported).days

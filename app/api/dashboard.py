@@ -55,7 +55,7 @@ def signals(scope: str = "TONG", month: str | None = None, db: Session = Depends
 @router.get("/drill/po")
 def drill_po(
     scope: str = "TONG",
-    risk: str = Query("ALL", pattern="^(ALL|OK|ADVANCE|LATE|MATERIAL)$"),
+    risk: str = Query("ALL", pattern="^(ALL|OK|ADVANCE|LATE|MATERIAL|UNPLANNED|UNASSIGNED|MAPPING)$"),
     db: Session = Depends(get_db),
     _: User = Viewer,
 ):

@@ -75,3 +75,18 @@ def test_gap_without_chd_is_not_late():
     parsed = _parse_plan_rows(iter(rows), "PLANNED")
     assert parsed[0]["risk"] == "OK" and parsed[0]["gap_days"] is None
     assert parsed[1]["risk"] == "LATE" and parsed[1]["gap_days"] == -3.2
+
+
+def test_three_dimensions_are_independent():
+    from app.services.rules import assess_factory
+
+    # A. Chưa lên KH nhưng ĐÃ biết XN: KNOWN + mapping OK (thuộc pool chưa lên KH của XN đó)
+    assert assess_factory("UNPLANNED", True, "2") == ("KNOWN", "OK", "")
+    # B. Chưa lên KH và chưa biết XN: UNASSIGNED nhưng mapping vẫn OK — KHÔNG phải "chưa khớp"
+    assert assess_factory("UNPLANNED", False, "") == ("UNASSIGNED", "OK", "")
+    # FAC/XN lạ (VD 'DPC') -> UNASSIGNED + mapping WARNING, bất kể trạng thái kế hoạch
+    fa, ms, note = assess_factory("UNPLANNED", False, "DPC")
+    assert (fa, ms) == ("UNASSIGNED", "WARNING") and "DPC" in note
+    # Đã lên KH mà thiếu XN -> cảnh báo mapping
+    assert assess_factory("PLANNED", False, "")[:2] == ("UNASSIGNED", "WARNING")
+    assert assess_factory("PLANNED", True, "1")[:2] == ("KNOWN", "OK")

@@ -69,12 +69,13 @@ export interface RevenueOverview {
 export interface ProgressOverview {
   available: boolean;
   batch?: { filename: string; imported_at: string; labor_as_of: string };
-  pipeline?: { new: number; planned: number; sewn: number | null; shipped: number | null };
+  pipeline?: { new: number; new_known: number; new_unassigned: number; planned: number; sewn: number | null; shipped: number | null };
   total_po?: number;
   planned_qty?: number;
   risks?: { OK: number; ADVANCE: number; LATE: number; MATERIAL: number };
   risk_qty?: { OK: number; ADVANCE: number; LATE: number; MATERIAL: number };
   late_pct?: number;
+  mapping_warnings?: number;
   by_factory?: { code: string; name: string; po: number; qty: number; ok: number; advance: number; late: number; material: number }[];
 }
 

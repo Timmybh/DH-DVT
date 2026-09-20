@@ -11,10 +11,34 @@ DEFAULT_ADMIN_USERNAME = "admin"
 DEFAULT_ADMIN_PASSWORD = "Admin@123"
 
 
+def _upgrade_schema() -> None:
+    """Nâng cấp schema đã tồn tại (create_all không ALTER). Idempotent."""
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        has_stage = conn.execute(
+            text("select 1 from information_schema.columns where table_name='plan_rows' and column_name='stage'")
+        ).first()
+        if has_stage:
+            conn.execute(text("ALTER TABLE plan_rows RENAME COLUMN stage TO planning_status"))
+            conn.execute(text("UPDATE plan_rows SET planning_status='UNPLANNED' WHERE planning_status='NEW'"))
+        for ddl in (
+            "ALTER TABLE plan_rows ADD COLUMN IF NOT EXISTS factory_assignment VARCHAR(12) NOT NULL DEFAULT 'KNOWN'",
+            "ALTER TABLE plan_rows ADD COLUMN IF NOT EXISTS mapping_status VARCHAR(8) NOT NULL DEFAULT 'OK'",
+            "ALTER TABLE plan_rows ADD COLUMN IF NOT EXISTS mapping_note VARCHAR(200) NOT NULL DEFAULT ''",
+            "ALTER TABLE plan_rows ADD COLUMN IF NOT EXISTS fac_raw VARCHAR(20) NOT NULL DEFAULT ''",
+        ):
+            try:
+                conn.execute(text(ddl))
+            except Exception:  # noqa: BLE001 - bảng chưa tồn tại lần chạy đầu: create_all sẽ tạo
+                pass
+
+
 def run_seed() -> None:
     import app.models  # noqa: F401  (đăng ký metadata)
 
     Base.metadata.create_all(bind=engine)
+    _upgrade_schema()
     with SessionLocal() as db:
         for n in (1, 2, 3):
             if not db.query(Factory).filter(Factory.sql_xn_id == n).first():

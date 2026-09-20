@@ -16,6 +16,9 @@ const RISK_TITLE: Record<string, string> = {
   ADVANCE: "PO hoàn thành sớm hơn kế hoạch",
   LATE: "PO có nguy cơ trễ hạn giao",
   MATERIAL: "PO chưa sẵn sàng nguyên phụ liệu",
+  UNPLANNED: "PO chưa lên kế hoạch (Chưa lên KH)",
+  UNASSIGNED: "PO chưa xác định XN",
+  MAPPING: "Dòng có cảnh báo mapping XN (dữ liệu nguồn)",
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -86,7 +89,10 @@ export default function DrillDrawer({ target, scope, onClose }: Props) {
               <tbody>
                 {data.rows.map((r: Json, i: number) => (
                   <tr key={i} className="border-b border-slate-50 align-top">
-                    <td className="py-1.5 font-medium">{r.factory}</td>
+                    <td className={`py-1.5 font-medium ${r.factory === "Chưa xác định XN" ? "text-slate-400" : ""}`}>
+                      {r.factory}
+                      {r.mapping_status === "WARNING" && <span title="Cảnh báo mapping" className="ml-1 text-amber-500">⚠</span>}
+                    </td>
                     <td>{r.line}</td>
                     <td>{r.po_number}</td>
                     <td>{r.customer}</td>
