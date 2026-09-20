@@ -4,9 +4,6 @@ import { api, Drill, errorMessage, RuntimeResponse } from "../api/client";
 import DashboardCanvas from "../components/dashboard/DashboardCanvas";
 import { DashActions } from "../components/dashboard/renderers";
 import DrillDrawer, { DrillTarget } from "../components/DrillDrawer";
-import { StatusBadge } from "../components/Section";
-import { useAuth } from "../context/AuthContext";
-import { dateTimeVi, SOURCE_LABEL } from "../lib/format";
 
 interface Meta {
   today: string;
@@ -16,7 +13,6 @@ interface Meta {
 /** Dashboard runtime: mọi thành phần hiển thị (vị trí, kiểu hiển thị, dữ liệu) đến từ metadata + Rule Registry ở backend. */
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { user } = useAuth();
   const [meta, setMeta] = useState<Meta | null>(null);
   const [scope, setScope] = useState("TONG");
   const [month, setMonth] = useState("");
@@ -72,22 +68,12 @@ export default function Dashboard() {
   );
 
   const tabs = [{ code: "TONG", name: "Tổng công ty" }, ...(meta?.factories ?? [])];
-  const lastSync = runtime?.header.sync.revenue;
-  const lastPlan = runtime?.header.sync.plan;
 
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-slate-900">Dashboard điều hành — {runtime?.header.scope_name ?? "..."}</h1>
-          <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
-            {[lastSync, lastPlan].filter(Boolean).map((s) => (
-              <span key={s!.id} className="flex items-center gap-1.5">
-                {SOURCE_LABEL[s!.source] ?? s!.source}: <b className="text-slate-700">{dateTimeVi(s!.started_at)}</b> <StatusBadge status={s!.status} />
-              </span>
-            ))}
-            {!lastSync && !lastPlan && <span>Chưa có lần đồng bộ nào</span>}
-          </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
@@ -115,17 +101,9 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {scope === "TONG" && <p className="text-xs text-slate-400">Góc nhìn Tổng công ty được cộng dồn từ các đơn vị (xí nghiệp). Chọn XN1/XN2/XN3 để xem riêng từng đơn vị.</p>}
-
       {runtime?.header.has_demo && (
         <div className="rounded-xl border-2 border-dashed border-orange-300 bg-orange-50 p-3 text-sm font-medium text-orange-800">
           DỮ LIỆU DOANH THU MẪU — chưa đồng bộ được từ eGMF. Số liệu doanh thu bên dưới chỉ để minh họa; sẽ tự thay bằng số thật khi đồng bộ thành công.
-        </div>
-      )}
-      {!!user?.security_warnings.length && (
-        <div className="rounded-xl border border-orange-200 bg-orange-50 p-3 text-xs text-orange-800">
-          <p className="mb-1 font-bold">Khuyến nghị bảo mật (chỉ quản trị thấy)</p>
-          <ul className="list-inside list-disc space-y-0.5">{user.security_warnings.map((w) => <li key={w}>{w}</li>)}</ul>
         </div>
       )}
       {error && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}

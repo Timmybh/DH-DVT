@@ -123,3 +123,10 @@ body { font-family: "Montserrat", "Segoe UI", system-ui, sans-serif; color: #e2e
   .dash-grid { display: flex; flex-direction: column; }
   .dash-item { order: var(--ord); }
 }
+
+/* Tay nắm kéo rộng cột + vạch ngăn cách khi đổi chuyền (lưới không còn tiêu đề nhóm chuyền) */
+.pg thead th { overflow: visible; }
+.pg-rz { position: absolute; top: 0; right: -3px; width: 8px; height: 100%; cursor: col-resize; z-index: 6; touch-action: none; }
+.pg-rz::after { content: ""; position: absolute; top: 6px; bottom: 6px; left: 3px; width: 2px; border-radius: 1px; background: rgba(148,163,184,.35); }
+.pg-rz:hover::after { background: #818cf8; }
+.pg tr.pg-lane-start td { border-top: 2px solid rgba(129,140,248,.35); }

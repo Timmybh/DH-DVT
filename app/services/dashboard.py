@@ -256,13 +256,15 @@ def hr_overview(db: Session, factories: list[Factory], is_total: bool) -> dict:
         q = q.filter(LaborHeadcount.factory_id.in_(fids))
     rows = q.all()
     by_fid: dict[int | None, int] = {}
+    teams_fid: dict[int | None, int] = {}
     for r in rows:
         by_fid[r.factory_id] = by_fid.get(r.factory_id, 0) + r.headcount
+        teams_fid[r.factory_id] = teams_fid.get(r.factory_id, 0) + 1
     return {
         "available": True,
         "total": sum(by_fid.values()),
         "as_of_text": (rows[0].as_of_text if rows else "") or "",
-        "by_factory": [{"code": f.code, "name": f.name, "total": by_fid.get(f.id, 0)} for f in factories],
+        "by_factory": [{"code": f.code, "name": f.name, "total": by_fid.get(f.id, 0), "teams": teams_fid.get(f.id, 0)} for f in factories],
         "teams": len(rows),
     }
 
@@ -473,7 +475,8 @@ def drill_order(db: Session, factories: list[Factory], kind: str, status: str, y
 
 
 # ---------------------------------------------------------------- QA (Total Defect Count)
-QA_LABELS = [("DAU_CHUYEN", "Đầu chuyền"), ("QC", "QC"), ("INLINE", "Inline"), ("ENDLINE", "Endline"), ("PREFINAL", "Prefinal (Final)")]
+# Nhóm QC (DB hipro) tạm ẩn — thêm lại ("QC", "QC") giữa Đầu chuyền và Inline khi kết nối hipro
+QA_LABELS = [("DAU_CHUYEN", "Đầu chuyền"), ("INLINE", "Inline"), ("ENDLINE", "Endline"), ("PREFINAL", "Prefinal (Final)")]
 
 
 def qa_summary(db: Session, all_factories: list[Factory], selected: list[Factory], is_total: bool, year: int, month: int) -> dict:

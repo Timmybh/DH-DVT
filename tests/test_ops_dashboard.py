@@ -72,10 +72,10 @@ def test_qa_summary_totals_per_category_and_factory():
     db.commit()
     qa = qa_summary(db, fs, [f2], False, 2026, 9)
     cats = {c["key"]: c for c in qa["categories"]}
-    assert [c["key"] for c in qa["categories"]] == ["DAU_CHUYEN", "QC", "INLINE", "ENDLINE", "PREFINAL"]
+    assert [c["key"] for c in qa["categories"]] == ["DAU_CHUYEN", "INLINE", "ENDLINE", "PREFINAL"]  # QC tạm ẩn
     assert {b["code"]: b["count"] for b in cats["INLINE"]["by_factory"]} == {"XN1": 10, "XN2": 0, "XN3": 0}
     assert cats["ENDLINE"]["total"] == 5
-    assert cats["QC"]["connected"] is False and cats["QC"]["total"] is None
+    assert "QC" not in cats
     assert qa["selected"] == "XN2"
     assert qa_summary(db, fs, fs, True, 2026, 9)["selected"] is None
 

@@ -9,60 +9,71 @@ interface Props {
   onDrill: (category: string) => void;
 }
 
-/** QA: Total Defect Count (số lần xuất hiện lỗi) theo nhóm kiểm tra, so sánh XN1 / XN2 / XN3. */
+/** QA: Total Defect Count. Dòng = xí nghiệp, cột = nhóm kiểm tra; mỗi ô có số lỗi và thanh so sánh trong cùng nhóm. */
 export default function QaSection({ data, onDrill }: Props) {
   const [y, m] = data.month.split("-");
-  const max = Math.max(1, ...data.categories.flatMap((c) => c.by_factory.map((b) => b.count ?? 0)));
-  const codes = data.categories[0]?.by_factory.map((b) => b.code) ?? [];
+  const cats = data.categories;
+  const codes = cats[0]?.by_factory.map((b) => b.code) ?? [];
+  const countOf = (cat: (typeof cats)[number], code: string) => cat.by_factory.find((b) => b.code === code)?.count ?? 0;
+  const colMax = (cat: (typeof cats)[number]) => Math.max(1, ...cat.by_factory.map((b) => b.count ?? 0));
+  const rowTotal = (code: string) => cats.reduce((s, c) => s + (c.connected ? countOf(c, code) : 0), 0);
+
   return (
     <Section
       title="Chất lượng (QA)"
-      subtitle={`Tổng số lỗi (Total Defect Count) tháng ${m}/${y}${data.latest_day ? ` · dữ liệu đến ${new Date(data.latest_day).toLocaleDateString("vi-VN")}` : ""}`}
-      right={
-        <div className="flex gap-3 text-[11px] text-slate-500">
-          {codes.map((c) => (
-            <span key={c} className={`flex items-center gap-1 ${data.selected === c ? "font-bold text-slate-800" : ""}`}>
-              <i className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: FACTORY_COLOR[c] ?? "#94a3b8" }} /> {c}
-            </span>
-          ))}
-        </div>
-      }
+      subtitle={`Tổng số lỗi (Total Defect Count) tháng ${m}/${y}${data.latest_day ? ` · dữ liệu đến ${new Date(data.latest_day).toLocaleDateString("vi-VN")}` : ""} · bấm tiêu đề cột để xem theo ngày`}
     >
       {!data.has_data ? (
         <p className="text-sm text-slate-500">Chưa có dữ liệu QA từ eGMF — bấm "Đồng bộ ngay" ở Quản trị → Sync Log.</p>
       ) : (
-        <div className="space-y-2.5">
-          {data.categories.map((c) => (
-            <button
-              key={c.key}
-              onClick={() => c.connected && onDrill(c.key)}
-              disabled={!c.connected}
-              data-testid={`qa-${c.key}`}
-              className={`grid w-full grid-cols-[110px_1fr_64px] items-center gap-3 rounded-lg px-1 py-1 text-left ${c.connected ? "hover:bg-slate-500/10" : "cursor-default opacity-60"}`}
-              aria-label={c.connected ? `${c.label}: tổng ${c.total} lỗi` : `${c.label}: chưa kết nối`}
-            >
-              <span className="text-sm font-semibold text-slate-700">{c.label}</span>
-              {c.connected ? (
-                <span className="space-y-1">
-                  {c.by_factory.map((b) => (
-                    <span key={b.code} className="flex items-center gap-2">
-                      <span className="w-8 text-[10px] text-slate-400">{b.code}</span>
-                      <span className="h-2.5 flex-1 overflow-hidden rounded-full bg-slate-500/15">
-                        <span
-                          className="block h-full rounded-full"
-                          style={{ width: `${((b.count ?? 0) / max) * 100}%`, background: FACTORY_COLOR[b.code] ?? "#94a3b8", opacity: data.selected && data.selected !== b.code ? 0.45 : 1 }}
-                        />
-                      </span>
-                      <span className="w-12 text-right text-xs tabular-nums text-slate-600">{num(b.count)}</span>
-                    </span>
-                  ))}
-                </span>
-              ) : (
-                <span className="text-xs text-slate-400">Chưa kết nối (dữ liệu nằm trên DB hipro)</span>
-              )}
-              <span className="text-right text-sm font-bold tabular-nums text-slate-800">{c.connected ? num(c.total) : "—"}</span>
-            </button>
-          ))}
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[520px] border-separate border-spacing-y-1.5 text-sm" data-testid="qa-matrix">
+            <thead>
+              <tr className="text-xs uppercase text-slate-400">
+                <th className="w-24 pb-1 text-left font-semibold">Xí nghiệp</th>
+                {cats.map((c) => (
+                  <th key={c.key} className="pb-1 text-right font-semibold">
+                    <button onClick={() => c.connected && onDrill(c.key)} disabled={!c.connected} data-testid={`qa-${c.key}`} className="uppercase hover:text-slate-200 disabled:cursor-default" title={c.connected ? "Xem theo ngày" : "Chưa kết nối"}>
+                      {c.label}
+                    </button>
+                  </th>
+                ))}
+                <th className="pb-1 text-right font-semibold">Tổng</th>
+              </tr>
+            </thead>
+            <tbody>
+              {codes.map((code) => {
+                const selected = data.selected === code;
+                return (
+                  <tr key={code} data-testid={`qa-row-${code}`}>
+                    <td className={`rounded-l-lg py-2 pl-2 font-bold ${selected ? "bg-indigo-500/15" : ""}`}>
+                      <span className="mr-2 inline-block h-2.5 w-2.5 rounded-sm align-middle" style={{ background: FACTORY_COLOR[code] ?? "#94a3b8" }} />
+                      {code}
+                    </td>
+                    {cats.map((c) => {
+                      const v = countOf(c, code);
+                      return (
+                        <td key={c.key} className={`relative py-2 pr-2 text-right tabular-nums ${selected ? "bg-indigo-500/15" : ""}`} data-testid={`qa-cell-${code}-${c.key}`}>
+                          {c.connected && (
+                            <span className="absolute inset-y-1 right-0 rounded-l opacity-30" style={{ width: `${(v / colMax(c)) * 100}%`, background: FACTORY_COLOR[code] ?? "#94a3b8" }} aria-hidden />
+                          )}
+                          <span className="relative font-semibold">{c.connected ? num(v) : "—"}</span>
+                        </td>
+                      );
+                    })}
+                    <td className={`rounded-r-lg py-2 pr-2 text-right font-bold tabular-nums ${selected ? "bg-indigo-500/15" : ""}`}>{num(rowTotal(code))}</td>
+                  </tr>
+                );
+              })}
+              <tr className="border-t border-slate-200 text-slate-500">
+                <td className="pl-2 pt-1 text-xs font-semibold uppercase">Cộng</td>
+                {cats.map((c) => (
+                  <td key={c.key} className="pr-2 pt-1 text-right text-xs font-bold tabular-nums">{c.connected ? num(c.total) : "—"}</td>
+                ))}
+                <td className="pr-2 pt-1 text-right text-xs font-bold tabular-nums">{num(cats.reduce((s, c) => s + (c.total ?? 0), 0))}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       )}
     </Section>

@@ -3,6 +3,7 @@ import { api, UnplannedDto } from "../../api/client";
 import { num } from "../../lib/format";
 import { cellText, Col, sortValue, UNPLANNED_COLS } from "../../lib/planColumns";
 import { DragInfo } from "./PlannedGrid";
+import { useColumnWidths } from "../../lib/useColumnWidths";
 
 export interface UnplannedFilters {
   xn: string; // ALL | XN1 | XN2 | XN3 | UNASSIGNED
@@ -85,17 +86,18 @@ export default function UnplannedPanel({ baseVersionId, factories, editable, exc
   }, [filters, baseVersionId, reloadKey]);
 
   const cols = UNPLANNED_COLS;
+  const cw = useColumnWidths("dvt_cols_unplanned", cols.map((c) => ({ key: c.key, w: c.w })));
   const offsets = useMemo(() => {
     let left = CTRL_W;
     const m = new Map<string, number>();
     cols.forEach((c) => {
       if (c.frozen) {
         m.set(c.key, left);
-        left += c.w;
+        left += cw.widthOf(c.key);
       }
     });
     return m;
-  }, [cols]);
+  }, [cols, cw]);
   const frozenStyle = (c: Col<UnplannedDto>): CSSProperties | undefined => (c.frozen ? { left: offsets.get(c.key) } : undefined);
 
   const pool = useMemo(() => data.rows.filter((r) => (r.returned ? !excludeReturned.has(r.row_uid ?? "") : !excludeIds.has(r.id))), [data.rows, excludeIds, excludeReturned]);
@@ -181,10 +183,10 @@ export default function UnplannedPanel({ baseVersionId, factories, editable, exc
           }
         }}
       >
-        <table style={{ width: CTRL_W + cols.reduce((sum, c) => sum + c.w, 0) }}>
+        <table style={{ width: CTRL_W + cols.reduce((sum, c) => sum + cw.widthOf(c.key), 0) }}>
           <colgroup>
             <col style={{ width: CTRL_W }} />
-            {cols.map((c) => <col key={c.key} style={{ width: c.w }} />)}
+            {cols.map((c) => <col key={c.key} style={{ width: cw.widthOf(c.key) }} />)}
           </colgroup>
           <thead>
             <tr className="pg-h1">
@@ -198,6 +200,7 @@ export default function UnplannedPanel({ baseVersionId, factories, editable, exc
                   title="Bấm để sắp xếp"
                 >
                   {c.label} {sort?.key === c.key ? (sort.dir === 1 ? "▲" : "▼") : ""}
+                  <span className="pg-rz" role="separator" aria-label={`Kéo để đổi độ rộng cột ${c.label}`} onPointerDown={(e) => cw.startResize(c.key, e)} onClick={(e) => e.stopPropagation()} />
                 </th>
               ))}
             </tr>

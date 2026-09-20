@@ -40,13 +40,13 @@ function ComparisonRow({ row, unit, period, onDrill }: { row: RevenueSummaryRow;
         {row.kind === "FACTORY" && <span className="hidden text-xs font-normal text-slate-400 sm:inline"> · {row.label}</span>}
       </div>
 
-      <div className={`relative flex-1 overflow-hidden rounded-lg border-2 border-indigo-800 bg-cyan-100 ${total ? "h-12" : "h-10"}`}>
+      <div className={`relative flex-1 overflow-hidden rounded-lg border-2 border-[#04191c] bg-[#0e6b6b] ${total ? "h-12" : "h-10"}`}>
         {row.declared ? (
           <>
-            <div className="absolute inset-y-0 left-0 flex items-center justify-end bg-indigo-800 pr-2 text-sm font-bold text-white" style={{ width: `${fill}%` }}>
+            <div className="absolute inset-y-0 left-0 flex items-center justify-end bg-[#1fd8d8] pr-2 text-sm font-bold text-[#04262a]" style={{ width: `${fill}%` }}>
               {!narrow && pctText}
             </div>
-            <div className="absolute inset-y-0 flex items-center pl-3 text-sm font-medium text-indigo-900" style={{ left: `${fill}%` }}>
+            <div className="absolute inset-y-0 flex items-center pl-3 text-sm font-medium text-white" style={{ left: `${fill}%` }}>
               {narrow && <span className="mr-2 font-bold">{pctText}</span>}
               {num(row.actual)}
             </div>
@@ -57,7 +57,7 @@ function ComparisonRow({ row, unit, period, onDrill }: { row: RevenueSummaryRow;
       </div>
 
       <div
-        className={`flex shrink-0 items-center justify-center rounded-lg border-2 border-indigo-800 bg-cyan-100 px-3 text-sm font-medium text-indigo-900 ${total ? "h-12 min-w-[92px]" : "h-10 min-w-[92px]"}`}
+        className={`flex shrink-0 items-center justify-center rounded-lg border-2 border-[#04191c] bg-[#0e6b6b] px-3 text-sm font-medium text-white ${total ? "h-12 min-w-[92px]" : "h-10 min-w-[92px]"}`}
         title="Kế hoạch"
       >
         {num(row.plan)}

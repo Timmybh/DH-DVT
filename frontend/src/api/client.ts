@@ -135,7 +135,7 @@ export interface HrOverview {
   total?: number;
   as_of_text?: string;
   teams?: number;
-  by_factory?: { code: string; name: string; total: number }[];
+  by_factory?: { code: string; name: string; total: number; teams?: number }[];
 }
 
 export interface SyncBrief {

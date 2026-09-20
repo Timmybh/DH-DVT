@@ -2,6 +2,8 @@ import { CSSProperties, Fragment, MutableRefObject, useEffect, useMemo, useState
 import { DraftRow } from "../../lib/draft";
 import { cellText, Col, naturalCompare, PLANNED_COLS, sortValue } from "../../lib/planColumns";
 import { num } from "../../lib/format";
+import { useColumnWidths } from "../../lib/useColumnWidths";
+import { inWindow, isoWeek, periodTitle, PlanView, rangeOf, shift, startOfDay, weekRange } from "../../lib/weeks";
 
 export type DragInfo = { kind: "unplanned"; id: number } | { kind: "returned"; uid: string } | { kind: "row"; uid: string } | null;
 
@@ -34,12 +36,44 @@ function onTimeClass(v: string | undefined): string {
 
 export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow, onRecalc, highlightUid, issueMap }: Props) {
   const cols = PLANNED_COLS;
+  const cw = useColumnWidths("dvt_cols_planned", cols.map((c) => ({ key: c.key, w: c.w })));
   const [sort, setSort] = useState<Sort>(null);
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [collapsed, setCollapsed] = useState<Set<string> | null>(null); // null = mặc định (chưa tùy chỉnh)
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [over, setOver] = useState<Over>(null);
+  // Cửa sổ thời gian: mặc định TUẦN hiện tại; có thể chọn Tháng hoặc Tất cả và nhảy trái/phải giữa các kỳ
+  const [view, setViewState] = useState<PlanView>(() => {
+    try {
+      const v = localStorage.getItem("dvt_plan_view");
+      return v === "MONTH" || v === "ALL" ? v : "WEEK";
+    } catch {
+      return "WEEK";
+    }
+  });
+  const [anchor, setAnchor] = useState<Date>(() => startOfDay(new Date()));
+  const setView = (v: PlanView) => {
+    setViewState(v);
+    try {
+      localStorage.setItem("dvt_plan_view", v);
+    } catch {
+      /* ignore */
+    }
+  };
+  const win = useMemo(() => rangeOf(view, anchor), [view, anchor]);
+  const period = periodTitle(view, anchor);
+  // dòng đang sửa trong bản nháp (mới/đã dời/đã sửa) luôn hiển thị dù nằm ngoài kỳ đang xem
+  const windowRows = useMemo(() => (win ? rows.filter((r) => r._flag || inWindow(r.begin_prod_date, r.end_prod_date, win)) : rows), [rows, win]);
+  const fullLanes = useMemo(() => {
+    const m = new Map<string, DraftRow[]>();
+    rows.forEach((r) => {
+      const k = `${r.factory_code}|${r.primary_line}`;
+      if (!m.has(k)) m.set(k, []);
+      m.get(k)!.push(r);
+    });
+    return m;
+  }, [rows]);
 
   const frozenOffsets = useMemo(() => {
     let left = CTRL_W;
@@ -47,18 +81,18 @@ export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow,
     cols.forEach((c) => {
       if (c.frozen) {
         m.set(c.key, left);
-        left += c.w;
+        left += cw.widthOf(c.key);
       }
     });
     return m;
-  }, [cols]);
-  const totalWidth = CTRL_W + cols.reduce((s, c) => s + c.w, 0);
+  }, [cols, cw]);
+  const totalWidth = CTRL_W + cols.reduce((s, c) => s + cw.widthOf(c.key), 0);
   const filterActive = Object.values(filters).some((v) => v.trim());
 
   // ---- nhóm Factory → Line (thứ tự dòng trong chuyền giữ theo sequence)
   const tree = useMemo(() => {
     const f = new Map<string, Map<string, DraftRow[]>>();
-    rows.forEach((r) => {
+    windowRows.forEach((r) => {
       if (!f.has(r.factory_code)) f.set(r.factory_code, new Map());
       const lines = f.get(r.factory_code)!;
       if (!lines.has(r.primary_line)) lines.set(r.primary_line, []);
@@ -67,23 +101,23 @@ export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow,
     return [...f.entries()]
       .sort((a, b) => naturalKey(a[0], b[0]))
       .map(([xn, lines]) => ({ xn, lines: [...lines.entries()].sort((a, b) => naturalKey(a[0], b[0])).map(([line, rs]) => ({ line, rows: rs })) }));
-  }, [rows]);
+  }, [windowRows]);
 
-  // mặc định: mở mọi XN, chỉ mở chuyền đầu tiên của mỗi XN
+  // Chỉ nhóm theo Factory (không nhóm theo chuyền/tổ). Kế hoạch lớn (> 4.000 dòng) mặc định chỉ mở XN đầu tiên cho nhẹ.
   const isCollapsed = (key: string): boolean => {
     if (filterActive) return false;
     if (collapsed) return collapsed.has(key);
-    return key.startsWith("L:") && !tree.some((f) => f.lines[0] && `L:${f.xn}|${f.lines[0].line}` === key);
+    return windowRows.length > 4000 && tree[0] !== undefined && key !== `F:${tree[0].xn}`;
   };
   const toggle = (key: string) =>
     setCollapsed((cur) => {
-      const base = cur ?? new Set(tree.flatMap((f) => f.lines.slice(1).map((l) => `L:${f.xn}|${l.line}`)));
+      const base = cur ?? new Set(tree.filter((f) => isCollapsed(`F:${f.xn}`)).map((f) => `F:${f.xn}`));
       const next = new Set(base);
       if (next.has(key)) next.delete(key);
       else next.add(key);
       return next;
     });
-  const setAll = (open: boolean) => setCollapsed(open ? new Set() : new Set(tree.flatMap((f) => [`F:${f.xn}`, ...f.lines.map((l) => `L:${f.xn}|${l.line}`)])));
+  const setAll = (open: boolean) => setCollapsed(open ? new Set() : new Set(tree.map((f) => `F:${f.xn}`)));
 
   // nhảy tới dòng (từ Validation) → mở nhóm chứa nó
   useEffect(() => {
@@ -91,14 +125,15 @@ export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow,
     const r = rows.find((x) => x.row_uid === highlightUid);
     if (!r) return;
     setCollapsed((cur) => {
-      const base = cur ?? new Set(tree.flatMap((f) => f.lines.slice(1).map((l) => `L:${f.xn}|${l.line}`)));
+      const base = cur ?? new Set(tree.filter((f) => isCollapsed(`F:${f.xn}`)).map((f) => `F:${f.xn}`));
       const next = new Set(base);
       next.delete(`F:${r.factory_code}`);
-      next.delete(`L:${r.factory_code}|${r.primary_line}`);
       return next;
     });
     setFilters({});
     setSort(null);
+    const start = r.begin_prod_date ?? r.end_prod_date;
+    if (start && view !== "ALL" && !inWindow(r.begin_prod_date, r.end_prod_date, win)) setAnchor(startOfDay(new Date(start.slice(0, 10) + "T00:00:00")));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [highlightUid]);
 
@@ -173,12 +208,26 @@ export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow,
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
         <div>
           <h2 className="text-sm font-bold text-slate-900">Kế hoạch vận hành (Planned)</h2>
+          <p className="mt-1 flex flex-wrap items-center gap-2" data-testid="plan-period">
+            <span className="rounded-lg bg-indigo-500/20 px-3 py-1 text-base font-bold text-slate-900" data-testid="plan-period-title">{period.title}</span>
+            {period.range && <span className="text-xs text-slate-500">{period.range}</span>}
+          </p>
           <p className="text-[11px] text-slate-500">
-            {filterActive ? `${visibleCount.toLocaleString("vi-VN")} / ` : ""}{rows.length.toLocaleString("vi-VN")} dòng ·{" "}
+            {filterActive ? `${visibleCount.toLocaleString("vi-VN")} / ` : ""}{windowRows.length.toLocaleString("vi-VN")}{view !== "ALL" ? ` / ${rows.length.toLocaleString("vi-VN")}` : ""} dòng ·{" "}
             {editable ? (sort ? "đang sắp xếp theo cột — bỏ sắp xếp để kéo thả đổi thứ tự" : "kéo tay cầm ⠿ để đổi thứ tự / chuyền / XN, hoặc thả PO từ Unplanned vào giữa các dòng") : "View Mode"}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs">
+          <div className="flex items-center gap-1" role="group" aria-label="Điều hướng kỳ">
+            <button onClick={() => setAnchor((a) => shift(view === "ALL" ? "WEEK" : view, a, -1))} disabled={view === "ALL"} className="rounded-md border border-slate-300 px-2.5 py-1 disabled:opacity-30" aria-label={view === "MONTH" ? "Tháng trước" : "Tuần trước"} data-testid="plan-prev">◀</button>
+            <button onClick={() => setAnchor(startOfDay(new Date()))} disabled={view === "ALL"} className="rounded-md border border-slate-300 px-2.5 py-1 disabled:opacity-30" data-testid="plan-today">{view === "MONTH" ? "Tháng này" : "Tuần này"}</button>
+            <button onClick={() => setAnchor((a) => shift(view === "ALL" ? "WEEK" : view, a, 1))} disabled={view === "ALL"} className="rounded-md border border-slate-300 px-2.5 py-1 disabled:opacity-30" aria-label={view === "MONTH" ? "Tháng sau" : "Tuần sau"} data-testid="plan-next">▶</button>
+          </div>
+          <div className="flex overflow-hidden rounded-md border border-slate-300" role="group" aria-label="Kiểu xem">
+            {([["WEEK", "Tuần"], ["MONTH", "Tháng"], ["ALL", "Tất cả"]] as const).map(([v, label]) => (
+              <button key={v} onClick={() => setView(v)} aria-pressed={view === v} className={`px-3 py-1 ${view === v ? "bg-brand text-white" : ""}`} data-testid={`plan-view-${v}`}>{label}</button>
+            ))}
+          </div>
           {selected.size > 0 && (
             <span className="rounded-lg bg-indigo-500/20 px-2.5 py-1 text-indigo-200">
               {selected.size} dòng đã chọn · SL {num(selectedQty)} <button onClick={() => setSelected(new Set())} className="ml-1 underline">bỏ chọn</button>
@@ -186,6 +235,7 @@ export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow,
           )}
           {sort && <button onClick={() => setSort(null)} className="rounded-md border border-slate-300 px-2 py-1">Bỏ sắp xếp</button>}
           {filterActive && <button onClick={() => setFilters({})} className="rounded-md border border-slate-300 px-2 py-1">Xóa lọc cột</button>}
+          {cw.customized && <button onClick={cw.reset} className="rounded-md border border-slate-300 px-2 py-1" title="Đặt lại độ rộng cột mặc định">Đặt lại độ rộng cột</button>}
           <button onClick={() => setAll(true)} className="rounded-md border border-slate-300 px-2 py-1">Mở tất cả</button>
           <button onClick={() => setAll(false)} className="rounded-md border border-slate-300 px-2 py-1">Thu gọn tất cả</button>
         </div>
@@ -195,7 +245,7 @@ export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow,
         <table style={{ width: totalWidth }}>
           <colgroup>
             <col style={{ width: CTRL_W }} />
-            {cols.map((c) => <col key={c.key} style={{ width: c.w }} />)}
+            {cols.map((c) => <col key={c.key} style={{ width: cw.widthOf(c.key) }} />)}
           </colgroup>
           <thead>
             <tr className="pg-h1">
@@ -205,6 +255,7 @@ export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow,
               {cols.map((c) => (
                 <th key={c.key} className={`${c.frozen ? "frozen" : ""} ${c.kind === "num" ? "pg-r" : ""}`} style={frozenStyle(c)} onClick={() => clickSort(c.key)} title="Bấm để sắp xếp">
                   {c.label} {sort?.key === c.key ? (sort.dir === 1 ? "▲" : "▼") : ""}
+                  <span className="pg-rz" role="separator" aria-label={`Kéo để đổi độ rộng cột ${c.label}`} onPointerDown={(e) => cw.startResize(c.key, e)} onClick={(e) => e.stopPropagation()} />
                 </th>
               ))}
             </tr>
@@ -227,6 +278,9 @@ export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow,
             {rows.length === 0 && (
               <tr><td colSpan={cols.length + 1} style={{ textAlign: "center", padding: 32 }}>Chưa có dòng kế hoạch.</td></tr>
             )}
+            {rows.length > 0 && windowRows.length === 0 && (
+              <tr><td colSpan={cols.length + 1} style={{ textAlign: "center", padding: 32 }} data-testid="plan-empty-window">Không có dòng nào trong {period.title.toLowerCase()} — bấm ◀ ▶ để chuyển kỳ hoặc chọn "Tất cả".</td></tr>
+            )}
             {tree.map((f) => {
               const fKey = `F:${f.xn}`;
               const fRows = f.lines.flatMap((l) => l.rows);
@@ -244,38 +298,12 @@ export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow,
                     </td>
                   </tr>
                   {!fCollapsed &&
-                    f.lines.map((l) => {
-                      const lKey = `L:${f.xn}|${l.line}`;
-                      const lCollapsed = isCollapsed(lKey);
-                      const shown = visibleLane(l.rows);
-                      if (filterActive && shown.length === 0) return null;
-                      const headKey = `${lKey}#head`;
-                      const endKey = `${lKey}#end`;
+                    (() => {
+                      const shownRows = sort ? visibleLane(fRows) : f.lines.flatMap((l) => visibleLane(l.rows));
                       return (
-                        <Fragment key={lKey}>
-                          <tr className={`pg-gl ${over?.key === headKey ? "pg-drop-before" : ""}`} onClick={() => toggle(lKey)} {...dropProps(f.xn, l.line, headKey, l.rows, null)}>
-                            <td colSpan={cols.length + 1}>
-                              <div className="pg-gin" style={{ paddingLeft: 22 }}>
-                                <span className="pg-caret">{lCollapsed ? "▶" : "▼"}</span> Chuyền <b>{l.line}</b>
-                                <span className="pg-meta">{shown.length} dòng · SL {num(shown.reduce((s, r) => s + r.quantity, 0))} · Worker {num(shown.reduce((s, r) => s + (r.ref?.worker ?? 0), 0))}</span>
-                                {editable && (
-                                  <button
-                                    className="pg-btn"
-                                    style={{ marginLeft: 12, padding: "1px 10px" }}
-                                    title="Tính lại ngày theo công thức cho cả chuyền (ô đang ghi đè được giữ nguyên)"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      onRecalc(f.xn, l.line, null);
-                                    }}
-                                  >
-                                    Tính lại chuyền
-                                  </button>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                          {!lCollapsed &&
-                            shown.map((r) => {
+                        <>
+                          {shownRows.map((r, idx) => {
+                              const l = { line: r.primary_line, rows: fullLanes.get(`${f.xn}|${r.primary_line}`) ?? [] };
                               const issue = issueMap.get(r.row_uid);
                               const risk = r.ref?.risk;
                               const isSel = selected.has(r.row_uid);
@@ -287,7 +315,7 @@ export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow,
                                 <Fragment key={r.row_uid}>
                                   <tr
                                     id={`row-${r.row_uid}`}
-                                    className={`pg-row ${over?.key === rowKey ? (over.pos === "before" ? "pg-drop-before" : "pg-drop-after") : ""} ${highlightUid === r.row_uid ? "animate-blink" : ""}`}
+                                    className={`pg-row ${idx > 0 && shownRows[idx - 1].primary_line !== r.primary_line ? "pg-lane-start" : ""} ${over?.key === rowKey ? (over.pos === "before" ? "pg-drop-before" : "pg-drop-after") : ""} ${highlightUid === r.row_uid ? "animate-blink" : ""}`}
                                     style={{ ["--row-bg" as string]: tone }}
                                     draggable={canReorder}
                                     onDragStart={(e) => {
@@ -342,14 +370,9 @@ export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow,
                                 </Fragment>
                               );
                             })}
-                          {!lCollapsed && editable && canReorder && !filterActive && (
-                            <tr className={`pg-end ${over?.key === endKey ? "pg-drop-before" : ""}`} {...dropProps(f.xn, l.line, endKey, l.rows, null)}>
-                              <td colSpan={cols.length + 1}><div className="pg-gin" style={{ paddingLeft: 44 }}>thả vào đây = cuối chuyền {l.line}</div></td>
-                            </tr>
-                          )}
-                        </Fragment>
+                        </>
                       );
-                    })}
+                    })()}
                 </Fragment>
               );
             })}
