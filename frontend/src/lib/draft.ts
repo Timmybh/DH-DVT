@@ -3,6 +3,8 @@ import { PlanRowDto, UnplannedDto } from "../api/client";
 // Thao tác trên Draft State (khớp với engine backend `apply_ops`)
 export type Op =
   | { type: "ADD_FROM_UNPLANNED"; tempRowId: string; sourceId: number; factory: string; line: string; afterRowUid: string | null }
+  | { type: "UNPLAN"; rowUid: string }
+  | { type: "ADD_RETURNED"; rowUid: string; factory: string; line: string; afterRowUid: string | null }
   | { type: "MOVE"; rowUid: string; factory: string; line: string; afterRowUid: string | null }
   | { type: "EDIT_FIELD"; rowUid: string; field: string; value: unknown }
   | { type: "RETURN_TO_AUTO_CALC"; rowUid: string; field: string };
@@ -35,7 +37,9 @@ export function applyOpsLocal(
   unplanned: Map<number, UnplannedDto>,
   ops: Op[],
   computed: Map<string, PlanRowDto>,
-): DraftRow[] {
+  returnedSnap: Map<string, PlanRowDto> = new Map(),
+): { rows: DraftRow[]; returned: DraftRow[] } {
+  const returned: DraftRow[] = []; // dòng bị trả về Unplanned trong bản nháp này (chưa Commit)
   const lanes = new Map<string, DraftRow[]>();
   const byUid = new Map<string, DraftRow>();
   const put = (r: DraftRow) => {
@@ -67,9 +71,22 @@ export function applyOpsLocal(
         po_number: src.po_number, style_cc: src.style_cc, model_code: src.model_code, description: src.description,
         customer: src.customer, sport: src.sport, season: src.season, quantity: src.quantity, capacity: src.capacity,
         total_day: src.capacity ? src.quantity / src.capacity : null, begin_prod_date: null, end_prod_date: null,
-        warehouse_date: null, chd: src.chd, note: src.note, extra: {}, _flag: "NEW",
+        warehouse_date: null, chd: src.chd, note: src.note, extra: {}, _flag: "NEW", ref: src.ref,
       };
       byUid.set(uid, row);
+      place(row, op.afterRowUid);
+    } else if (op.type === "UNPLAN") {
+      const row = byUid.get(op.rowUid);
+      if (!row) continue;
+      take(row);
+      byUid.delete(op.rowUid);
+      returned.push(row);
+    } else if (op.type === "ADD_RETURNED") {
+      const idx = returned.findIndex((r) => r.row_uid === op.rowUid);
+      const snap = idx >= 0 ? returned.splice(idx, 1)[0] : returnedSnap.get(op.rowUid);
+      if (!snap) continue;
+      const row: DraftRow = { ...cloneRow(snap), factory_code: op.factory, primary_line: op.line, line_raw: op.line, line_assignments: [op.line], transfer: null, _flag: "MOVED" };
+      byUid.set(row.row_uid, row);
       place(row, op.afterRowUid);
     } else if (op.type === "MOVE") {
       const row = byUid.get(op.rowUid);
@@ -119,7 +136,7 @@ export function applyOpsLocal(
       out.push(r);
     });
   }
-  return out;
+  return { rows: out, returned };
 }
 
 const KEY = "dvt_planning_draft";

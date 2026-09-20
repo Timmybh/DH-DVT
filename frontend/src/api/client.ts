@@ -197,7 +197,29 @@ export interface PlanTransfer {
   status: string;
 }
 
+// Thông tin tham chiếu từ file Excel nguồn, chỉ để hiển thị trên lưới
+export interface RowRef {
+  worker?: number | null;
+  ehd_etd?: string | null;
+  ahd?: string | null;
+  fabric_ready?: string | null;
+  acc_ready?: string | null;
+  no_issue?: string;
+  date_issue?: string | null;
+  working_day?: number;
+  sot?: number;
+  total_sot?: number;
+  output_date?: string | null;
+  end_p_date?: string | null;
+  end_wh?: string | null;
+  on_time?: string;
+  risk?: "OK" | "ADVANCE" | "LATE" | "MATERIAL";
+  risk_reason?: string;
+  gap_days?: number | null;
+}
+
 export interface PlanRowDto {
+  ref?: RowRef;
   row_uid: string;
   sequence: number;
   origin: "EXISTING" | "DRAFT_NEW";
@@ -227,6 +249,10 @@ export interface PlanRowDto {
 }
 
 export interface UnplannedDto {
+  ref?: RowRef;
+  returned?: boolean; // dòng đã được trả về Unplanned từ kế hoạch
+  row_uid?: string;
+  snapshot?: PlanRowDto;
   id: number;
   source_key: string;
   factory_code: string;

@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, MutableRefObject, useEffect, useMemo, useRef, useState } from "react";
 import { api, UnplannedDto } from "../../api/client";
 import { num } from "../../lib/format";
+import { cellText, Col, sortValue, UNPLANNED_COLS } from "../../lib/planColumns";
+import { DragInfo } from "./PlannedGrid";
 
 export interface UnplannedFilters {
   xn: string; // ALL | XN1 | XN2 | XN3 | UNASSIGNED
@@ -16,6 +18,7 @@ export interface UnplannedFilters {
 
 const EMPTY: UnplannedFilters = { xn: "ALL", quick: "ALL", customer: "", season: "", sport: "", po: "", style: "", model: "", q: "" };
 const STORAGE_KEY = "dvt_unplanned_filters";
+const CTRL_W = 44;
 
 // Bộ lọc được giữ nguyên khi kéo-thả và qua toàn bộ Edit Session (Correction §7): state ở cấp panel + localStorage.
 function loadFilters(): UnplannedFilters {
@@ -31,17 +34,21 @@ interface Props {
   factories: string[];
   editable: boolean;
   excludeIds: Set<number>;
+  excludeReturned: Set<string>; // dòng đã trả về nhưng được kéo lại vào kế hoạch trong bản nháp
+  extraRows: UnplannedDto[]; // dòng vừa trả về Unplanned trong bản nháp (chưa Commit)
   reloadKey: number;
+  drag: MutableRefObject<DragInfo>;
   onRows: (rows: UnplannedDto[]) => void;
-  onDragStart: (id: number) => void;
-  onDragEnd: () => void;
+  onDropPlanned: (uid: string) => void; // thả dòng Planned xuống đây = trả về Unplanned
 }
 
-export default function UnplannedPanel({ baseVersionId, factories, editable, excludeIds, reloadKey, onRows, onDragStart, onDragEnd }: Props) {
+export default function UnplannedPanel({ baseVersionId, factories, editable, excludeIds, excludeReturned, extraRows, reloadKey, drag, onRows, onDropPlanned }: Props) {
   const [filters, setFilters] = useState<UnplannedFilters>(loadFilters);
   const [facets, setFacets] = useState<{ customers: string[]; seasons: string[]; sports: string[] }>({ customers: [], seasons: [], sports: [] });
   const [data, setData] = useState<{ total: number; rows: UnplannedDto[] }>({ total: 0, rows: [] });
   const [loading, setLoading] = useState(false);
+  const [sort, setSort] = useState<{ key: string; dir: 1 | -1 } | null>(null);
+  const [dropOver, setDropOver] = useState(false);
   const onRowsRef = useRef(onRows);
   onRowsRef.current = onRows;
 
@@ -77,8 +84,30 @@ export default function UnplannedPanel({ baseVersionId, factories, editable, exc
     return () => clearTimeout(t);
   }, [filters, baseVersionId, reloadKey]);
 
-  const visible = useMemo(() => data.rows.filter((r) => !excludeIds.has(r.id)), [data.rows, excludeIds]);
-  const placedHere = data.rows.length - visible.length;
+  const cols = UNPLANNED_COLS;
+  const offsets = useMemo(() => {
+    let left = CTRL_W;
+    const m = new Map<string, number>();
+    cols.forEach((c) => {
+      if (c.frozen) {
+        m.set(c.key, left);
+        left += c.w;
+      }
+    });
+    return m;
+  }, [cols]);
+  const frozenStyle = (c: Col<UnplannedDto>): CSSProperties | undefined => (c.frozen ? { left: offsets.get(c.key) } : undefined);
+
+  const pool = useMemo(() => data.rows.filter((r) => (r.returned ? !excludeReturned.has(r.row_uid ?? "") : !excludeIds.has(r.id))), [data.rows, excludeIds, excludeReturned]);
+  const visible = useMemo(() => {
+    const draft = extraRows.filter((r) => !pool.some((p) => p.row_uid === r.row_uid));
+    let all = [...draft, ...pool];
+    const col = sort ? cols.find((c) => c.key === sort.key) : undefined;
+    if (sort && col) all = [...all].sort((a, b) => (sortValue(col, a) < sortValue(col, b) ? -1 : sortValue(col, a) > sortValue(col, b) ? 1 : 0) * sort.dir);
+    return all;
+  }, [pool, extraRows, sort, cols]);
+  const placedHere = data.rows.length - pool.length;
+  const returnedCount = visible.filter((r) => r.returned).length;
   const input = "rounded-md border border-slate-200 bg-white px-2 py-1 text-xs";
 
   return (
@@ -87,8 +116,9 @@ export default function UnplannedPanel({ baseVersionId, factories, editable, exc
         <div>
           <h2 className="text-sm font-bold text-slate-900">Chưa lên KH (Unplanned)</h2>
           <p className="text-[11px] text-slate-500">
-            {num(visible.length)} PO{placedHere ? ` · ${placedHere} đã kéo vào bản nháp` : ""}
-            {loading ? " · đang tải..." : ""} · {editable ? "kéo thả vào chuyền phía trên" : "vào Edit Mode để kéo thả"}
+            {num(visible.length)} PO{returnedCount ? ` (${returnedCount} trả về từ kế hoạch)` : ""}
+            {placedHere ? ` · ${placedHere} đã kéo vào bản nháp` : ""}
+            {loading ? " · đang tải..." : ""} · {editable ? "kéo dòng lên lưới Planned để lên kế hoạch; kéo dòng Planned xuống đây để trả về" : "vào Edit Mode để kéo thả"}
           </p>
         </div>
         <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-0.5 text-xs">
@@ -131,57 +161,82 @@ export default function UnplannedPanel({ baseVersionId, factories, editable, exc
         <button onClick={() => set(EMPTY)} className="rounded-md px-2 py-1 text-xs text-slate-500 hover:bg-slate-200">Xóa lọc</button>
       </div>
 
-      <div className="max-h-[300px] overflow-auto">
-        <table className="w-full min-w-[860px] text-left text-xs">
-          <thead className="sticky top-0 bg-white">
-            <tr className="border-b border-slate-100 text-slate-400">
-              <th className="px-3 py-2">XN</th>
-              <th>PO</th>
-              <th>Style/CC</th>
-              <th>Model</th>
-              <th>Khách hàng</th>
-              <th>Season</th>
-              <th>Sport</th>
-              <th className="text-right">SL</th>
-              <th>CHD</th>
-              <th className="px-3">Mô tả</th>
+      <div
+        className={`pg max-h-[38vh] overflow-auto ${dropOver ? "pg-zone-over" : ""}`}
+        data-testid="unplanned-grid"
+        onDragOver={(e) => {
+          if (editable && drag.current?.kind === "row") {
+            e.preventDefault();
+            setDropOver(true);
+          }
+        }}
+        onDragLeave={() => setDropOver(false)}
+        onDrop={(e) => {
+          setDropOver(false);
+          if (editable && drag.current?.kind === "row") {
+            e.preventDefault();
+            const uid = drag.current.uid;
+            drag.current = null;
+            onDropPlanned(uid);
+          }
+        }}
+      >
+        <table style={{ width: CTRL_W + cols.reduce((sum, c) => sum + c.w, 0) }}>
+          <colgroup>
+            <col style={{ width: CTRL_W }} />
+            {cols.map((c) => <col key={c.key} style={{ width: c.w }} />)}
+          </colgroup>
+          <thead>
+            <tr className="pg-h1">
+              <th className="frozen" style={{ left: 0 }} />
+              {cols.map((c) => (
+                <th
+                  key={c.key}
+                  className={`${c.frozen ? "frozen" : ""} ${c.kind === "num" ? "pg-r" : ""}`}
+                  style={frozenStyle(c)}
+                  onClick={() => setSort((cur) => (cur?.key !== c.key ? { key: c.key, dir: 1 } : cur.dir === 1 ? { key: c.key, dir: -1 } : null))}
+                  title="Bấm để sắp xếp"
+                >
+                  {c.label} {sort?.key === c.key ? (sort.dir === 1 ? "▲" : "▼") : ""}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
             {visible.map((r) => (
               <tr
-                key={r.id}
+                key={r.returned ? `ret-${r.row_uid}` : r.id}
+                className="pg-row"
+                style={{ ["--row-bg" as string]: r.returned ? "#2a2350" : r.factory_assignment === "UNASSIGNED" ? "#1a1f33" : undefined }}
                 draggable={editable}
                 onDragStart={(e) => {
                   e.dataTransfer.setData("text/plain", String(r.id));
                   e.dataTransfer.effectAllowed = "move";
-                  onDragStart(r.id);
+                  drag.current = r.returned ? { kind: "returned", uid: r.row_uid ?? "" } : { kind: "unplanned", id: r.id };
                 }}
-                onDragEnd={onDragEnd}
-                className={`border-b border-slate-50 ${editable ? "cursor-grab hover:bg-indigo-50/50" : ""}`}
+                onDragEnd={() => (drag.current = null)}
               >
-                <td className="px-3 py-1.5">
-                  {r.factory_assignment === "KNOWN" ? (
-                    <span className="rounded bg-indigo-100 px-1.5 py-0.5 font-semibold text-indigo-700">{r.factory_code}</span>
-                  ) : (
-                    <span className="rounded bg-slate-100 px-1.5 py-0.5 text-slate-500">Chưa xác định XN</span>
-                  )}
-                  {r.mapping_status === "WARNING" && <span title={r.mapping_note} className="ml-1 text-amber-500">⚠</span>}
+                <td className="frozen pg-ctrl" style={{ left: 0 }}>
+                  <span className={editable ? "pg-handle" : "pg-handle pg-off"}>⠿</span>
+                  {r.mapping_status === "WARNING" && <span title={r.mapping_note} className="pg-ovr">⚠</span>}
                 </td>
-                <td className="font-medium text-slate-800">{r.po_number}</td>
-                <td>{r.style_cc}</td>
-                <td>{r.model_code}</td>
-                <td>{r.customer}</td>
-                <td>{r.season}</td>
-                <td>{r.sport}</td>
-                <td className="text-right">{num(r.quantity)}</td>
-                <td>{r.chd ? new Date(r.chd).toLocaleDateString("vi-VN") : "—"}</td>
-                <td className="max-w-[260px] truncate px-3 text-slate-500" title={r.description}>{r.description}</td>
+                {cols.map((c) => (
+                  <td key={c.key} className={`${c.frozen ? "frozen" : ""} ${c.kind === "num" ? "pg-r" : ""}`} style={frozenStyle(c)} title={c.key === "description" ? r.description : undefined}>
+                    {c.key === "factory" ? (
+                      <>
+                        {r.factory_assignment === "KNOWN" ? <span className="pg-chip pg-known">{r.factory_code}</span> : <span className="pg-chip pg-unk">Chưa xác định XN</span>}
+                        {r.returned && <span className="pg-chip pg-viol" title="Đã trả về từ kế hoạch">↩</span>}
+                      </>
+                    ) : (
+                      cellText(c, r)
+                    )}
+                  </td>
+                ))}
               </tr>
             ))}
             {visible.length === 0 && (
               <tr>
-                <td colSpan={10} className="py-6 text-center text-slate-400">Không có PO nào khớp bộ lọc.</td>
+                <td colSpan={cols.length + 1} style={{ textAlign: "center", padding: 24 }}>Không có PO nào khớp bộ lọc.</td>
               </tr>
             )}
           </tbody>

@@ -160,3 +160,19 @@ def test_ops_hash_is_stable_and_sensitive():
     o1 = [{"type": "MOVE", "rowUid": "a", "factory": "XN1", "line": "7", "afterRowUid": None}]
     assert ops_hash(o1) == ops_hash([dict(o1[0])])
     assert ops_hash(o1) != ops_hash([{**o1[0], "line": "8"}])
+
+
+def test_unplan_then_add_returned_roundtrip():
+    base = [row("a", 1, begin=date(2026, 9, 1), end=date(2026, 9, 2)), row("b", 2, begin=date(2026, 9, 3), end=date(2026, 9, 4))]
+    returned: list = []
+    rows, _ = apply_ops(base, {}, [{"type": "UNPLAN", "rowUid": "a"}], CAL, FACTORIES, returned)
+    assert [r["row_uid"] for r in rows] == ["b"] and [r["row_uid"] for r in returned] == ["a"]
+    returned2 = [dict(r) for r in returned]  # phiên bản sau lưu ảnh chụp JSON, ngày dạng chuỗi
+    returned2[0]["end_prod_date"] = "2026-09-02"
+    rows, changed = apply_ops(
+        [r for r in base if r["row_uid"] == "b"], {}, [{"type": "ADD_RETURNED", "rowUid": "a", "factory": "XN2", "line": "3", "afterRowUid": None}], CAL, FACTORIES, returned2
+    )
+    a = next(r for r in rows if r["row_uid"] == "a")
+    assert (a["factory_code"], a["primary_line"]) == ("XN2", "3") and returned2 == [] and "a" in changed
+    with pytest.raises(OpError):
+        apply_ops(base, {}, [{"type": "ADD_RETURNED", "rowUid": "zzz", "factory": "XN1", "line": "7", "afterRowUid": None}], CAL, FACTORIES, [])

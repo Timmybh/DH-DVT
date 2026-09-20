@@ -28,6 +28,8 @@ def _upgrade_schema() -> None:
             "ALTER TABLE plan_rows ADD COLUMN IF NOT EXISTS mapping_status VARCHAR(8) NOT NULL DEFAULT 'OK'",
             "ALTER TABLE plan_rows ADD COLUMN IF NOT EXISTS mapping_note VARCHAR(200) NOT NULL DEFAULT ''",
             "ALTER TABLE plan_rows ADD COLUMN IF NOT EXISTS fac_raw VARCHAR(20) NOT NULL DEFAULT ''",
+            "ALTER TABLE plan_rows ADD COLUMN IF NOT EXISTS grid JSON",
+            "ALTER TABLE planning_versions ADD COLUMN IF NOT EXISTS returned JSON",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE",
         ):
             try:

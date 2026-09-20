@@ -153,6 +153,7 @@ class PlanRow(Base):
     process: Mapped[str] = mapped_column(String(60), default="")
     risk: Mapped[str] = mapped_column(String(12), default="OK", index=True)  # OK|ADVANCE|LATE|MATERIAL
     risk_reason: Mapped[str] = mapped_column(String(200), default="")
+    grid: Mapped[dict] = mapped_column(JSON, default=dict)  # các cột Excel hiển thị trong lưới Planning (không dùng để tính)
 
 
 class LaborHeadcount(Base):

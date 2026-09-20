@@ -72,6 +72,7 @@ class PlanningVersion(Base):
     recheck_summary: Mapped[dict] = mapped_column(JSON, default=dict)
     issued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     issued_by: Mapped[str] = mapped_column(String(100), default="")
+    returned: Mapped[list] = mapped_column(JSON, default=list)  # dòng đã trả về Unplanned (ảnh chụp dòng) kể từ phiên bản này
 
 
 class PlanningVersionRow(Base):

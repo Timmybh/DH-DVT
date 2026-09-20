@@ -271,8 +271,41 @@ def _placed_keys(db: Session, base_version_id: int | None) -> set[str]:
     return {k for (k,) in db.query(PlanningVersionRow.source_key).filter(PlanningVersionRow.version_id == base_version_id).all()}
 
 
+def plan_ref(pr: PlanRow) -> dict:
+    """Thông tin tham chiếu từ file Excel nguồn để hiển thị trên lưới (worker, EHD/ETD, AHD, sẵn sàng vải/phụ liệu...)."""
+    ref = dict(pr.grid or {})
+    ref["worker"] = pr.worker
+    ref["ehd_etd"] = pr.ehd_etd.isoformat() if pr.ehd_etd else None
+    ref["risk"] = pr.risk
+    ref["risk_reason"] = pr.risk_reason
+    ref["gap_days"] = pr.gap_days
+    return ref
+
+
+def refs_for_rows(db: Session, rows: list[dict]) -> dict[str, dict]:
+    """Trả {row_uid: ref}. Ưu tiên dòng nguồn ghi lúc tạo phiên bản; nếu dòng đó chưa có cột lưới (file đã nhập lại) thì tra theo khóa nghiệp vụ trong lô hiện tại."""
+    ids = {r["source_plan_row_id"] for r in rows if r.get("source_plan_row_id")}
+    by_id = {pr.id: pr for pr in db.query(PlanRow).filter(PlanRow.id.in_(ids)).all()} if ids else {}
+    out: dict[str, dict] = {}
+    need = [r for r in rows if not (by_id.get(r.get("source_plan_row_id")) and by_id[r["source_plan_row_id"]].grid)]
+    by_key: dict[str, PlanRow] = {}
+    if need:
+        batch = current_batch(db)
+        if batch is not None:
+            for pr in db.query(PlanRow).filter(PlanRow.batch_id == batch.id, PlanRow.planning_status == "PLANNED"):
+                by_key.setdefault(source_key(pr.po_number, pr.style_cc, pr.model_code, pr.customer, pr.quantity), pr)
+    for r in rows:
+        pr = by_id.get(r.get("source_plan_row_id"))
+        if pr is None or not pr.grid:
+            pr = by_key.get(r.get("source_key")) or pr
+        if pr is not None:
+            out[r["row_uid"]] = plan_ref(pr)
+    return out
+
+
 def _unplanned_dict(pr: PlanRow, fmap: dict[int, str]) -> dict:
     return {
+        "ref": plan_ref(pr),
         "id": pr.id, "source_key": source_key(pr.po_number, pr.style_cc, pr.model_code, pr.customer, pr.quantity),
         "factory_code": fmap.get(pr.factory_id, ""), "factory_assignment": pr.factory_assignment, "mapping_status": pr.mapping_status,
         "mapping_note": pr.mapping_note, "fac_raw": pr.fac_raw,
@@ -293,6 +326,37 @@ def unplanned_lookup(db: Session, base_version_id: int | None) -> dict[int, dict
         d = _unplanned_dict(pr, fmap)
         if d["source_key"] not in placed:
             out[pr.id] = d
+    return out
+
+
+def _returned_entries(db: Session, base_version_id: int | None, f: dict) -> list[dict]:
+    """Các dòng đã trả về Unplanned trong phiên bản nền, hiển thị đầu bảng Unplanned (áp cùng bộ lọc)."""
+    if not base_version_id:
+        return []
+    snaps = get_version(db, base_version_id).returned or []
+    if not snaps:
+        return []
+    xn, quick = (f.get("xn") or "ALL").upper(), (f.get("quick") or "ALL").upper()
+    if xn == "UNASSIGNED" or quick == "UNASSIGNED":
+        return []
+    refs = refs_for_rows(db, snaps)
+    out = []
+    for i, r in enumerate(snaps):
+        if xn != "ALL" and r["factory_code"] != xn:
+            continue
+        if any(f.get(k) and (r.get(col) or "").lower() != f[k].lower() for col, k in (("customer", "customer"), ("season", "season"), ("sport", "sport"))):
+            continue
+        if any(f.get(k) and f[k].lower() not in (r.get(col) or "").lower() for col, k in (("po_number", "po"), ("style_cc", "style"), ("model_code", "model"))):
+            continue
+        if f.get("q") and not any(f["q"].lower() in str(r.get(c) or "").lower() for c in ("po_number", "style_cc", "model_code", "description", "customer", "sport", "season")):
+            continue
+        out.append({
+            "id": -(i + 1), "returned": True, "row_uid": r["row_uid"], "source_key": r.get("source_key", ""), "factory_code": r["factory_code"],
+            "factory_assignment": "KNOWN", "mapping_status": "OK", "mapping_note": "", "fac_raw": r["factory_code"],
+            "po_number": r["po_number"], "style_cc": r["style_cc"], "model_code": r["model_code"], "description": r["description"],
+            "customer": r["customer"], "sport": r["sport"], "season": r["season"], "quantity": r["quantity"], "capacity": r["capacity"],
+            "chd": r.get("chd"), "note": r.get("note", ""), "po_date": None, "ref": refs.get(r["row_uid"], {}), "snapshot": r,
+        })
     return out
 
 
@@ -325,10 +389,11 @@ def unplanned_page(db: Session, base_version_id: int | None, f: dict, limit: int
                          PlanRow.customer.ilike(like), PlanRow.sport.ilike(like), PlanRow.season.ilike(like)))
     placed = _placed_keys(db, base_version_id)
     rows = [d for d in (_unplanned_dict(pr, fmap) for pr in q.order_by(PlanRow.customer, PlanRow.po_number, PlanRow.id).all()) if d["source_key"] not in placed]
+    rows = _returned_entries(db, base_version_id, f) + rows
     page = rows[offset : offset + limit]
     for d in page:
         for k in ("chd", "po_date"):
-            d[k] = d[k].isoformat() if d[k] else None
+            d[k] = d[k].isoformat() if hasattr(d[k], "isoformat") else (d[k] or None)
     return {"total": len(rows), "rows": page}
 
 
@@ -342,14 +407,15 @@ def unplanned_facets(db: Session) -> dict:
 
 
 # ------------------------------------------------------------------ Recheck / Commit / Issue
-def build_draft(db: Session, base_version_id: int, ops: list[dict]) -> list[dict]:
-    get_version(db, base_version_id)
+def build_draft(db: Session, base_version_id: int, ops: list[dict], with_returned: bool = False):
+    base = get_version(db, base_version_id)
     base_rows = load_rows(db, base_version_id)
+    returned = [dict(r) for r in (base.returned or [])]
     try:
-        rows, _ = apply_ops(base_rows, unplanned_lookup(db, base_version_id), ops, load_resolver(db), factory_codes(db))
+        rows, _ = apply_ops(base_rows, unplanned_lookup(db, base_version_id), ops, load_resolver(db), factory_codes(db), returned)
     except OpError as exc:
         raise HTTPException(422, str(exc))
-    return rows
+    return (rows, returned) if with_returned else rows
 
 
 def _row_out(r: dict) -> dict:
@@ -378,13 +444,13 @@ def commit_draft(db: Session, user: User, session: PlanningEditSession, base_ver
     if session.last_recheck_result == "ERROR":
         raise HTTPException(422, "Recheck có ERROR — không thể Commit.")
     base = get_version(db, base_version_id)
-    rows = build_draft(db, base_version_id, ops)
+    rows, returned = build_draft(db, base_version_id, ops, with_returned=True)
     result = recheck(rows, load_resolver(db), factory_codes(db))  # kiểm tra lại độc lập ở server ngay lúc commit
     if result["result"] == "ERROR":
         raise HTTPException(422, "Recheck tại thời điểm Commit có ERROR — không thể Commit.")
     today = today_local()
     code = next_code(db, today.isocalendar()[0], today.isocalendar()[1], base.family, base, kind)
-    version = PlanningVersion(**code, status="COMMITTED", note=note[:300], created_by=user.username, source_session_id=session.id, base_version_id=base.id, row_count=len(rows))
+    version = PlanningVersion(**code, status="COMMITTED", note=note[:300], created_by=user.username, source_session_id=session.id, base_version_id=base.id, row_count=len(rows), returned=[_row_out(r) for r in returned])
     db.add(version)
     db.flush()
     _insert_rows(db, version.id, rows)

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, EditSessionView, errorMessage, PlanRowDto, PlanVersion, RecheckResult, UnplannedDto } from "../api/client";
 import PendingDropModal from "../components/planning/PendingDropModal";
-import PlannedBoard, { DragInfo } from "../components/planning/PlannedBoard";
+import ConfirmMoveModal, { PendingMove } from "../components/planning/ConfirmMoveModal";
+import PlannedGrid, { DragInfo } from "../components/planning/PlannedGrid";
 import RowEditorModal from "../components/planning/RowEditorModal";
 import UnplannedPanel from "../components/planning/UnplannedPanel";
 import ValidationPanel from "../components/planning/ValidationPanel";
@@ -21,7 +22,6 @@ export default function Planning() {
   const [baseRows, setBaseRows] = useState<PlanRowDto[]>([]);
   const [loadingRows, setLoadingRows] = useState(false);
   const [factories, setFactories] = useState<string[]>([]);
-  const [activeXn, setActiveXn] = useState("");
   const [other, setOther] = useState<EditSessionView | null>(null);
   const [session, setSession] = useState<EditSessionView | null>(null);
   const [sessionLost, setSessionLost] = useState(false);
@@ -37,6 +37,8 @@ export default function Planning() {
   const [recheckRev, setRecheckRev] = useState(-1);
   const [busy, setBusy] = useState("");
   const [unplannedMap, setUnplannedMap] = useState<Map<number, UnplannedDto>>(new Map());
+  const [returnedMap, setReturnedMap] = useState<Map<string, UnplannedDto>>(new Map());
+  const [pendingMove, setPendingMove] = useState<PendingMove | null>(null);
   const [unplannedReload, setUnplannedReload] = useState(0);
   const drag = useRef<DragInfo>(null);
   const [pending, setPending] = useState<{ source: UnplannedDto; xn: string; line: string; afterUid: string | null } | null>(null);
@@ -51,7 +53,24 @@ export default function Planning() {
   const version = versions.find((v) => v.id === versionId) ?? null;
 
   const computedMap = useMemo(() => new Map((recheck?.computed_rows ?? []).map((r) => [r.row_uid, r])), [recheck]);
-  const draftRows = useMemo(() => applyOpsLocal(baseRows, unplannedMap, ops, recheckRev >= 0 ? computedMap : new Map()), [baseRows, unplannedMap, ops, computedMap, recheckRev]);
+  const returnedSnap = useMemo(() => new Map([...returnedMap].map(([uid, d]) => [uid, d.snapshot as PlanRowDto])), [returnedMap]);
+  const draft = useMemo(
+    () => applyOpsLocal(baseRows, unplannedMap, ops, recheckRev >= 0 ? computedMap : new Map(), returnedSnap),
+    [baseRows, unplannedMap, ops, computedMap, recheckRev, returnedSnap],
+  );
+  const draftRows = draft.rows;
+  // dòng vừa trả về Unplanned trong bản nháp → hiện đầu bảng Unplanned
+  const draftReturned = useMemo<UnplannedDto[]>(
+    () =>
+      draft.returned.map((r, i) => ({
+        id: -1000 - i, returned: true, row_uid: r.row_uid, snapshot: r, ref: r.ref, source_key: r.source_key, factory_code: r.factory_code,
+        factory_assignment: "KNOWN", mapping_status: "OK", mapping_note: "", fac_raw: r.factory_code, po_number: r.po_number, style_cc: r.style_cc,
+        model_code: r.model_code, description: r.description, customer: r.customer, sport: r.sport, season: r.season, quantity: r.quantity,
+        capacity: r.capacity, chd: r.chd, note: r.note, po_date: null,
+      })),
+    [draft.returned],
+  );
+  const excludeReturned = useMemo(() => new Set(ops.filter((o) => o.type === "ADD_RETURNED").map((o) => (o as Extract<Op, { type: "ADD_RETURNED" }>).rowUid)), [ops]);
   const stale = recheck !== null && recheckRev !== revision;
   const excludeIds = useMemo(() => new Set(ops.filter((o) => o.type === "ADD_FROM_UNPLANNED").map((o) => (o as Extract<Op, { type: "ADD_FROM_UNPLANNED" }>).sourceId)), [ops]);
 
@@ -117,7 +136,6 @@ export default function Planning() {
         const meta = (await api.get<{ factories: { code: string }[] }>("/dashboard/meta")).data;
         const codes = meta.factories.map((f) => f.code);
         setFactories(codes);
-        setActiveXn((cur) => cur || codes[0] || "");
         await loadVersions();
         const a = await refreshSession();
         if (a?.is_mine) {
@@ -144,7 +162,14 @@ export default function Planning() {
   const handleUnplannedRows = useCallback((rows: UnplannedDto[]) => {
     setUnplannedMap((prev) => {
       const next = new Map(prev);
-      rows.forEach((r) => next.set(r.id, r));
+      rows.filter((r) => !r.returned).forEach((r) => next.set(r.id, r));
+      return next;
+    });
+    setReturnedMap((prev) => {
+      const ret = rows.filter((r) => r.returned && r.row_uid);
+      if (!ret.length) return prev;
+      const next = new Map(prev);
+      ret.forEach((r) => next.set(r.row_uid as string, r));
       return next;
     });
   }, []);
@@ -284,13 +309,16 @@ export default function Planning() {
     drag.current = null;
     if (!d || !editing) return;
     if (d.kind === "row") {
-      if (d.uid === afterUid) return;
-      pushOps([...ops, { type: "MOVE", rowUid: d.uid, factory: xn, line, afterRowUid: afterUid }]);
+      // Pending Drop: chỉ đổi thứ tự sau khi Xác nhận
+      const row = draftRows.find((r) => r.row_uid === d.uid);
+      if (!row || d.uid === afterUid) return;
+      const afterPo = draftRows.find((r) => r.row_uid === afterUid)?.po_number ?? "";
+      setPendingMove({ kind: "move", row, xn, line, afterUid, afterPo });
       return;
     }
-    const src = unplannedMap.get(d.id);
+    const src = d.kind === "returned" ? returnedMap.get(d.uid) ?? draftReturned.find((r) => r.row_uid === d.uid) : unplannedMap.get(d.id);
     if (!src) return;
-    if (src.factory_assignment === "KNOWN" && src.factory_code !== xn) {
+    if (!src.returned && src.factory_assignment === "KNOWN" && src.factory_code !== xn) {
       setNotice({ ok: false, text: `PO ${src.po_number} thuộc ${src.factory_code} — chỉ thả vào chuyền của ${src.factory_code} (giữ nguyên XN đã biết).` });
       return;
     }
@@ -301,9 +329,26 @@ export default function Planning() {
     if (!pending) return;
     const lane = draftRows.filter((r) => r.factory_code === factory && r.primary_line === line);
     const after = moved ? lane[lane.length - 1]?.row_uid ?? null : pending.afterUid;
-    pushOps([...ops, { type: "ADD_FROM_UNPLANNED", tempRowId: newTempId(), sourceId: pending.source.id, factory, line, afterRowUid: after }]);
-    setActiveXn(factory);
+    const src = pending.source;
+    pushOps([
+      ...ops,
+      src.returned
+        ? { type: "ADD_RETURNED", rowUid: src.row_uid as string, factory, line, afterRowUid: after }
+        : { type: "ADD_FROM_UNPLANNED", tempRowId: newTempId(), sourceId: src.id, factory, line, afterRowUid: after },
+    ]);
     setPending(null);
+  }
+
+  function dropPlannedToUnplanned(uid: string) {
+    const row = draftRows.find((r) => r.row_uid === uid);
+    if (row && editing) setPendingMove({ kind: "unplan", row });
+  }
+
+  function confirmMove() {
+    if (!pendingMove) return;
+    if (pendingMove.kind === "move") pushOps([...ops, { type: "MOVE", rowUid: pendingMove.row.row_uid, factory: pendingMove.xn, line: pendingMove.line, afterRowUid: pendingMove.afterUid }]);
+    else pushOps([...ops, { type: "UNPLAN", rowUid: pendingMove.row.row_uid }]);
+    setPendingMove(null);
   }
 
   // ---------------------------------------------------------------- Recheck / Commit
@@ -359,7 +404,6 @@ export default function Planning() {
   function focusRow(uid: string) {
     const row = draftRows.find((r) => r.row_uid === uid);
     if (!row) return;
-    setActiveXn(row.factory_code);
     setHighlight(uid);
     setTimeout(() => document.getElementById(`row-${uid}`)?.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" }), 80);
     setTimeout(() => setHighlight((h) => (h === uid ? null : h)), 3500);
@@ -477,11 +521,8 @@ export default function Planning() {
       {version && (
         <>
           {loadingRows && <p className="text-sm text-slate-500">Đang tải kế hoạch...</p>}
-          <PlannedBoard
+          <PlannedGrid
             rows={draftRows}
-            factories={factories}
-            activeXn={activeXn}
-            onXn={setActiveXn}
             editable={editing}
             drag={drag}
             onDropAt={handleDropAt}
@@ -494,10 +535,12 @@ export default function Planning() {
             factories={factories}
             editable={editing}
             excludeIds={excludeIds}
+            excludeReturned={excludeReturned}
+            extraRows={draftReturned}
             reloadKey={unplannedReload}
+            drag={drag}
             onRows={handleUnplannedRows}
-            onDragStart={(id) => (drag.current = { kind: "unplanned", id })}
-            onDragEnd={() => (drag.current = null)}
+            onDropPlanned={dropPlannedToUnplanned}
           />
         </>
       )}
@@ -515,6 +558,8 @@ export default function Planning() {
           onCancel={() => setPending(null)}
         />
       )}
+
+      {pendingMove && <ConfirmMoveModal pending={pendingMove} onConfirm={confirmMove} onCancel={() => setPendingMove(null)} />}
 
       {openRow && <RowEditorModal row={openRow} editable={editing} onApply={(o) => pushOps([...ops, ...o])} onClose={() => setOpenRow(null)} />}
 

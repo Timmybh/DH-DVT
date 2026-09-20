@@ -144,8 +144,14 @@ def apply_ops(
     ops: list[dict],
     cal: CalendarResolver,
     factory_codes: set[str],
+    returned: list[dict] | None = None,
 ) -> tuple[list[dict], set[str]]:
-    """Áp danh sách thao tác lên bản sao của base_rows. Trả (rows đã reindex, tập row_uid bị thay đổi)."""
+    """Áp danh sách thao tác lên bản sao của base_rows. Trả (rows đã reindex, tập row_uid bị thay đổi).
+
+    `returned` (tùy chọn) là danh sách dòng đã trả về Unplanned; được cập nhật tại chỗ bởi UNPLAN / ADD_RETURNED.
+    """
+    if returned is None:
+        returned = []
     rows = [dict(r, extra=json.loads(json.dumps(r.get("extra") or {}))) for r in base_rows]
     by_uid = {r["row_uid"]: r for r in rows}
     changed: set[str] = set()
@@ -206,6 +212,33 @@ def apply_ops(
                 _insert_after(rows, row, op.get("afterRowUid"))
                 changed.add(row["row_uid"])
 
+            elif kind == "UNPLAN":
+                row = by_uid.pop(op["rowUid"], None)
+                if row is None:
+                    raise OpError("Không tìm thấy dòng cần trả về Unplanned")
+                rows.remove(row)
+                returned.append(row)
+
+            elif kind == "ADD_RETURNED":
+                snap = next((r for r in returned if r["row_uid"] == op.get("rowUid")), None)
+                if snap is None:
+                    raise OpError("Dòng không nằm trong danh sách đã trả về Unplanned")
+                factory = op.get("factory") or snap["factory_code"]
+                line = str(op.get("line") or "").strip()
+                if factory not in factory_codes:
+                    raise OpError("Cần chọn Xí nghiệp hợp lệ")
+                if not line:
+                    raise OpError("Cần chọn Chuyền đích")
+                returned.remove(snap)
+                row = _thaw(snap)
+                row["factory_code"], row["primary_line"], row["line_raw"], row["line_assignments"], row["transfer"] = factory, line, line, [line], None
+                _insert_after(rows, row, op.get("afterRowUid"))
+                prev = _prev_in_lane_by_position(rows, row)
+                row["begin_prod_date"] = calc_begin(prev, cal, factory, line)
+                row["end_prod_date"] = calc_end(row["begin_prod_date"], row.get("total_day"), cal, factory, line)
+                by_uid[row["row_uid"]] = row
+                changed.add(row["row_uid"])
+
             elif kind == "EDIT_FIELD":
                 row = by_uid.get(op["rowUid"])
                 field = op.get("field")
@@ -252,6 +285,15 @@ def apply_ops(
             raise OpError(f"Thao tác #{n} ({kind}) không hợp lệ: {exc}") from exc
 
     return sort_rows(reindex(rows)), changed
+
+
+def _thaw(snap: dict) -> dict:
+    """Ảnh chụp dòng lưu trong JSON (ngày dạng chuỗi) -> dòng dùng được trong engine."""
+    row = dict(snap, extra=json.loads(json.dumps(snap.get("extra") or {})))
+    for f in DATE_FIELDS:
+        if isinstance(row.get(f), str):
+            row[f] = _to_date(row[f])
+    return row
 
 
 def _prev_in_lane_by_position(rows: list[dict], row: dict) -> dict | None:

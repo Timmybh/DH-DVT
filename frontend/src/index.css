@@ -66,3 +66,52 @@ body { font-family: "Montserrat", "Segoe UI", system-ui, sans-serif; color: #e2e
 .dvt-dark [class*="rounded-full"][class*="bg-"] * { color: inherit; }
 .dvt-dark .bg-sky-50, .dvt-dark .bg-blue-50, .dvt-dark .bg-indigo-50, .dvt-dark .bg-cyan-50 { background-color: rgba(56,189,248,.14) !important; border-color: rgba(125,211,252,.4) !important; }
 .dvt-dark .bg-sky-50 *, .dvt-dark .bg-blue-50 *, .dvt-dark .bg-indigo-50 *, .dvt-dark .bg-cyan-50 * { color: #f1f5f9; }
+
+/* ===== Lưới Planning (Planned / Unplanned) ===== */
+.pg { font-size: 12px; color: #e2e8f0; background: #0c1430; border-radius: 0 0 16px 16px; }
+.pg table { border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+.pg th, .pg td { padding: 0 8px; height: 30px; border-bottom: 1px solid rgba(255,255,255,.07); border-right: 1px solid rgba(255,255,255,.04); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pg thead th { position: sticky; background: #0f1a3a; z-index: 3; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #a8b5cf; text-align: left; user-select: none; }
+.pg thead tr.pg-h1 th { top: 0; height: 30px; cursor: pointer; }
+.pg thead tr.pg-h2 th { top: 30px; height: 28px; padding: 2px 4px; }
+.pg .pg-r { text-align: right; font-variant-numeric: tabular-nums; }
+.pg .frozen { position: sticky; z-index: 2; }
+.pg thead .frozen { z-index: 5; }
+.pg .frozen:last-of-type { box-shadow: none; }
+.pg tr.pg-row td { background: var(--row-bg, #101a38); }
+.pg tr.pg-row:hover td { background: color-mix(in srgb, var(--row-bg, #101a38) 80%, #6366f1); }
+.pg-filter { width: 100%; height: 22px; padding: 0 6px; font-size: 11px; border-radius: 4px; background: rgba(255,255,255,.06) !important; border: 1px solid rgba(255,255,255,.15) !important; color: #e2e8f0; }
+.pg-gf td { background: #1b2a5c; cursor: pointer; height: 32px; padding: 0; }
+.pg-gl td { background: #142049; cursor: pointer; padding: 0; }
+.pg-end td { background: #0e1736; color: #7c8aa8; font-size: 11px; padding: 0; }
+.pg-gin { position: sticky; left: 0; display: inline-flex; align-items: center; gap: 8px; padding: 0 12px; height: 30px; }
+.pg-meta { color: #a8b5cf; font-size: 11px; font-weight: 400; margin-left: 8px; }
+.pg-caret { width: 12px; font-size: 9px; color: #a8b5cf; }
+.pg-ctrl { display: table-cell; }
+.pg-ctrl > * { vertical-align: middle; margin-right: 4px; }
+.pg-handle { cursor: grab; color: #94a3b8; font-size: 15px; }
+.pg-handle.pg-off { opacity: .25; cursor: default; }
+.pg-exp { background: none; border: 0; color: #cbd5e1; cursor: pointer; font-size: 12px; padding: 0 2px; }
+.pg-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+.pg-dot.pg-err { background: #ef4444; }
+.pg-dot.pg-warn { background: #fbbf24; }
+.pg-ovr { color: #fb923c; font-weight: 800; }
+.pg-drop-before td { box-shadow: inset 0 2px 0 #818cf8; }
+.pg-drop-after td { box-shadow: inset 0 -2px 0 #818cf8; }
+.pg-chip { display: inline-block; padding: 1px 7px; border-radius: 9999px; font-size: 10.5px; font-weight: 600; margin-right: 4px; }
+.pg-ok { background: rgba(34,197,94,.2); color: #86efac; }
+.pg-adv { background: rgba(56,189,248,.2); color: #7dd3fc; }
+.pg-late { background: rgba(239,68,68,.22); color: #fca5a5; }
+.pg-viol { background: rgba(167,139,250,.22); color: #c4b5fd; }
+.pg-known { background: rgba(99,102,241,.25); color: #c7d2fe; }
+.pg-unk { background: rgba(148,163,184,.2); color: #cbd5e1; }
+.pg-detail td { background: #0b1330; padding: 0; height: auto; white-space: normal; }
+.pg-detail-in { position: sticky; left: 0; display: flex; gap: 20px; align-items: flex-start; justify-content: space-between; padding: 10px 16px 10px 44px; max-width: 1100px; }
+.pg-detail-in dl { display: grid; grid-template-columns: repeat(3, minmax(160px, 1fr)); gap: 8px 24px; }
+.pg-detail-in dt { font-size: 10px; text-transform: uppercase; color: #8b98b5; }
+.pg-detail-in dd { color: #e2e8f0; white-space: normal; }
+.pg-btn { border: 1px solid rgba(255,255,255,.4); border-radius: 9999px; padding: 4px 14px; font-size: 11px; color: #fff; white-space: nowrap; }
+.pg-btn:hover { background: rgba(255,255,255,.1); }
+.pg-zone-over { outline: 2px dashed #818cf8; outline-offset: -3px; }
+.pg input[type="checkbox"] { width: 14px; height: 14px; accent-color: #6366f1; }
+.pg .pg-gf td, .pg .pg-gl td, .pg .pg-end td, .pg .pg-detail td { overflow: visible; }

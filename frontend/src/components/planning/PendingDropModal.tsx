@@ -14,9 +14,9 @@ interface Props {
 
 /** Pending Drop (Correction §5): Confirm / Cancel. PO chưa biết XN bắt buộc chọn XN trước khi Confirm. */
 export default function PendingDropModal({ source, factories, linesByFactory, initialFactory, initialLine, onConfirm, onCancel }: Props) {
-  const known = source.factory_assignment === "KNOWN";
-  const [factory, setFactory] = useState(known ? source.factory_code : "");
-  const [line, setLine] = useState(known && factory === initialFactory ? initialLine : "");
+  const known = source.factory_assignment === "KNOWN" && !source.returned; // dòng trả về từ kế hoạch được phép chuyển XN
+  const [factory, setFactory] = useState(known ? source.factory_code : source.returned ? initialFactory : "");
+  const [line, setLine] = useState((known || source.returned) && factory === initialFactory ? initialLine : "");
   const lines = linesByFactory.get(factory) ?? [];
   const canConfirm = !!factory && !!line.trim();
   const laneMoved = factory !== initialFactory || line !== initialLine;

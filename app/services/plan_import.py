@@ -32,6 +32,12 @@ C_WH = 26
 C_CHD, C_EHD = 28, 29
 C_GAP, C_STATUS, C_NOTE, C_DEST = 31, 32, 33, 34
 C_PROCESS = 37
+# Cột chỉ để hiển thị trong lưới Planning (khóa -> vị trí cột; kiểu d = ngày, n = số, t = chữ)
+GRID_COLS = {
+    "off_days": (14, "n"), "fabric_ready": (15, "d"), "acc_ready": (16, "d"), "no_issue": (17, "t"), "date_issue": (18, "d"),
+    "working_day": (19, "n"), "sot": (20, "n"), "total_sot": (21, "n"), "output_date": (24, "d"), "end_p_date": (25, "d"),
+    "end_wh": (27, "d"), "ahd": (30, "d"), "on_time": (32, "t"),
+}
 
 
 def _g(row: list, idx: int):
@@ -128,8 +134,23 @@ def _parse_plan_rows(rows: Iterator[list], planning_status: str) -> list[dict]:
         note = _s(_g(row, C_NOTE))
         risk, reason = classify_row(gap, status_text, note, fabric_text)
         fac_num = to_float(_g(row, C_FAC))
+        grid: dict = {}
+        for key, (idx, kind) in GRID_COLS.items():
+            v = _g(row, idx)
+            if v in (None, ""):
+                continue
+            if kind == "d":
+                d = excel_serial_to_date(v) if not isinstance(v, str) else None
+                grid[key] = d.isoformat() if d else (v.strip() if isinstance(v, str) else None)
+            elif kind == "n":
+                f = to_float(v)
+                if f is not None:
+                    grid[key] = round(f, 4)
+            else:
+                grid[key] = _s(v)
         out.append(
             dict(
+                grid=grid,
                 planning_status=planning_status,
                 fac_num=int(fac_num) if fac_num is not None and fac_num == int(fac_num) else None,
                 fac_raw=_s(_g(row, C_FAC))[:20],
