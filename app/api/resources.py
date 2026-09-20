@@ -167,7 +167,7 @@ def delete_requirement(rid: int, db: Session = Depends(get_db), user: User = Man
     return {"deleted": True}
 
 
-# ------------------------------------------------------------------ lao động khả dụng + lịch giải phóng
+# ------------------------------------------------------------------ lao động khả dụng + lịch nguồn lực rảnh
 @router.get("/labor")
 def labor(db: Session = Depends(get_db), _: User = View):
     data = svc.latest_labor(db)

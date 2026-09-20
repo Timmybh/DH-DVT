@@ -17,6 +17,7 @@ from typing import Iterable
 
 from app.services import formula_runtime as fx
 from app.services.calendar import CalendarResolver
+from app.services.lanes import build_lanes, lane_of, previous_map, previous_sequence, refresh_virtual, row_lines
 from app.services.rules import strip_accents
 
 DATE_FIELDS = ("begin_prod_date", "end_prod_date", "warehouse_date", "chd")
@@ -81,7 +82,7 @@ def sort_rows(rows: Iterable[dict]) -> list[dict]:
 
 
 def reindex(rows: list[dict]) -> list[dict]:
-    """Xây lại thứ tự 1..n trong từng lane (XN, chuyền) — tương đương virtualSequence sau thao tác cấu trúc."""
+    """Xây lại `sequence` 1..n trong từng lane SỞ HỮU (XN, primary_line) rồi dựng virtual lane / virtual_sequence cho mọi chuyền của dòng."""
     lanes: dict[tuple[str, str], list[dict]] = {}
     for r in rows:
         lanes.setdefault(lane_key(r), []).append(r)
@@ -90,6 +91,7 @@ def reindex(rows: list[dict]) -> list[dict]:
         for i, r in enumerate(sorted(lanes[key], key=lambda x: x["sequence"]), start=1):
             r["sequence"] = i
             out.append(r)
+    refresh_virtual(out)  # VirtualSequence theo TOÀN BỘ line_assignments: dòng 4+5 nằm trong cả lane 4 và lane 5
     return out
 
 
@@ -116,9 +118,7 @@ def recalc_row(row: dict, prev: dict | None) -> None:
 
 
 def _prev_in_lane(rows: list[dict], row: dict) -> dict | None:
-    lane = sorted((r for r in rows if lane_key(r) == lane_key(row)), key=lambda r: r["sequence"])
-    idx = next((i for i, r in enumerate(lane) if r["row_uid"] == row["row_uid"]), None)
-    return lane[idx - 1] if idx else None
+    return previous_sequence(rows, row)  # theo lane ảo (mọi chuyền của dòng), không theo primary_line
 
 
 # --------------------------------------------------------------------------- áp thao tác lên Draft
@@ -435,7 +435,7 @@ def apply_ops(
             elif kind == "RECALC_LANE":
                 # Tính lại theo công thức từ một dòng (hoặc đầu chuyền) đến hết chuyền; ô đang OVERRIDE được giữ nguyên
                 lane_id = (op.get("factory") or "", str(op.get("line") or ""))
-                lane = sorted((r for r in rows if lane_key(r) == lane_id), key=lambda r: r["sequence"])
+                lane = lane_of(rows, lane_id[0], lane_id[1])  # lane ảo: gồm cả dòng nhiều chuyền có chuyền này
                 if not lane:
                     raise OpError(f"Không có dòng nào trong chuyền {lane_id[0]}/{lane_id[1]}")
                 start = 0
@@ -444,7 +444,7 @@ def apply_ops(
                     if start is None:
                         raise OpError("Dòng bắt đầu tính lại không thuộc chuyền này")
                 for i in range(start, len(lane)):
-                    recalc_row(lane[i], lane[i - 1] if i else None)
+                    recalc_row(lane[i], previous_sequence(rows, lane[i]))
                     changed.add(lane[i]["row_uid"])
 
             elif kind == "EDIT_FIELD":
@@ -559,9 +559,7 @@ def _clean_lines(value) -> list[str]:
 
 
 def _prev_in_lane_by_position(rows: list[dict], row: dict) -> dict | None:
-    lane = sorted((r for r in rows if lane_key(r) == lane_key(row)), key=lambda r: r["sequence"])
-    idx = next((i for i, r in enumerate(lane) if r is row), None)
-    return lane[idx - 1] if idx else None
+    return previous_sequence(rows, row)
 
 
 def _mark_override(row: dict, field: str, previous) -> None:
@@ -626,19 +624,24 @@ def recheck(rows: list[dict], cal: CalendarResolver, factory_codes: set[str], re
             for sev, col, msg, code in resource_check(r):
                 add(sev, r, col, msg, code)
 
+    # SEQ_DUP theo lane SỞ HỮU (sequence là thứ tự của primary_line)
     for key, lane in lanes.items():
-        lane.sort(key=lambda x: x["sequence"])
         seqs = [x["sequence"] for x in lane]
         if len(set(seqs)) != len(seqs):
-            add("ERROR", lane[0], "sequence", f"Trùng thứ tự trong chuyền {key[0]}/{key[1]}", "SEQ_DUP")
-        fs = fx.active()
-        prev_row = None
-        for cur in lane:
+            add("ERROR", sorted(lane, key=lambda x: x["sequence"])[0], "sequence", f"Trùng thứ tự trong chuyền {key[0]}/{key[1]}", "SEQ_DUP")
+
+    # Công thức + chồng lấn theo LANE ẢO: dòng 4+5 xuất hiện trong cả lane 4 và lane 5; PREVIOUS_SEQUENCE = dòng trước trong lane ảo
+    vlanes = build_lanes(rows)
+    prev_of = previous_map(vlanes, rows)
+    fs = fx.active()
+    for key in sorted(lanes):
+        for cur in sorted(lanes[key], key=lambda x: x["sequence"]):
+            prev_row = prev_of.get(cur["row_uid"])
             for col, field, label in (("TOTAL_DAY", "total_day", "TOTAL_DAY"), ("BEGIN_PROD_DATE", "begin_prod_date", "BEGIN_PROD_DATE"), ("END_BEGIN_DATE", "end_prod_date", "END_BEGIN_DATE"), ("BEGIN_WAREHOUSE_IMPORT", "warehouse_date", "BEGIN_WAREHOUSE_IMPORT")):
                 if not fs.has(col) or fs.is_overridden(cur, col):
                     continue
                 if col == "BEGIN_PROD_DATE" and prev_row is None:
-                    continue  # dòng đầu chuyền là mốc nhập tay
+                    continue  # dòng đầu mọi chuyền của nó là mốc nhập tay
                 try:
                     exp = fs.calculated(cur, prev_row, col)
                 except Exception:  # noqa: BLE001 - thiếu dữ liệu đầu vào: đã có cảnh báo riêng (CAPACITY_MISSING...)
@@ -649,10 +652,15 @@ def recheck(rows: list[dict], cal: CalendarResolver, factory_codes: set[str], re
                 tol = 0.01
                 if abs(float(got) - float(exp)) > tol:
                     add("WARNING", cur, field, f"{label} hiện tại khác kết quả công thức v{fs.formulas[col].version} (giữ nguyên giá trị kế hoạch, dùng Return to Auto Calculate nếu muốn cập nhật)", "CALC_MISMATCH")
-            prev_row = cur
+    overlaps: dict[tuple[str, str], list[str]] = {}
+    for (xn, line), lane in sorted(vlanes.items()):
         for prev, cur in zip(lane, lane[1:]):
             if prev.get("end_prod_date") and cur.get("begin_prod_date") and cur["begin_prod_date"] < prev["end_prod_date"]:
-                add("WARNING", cur, "begin_prod_date", f"Chồng lấn với dòng trước ({prev.get('po_number') or prev['row_uid']}) trên chuyền {key[0]}/{key[1]}", "LINE_OVERLAP")
+                overlaps.setdefault((cur["row_uid"], prev["row_uid"]), []).append(f"{xn}/{line}")
+    by_uid = {r["row_uid"]: r for r in rows}
+    for (cur_uid, prev_uid), where in overlaps.items():
+        prev = by_uid[prev_uid]
+        add("WARNING", by_uid[cur_uid], "begin_prod_date", f"Chồng lấn với dòng trước ({prev.get('po_number') or prev['row_uid']}) trên chuyền {', '.join(where)}", "LINE_OVERLAP")
 
     counts = Counter(i["severity"] for i in issues)
     result = "ERROR" if counts["ERROR"] else "WARNING" if counts["WARNING"] else "PASS"

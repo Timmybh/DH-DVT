@@ -21,8 +21,10 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
+from app.models.core import Factory
 from app.models.data import PoPackDaily, PoProgress, QaDefectDaily, SyncRun
 from app.models.resources import LaborDaily, MachineRequirement, MachineType
+from app.services import actual_service
 from app.services.sync_core import add_items
 
 log = logging.getLogger(__name__)
@@ -164,6 +166,19 @@ def sync_ops(db: Session, run: SyncRun, conn: Connection, fmap: dict[int, int]) 
                 db.execute(stmt.on_conflict_do_update(constraint="uq_po_progress", set_={c: stmt.excluded[c] for c in cols}))
         objects.append({"name": "Tiến độ PO (Report_BaoCaoMayRa)", "read": len(rows) + bad, "matched": len(rows), "unmatched": bad})
         total_rows += len(rows)
+        # Phase 5: lịch sử thực tế (chỉ ghi mới/thay đổi) + mapping với phiên bản kế hoạch tham chiếu
+        try:
+            codes = {f.id: f.code for f in db.query(Factory)}
+            obs = [dict(po=r["po"], style=r["style"], customer=r["customer"], factory_code=codes.get(r["factory_id"], ""), line=r["line"], qty=r["qty"], sewn_qty=r["sewn_qty"],
+                        fg_qty=r["fg_qty"], due_date=r["due_date"], sewn_done_date=r["sewn_done_date"], fg_done_date=r["fg_done_date"], last_seen=r["last_seen"]) for r in rows]
+            with db.begin_nested():
+                res = actual_service.record_and_reconcile(db, run.id, obs)
+            objects.append({"name": "Actual snapshot + mapping", "read": res["keys"], "matched": res["MATCHED"], "unmatched": res["REVIEW"] + res["UNMATCHED"]})  # OUT_OF_PLAN không phải ngoại lệ
+            if res["REVIEW"] + res["UNMATCHED"]:
+                unmatched_names["Actual chưa mapping được vào kế hoạch (xem Kế hoạch → Thực tế & Đối soát)"] += res["REVIEW"] + res["UNMATCHED"]
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Ghi lịch sử thực tế / mapping lỗi")
+            errors.append(("Actual mapping", f"Không ghi được lịch sử/mapping: {str(exc)[:180]}", {}))
         if bad:
             unmatched_names["Tiến độ PO: dòng không có xí nghiệp"] += bad
     except Exception as exc:  # noqa: BLE001

@@ -15,6 +15,7 @@ from app.models.data import PlanRow
 from app.models.planning import PlanningEditSession, PlanningVersion, PlanningVersionRow, WorkingCalendarRule
 from app.services.audit import write_audit
 from app.services import formula_runtime as fx
+from app.services.lanes import build_lanes, previous_map
 from app.services.resource_service import load_resources
 from app.services.calendar import CalendarResolver, Rule
 from app.services.dashboard import current_batch, today_local
@@ -227,9 +228,10 @@ def _reconcile_with_formulas(rows: list[dict]) -> dict:
     lanes: dict[tuple[str, str], list[dict]] = {}
     for r in rows:
         lanes.setdefault((r["factory_code"], r["primary_line"]), []).append(r)
+    prev_of = previous_map(build_lanes(rows), rows)  # PREVIOUS_SEQUENCE theo lane ảo (mọi chuyền của dòng)
     for lane in lanes.values():
-        prev = None
         for r in sorted(lane, key=lambda x: x["sequence"]):
+            prev = prev_of.get(r["row_uid"])
             for code, field in (("TOTAL_DAY", "total_day"), ("BEGIN_PROD_DATE", "begin_prod_date"), ("END_BEGIN_DATE", "end_prod_date"), ("BEGIN_WAREHOUSE_IMPORT", "warehouse_date")):
                 if not fs.has(code) or (code == "BEGIN_PROD_DATE" and prev is None):
                     continue
@@ -244,7 +246,6 @@ def _reconcile_with_formulas(rows: list[dict]) -> dict:
                     calc_shown = exp if field == "total_day" else (fx.defs.serial_to_iso(float(exp)) or None)
                     r["extra"].setdefault("overrides", {})[field] = {"source": "WORKBOOK", "calculated": calc_shown}
                     counts[field] += 1
-            prev = r
     return counts
 
 

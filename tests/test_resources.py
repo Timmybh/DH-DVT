@@ -128,8 +128,8 @@ def test_unplanned_without_capacity_gets_it_from_definition():
 def test_release_schedule_returns_capacity_when_line_work_ends():
     mon = date(2026, 9, 14)
     rows = [
-        row("a", line="1", worker=30, seq=1, begin=date(2026, 9, 14), end=date(2026, 9, 16)),  # giữ 30 người T2–T4 -> giải phóng thứ Năm
-        row("b", line="1", worker=20, seq=2, begin=date(2026, 9, 17), end=date(2026, 9, 17)),  # nối tiếp ngay -> chỉ giải phóng phần chênh 10
+        row("a", line="1", worker=30, seq=1, begin=date(2026, 9, 14), end=date(2026, 9, 16)),  # giữ 30 người T2–T4 -> rảnh thứ Năm
+        row("b", line="1", worker=20, seq=2, begin=date(2026, 9, 17), end=date(2026, 9, 17)),  # nối tiếp ngay -> chỉ rảnh phần chênh 10
         row("c", xn="XN2", line="5", worker=12, seq=1, begin=date(2026, 9, 14), end=date(2026, 9, 14)),
     ]
     out = rs.release_schedule(rows, mon, {"S1": [("MAN", 3)]})

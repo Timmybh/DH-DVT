@@ -9,7 +9,7 @@ const SECTIONS = [
   { key: "capacity", label: "Năng suất (Capacity)" },
   { key: "machines", label: "Máy móc" },
   { key: "labor", label: "Lao động" },
-  { key: "release", label: "Lịch giải phóng" },
+  { key: "release", label: "Lịch nguồn lực rảnh" },
 ];
 const input = "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm";
 const chip = "pg-chip";
@@ -319,6 +319,7 @@ function LaborTab() {
   const byF = useMemo(() => {
     const m = new Map<string, typeof rows>();
     rows.forEach((r) => m.set(r.factory_code, [...(m.get(r.factory_code) ?? []), r]));
+    m.forEach((v) => v.sort((a, b) => a.line.localeCompare(b.line, undefined, { numeric: true }))); // chuyền 2 trước chuyền 10
     return [...m.entries()].sort();
   }, [rows]);
   return (
@@ -341,7 +342,7 @@ function LaborTab() {
   );
 }
 
-// ---------------------------------------------------------------- Lịch giải phóng nguồn lực
+// ---------------------------------------------------------------- Lịch nguồn lực rảnh
 interface RelCell { date: string; labor: number; machine: number }
 interface RelData { week_start: string; days: string[]; note: string; factories: { factory: string; totals: RelCell[]; lines: { line: string; days: RelCell[] }[] }[] }
 
@@ -436,7 +437,7 @@ export default function Resources() {
     <div className="space-y-4">
       <div>
         <h1 className="text-xl font-bold text-slate-900">Năng suất & nguồn lực</h1>
-        <p className="text-xs text-slate-500">Capacity Definition, máy móc, lao động khả dụng và lịch giải phóng nguồn lực — nền cho kiểm tra khả thi khi Recheck.</p>
+        <p className="text-xs text-slate-500">Capacity Definition, máy móc, lao động khả dụng và lịch nguồn lực rảnh — nền cho kiểm tra khả thi khi Recheck.</p>
       </div>
       <nav className="flex gap-1 border-b border-slate-200">
         {SECTIONS.map((s) => (

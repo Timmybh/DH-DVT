@@ -32,6 +32,8 @@ def _upgrade_schema() -> None:
             "ALTER TABLE planning_versions ADD COLUMN IF NOT EXISTS returned JSON",
             "ALTER TABLE planning_versions ADD COLUMN IF NOT EXISTS formula_set JSON",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE",
+            "ALTER TABLE actual_mappings ALTER COLUMN status TYPE VARCHAR(16)",
+            "ALTER TABLE actual_mappings ALTER COLUMN method TYPE VARCHAR(24)",
         ):
             try:
                 conn.execute(text(ddl))

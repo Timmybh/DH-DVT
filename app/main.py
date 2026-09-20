@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import admin, auth, dashboard, dashboard_admin, formulas, planning, resources, sync
+from app.api import actual, admin, auth, dashboard, dashboard_admin, formulas, planning, resources, sync
 from app.core.config import ROOT_DIR, settings
 from app.services.scheduler import start_scheduler, stop_scheduler
 from app.services.seed import run_seed
@@ -35,7 +35,7 @@ app.add_middleware(
 )
 
 api = APIRouter(prefix="/api")
-for module in (auth, admin, sync, dashboard, dashboard_admin, planning, formulas, resources):
+for module in (auth, admin, sync, dashboard, dashboard_admin, planning, formulas, resources, actual):
     api.include_router(module.router)
 
 

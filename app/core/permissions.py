@@ -40,6 +40,7 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "planning.recheck",
         "planning.commit",
         "mapping.view",
+        "mapping.manage",
         "calendar.view",
         "sync.view",
     },

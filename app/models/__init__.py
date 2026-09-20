@@ -1,3 +1,4 @@
+from app.models.actual import ActualMapping, ActualObservation
 from app.models.core import AuditLog, Factory, SsoConfig, SyncConfig, User
 from app.models.data import (
     LaborHeadcount,
@@ -23,6 +24,8 @@ from app.models.resources import CapacityDefinition, LaborDaily, MachineCapacity
 from app.models.planning import FormulaDefinition, PlanColumn, PlanningEditSession, PlanningVersion, PlanningVersionRow, WorkingCalendarRule
 
 __all__ = [
+    "ActualMapping",
+    "ActualObservation",
     "AuditLog",
     "Factory",
     "SsoConfig",

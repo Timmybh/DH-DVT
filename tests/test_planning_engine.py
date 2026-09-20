@@ -433,3 +433,96 @@ def test_split_to_other_lines_rules():
     everything, _ = apply_ops([a], {}, [{**base, "newAll": True}], CAL, FACTORIES, None, None, fl)
     new = next(r for r in everything if r["origin"] == "DRAFT_NEW")
     assert new["line_assignments"] == [l for l in new["line_assignments"] if l != "4"] and len(new["line_assignments"]) == 7 and new["line_raw"] == "1:3 + 5:8"
+
+
+# --------------------------------------------------------------------------- Virtual lane theo toàn bộ line_assignments
+def multi(uid, seq, lines, **kw):
+    r = row(uid, seq, line=lines[0], **kw)
+    r["line_assignments"], r["line_raw"] = list(lines), " + ".join(lines)
+    return r
+
+
+def test_virtual_lane_multi_line_row_belongs_to_every_lane_and_previous_sequence():
+    from app.services.lanes import build_lanes, prev_in_lane, previous_sequence
+
+    a, b, c = multi("A", 1, ["4", "5"]), row("B", 1, line="5"), row("C", 2, line="4")
+    rows = [a, b, c]
+    lanes = build_lanes(rows)
+    assert [r["row_uid"] for r in lanes[("XN1", "4")]] == ["A", "C"]
+    assert [r["row_uid"] for r in lanes[("XN1", "5")]] == ["A", "B"]           # A xuất hiện trong cả lane 4 và lane 5
+    assert prev_in_lane(rows, b, "5")["row_uid"] == "A"                        # prev(B@5) = A
+    assert prev_in_lane(rows, c, "4")["row_uid"] == "A"                        # prev(C@4) = A
+    assert previous_sequence(rows, b)["row_uid"] == "A" and previous_sequence(rows, c)["row_uid"] == "A"
+    assert previous_sequence(rows, a) is None                                  # dòng đầu của cả hai lane
+
+
+def test_previous_sequence_of_multi_line_row_takes_latest_ending_predecessor():
+    from app.services.lanes import previous_sequence
+
+    x = row("X", 1, line="4", begin=date(2026, 9, 1), end=date(2026, 9, 5))
+    y = row("Y", 1, line="5", begin=date(2026, 9, 1), end=date(2026, 9, 9))    # chuyền 5 rảnh muộn hơn
+    m = multi("M", 2, ["4", "5"], begin=date(2026, 9, 10))
+    m2 = multi("M2", 2, ["4", "5"])
+    from app.services.lanes import lane_of
+
+    assert [r["row_uid"] for r in lane_of([x, y, m], "XN1", "5")] == ["Y", "M"]
+    assert previous_sequence([x, y, m2], m2)["row_uid"] == "Y"                  # phải chờ chuyền rảnh muộn nhất
+
+
+def test_apply_ops_reindex_builds_virtual_sequence_and_keeps_anchor_stable():
+    a, b, c = multi("A", 1, ["4", "5"], begin=date(2026, 9, 14), end=date(2026, 9, 15)), row("B", 1, line="5", begin=date(2026, 9, 16), end=date(2026, 9, 17)), row("C", 2, line="4")
+    rows, _ = apply_ops([a, b, c], {}, [], CAL, FACTORIES)
+    by = {r["row_uid"]: r for r in rows}
+    assert by["A"]["extra"]["virtual_sequence"] == {"4": 1, "5": 1} and by["B"]["extra"]["virtual_sequence"] == {"5": 2} and by["C"]["extra"]["virtual_sequence"] == {"4": 2}
+    assert by["A"]["extra"]["vanchor"] == {"5": None}                           # neo: A đứng đầu lane 5
+    # thêm dòng vào đầu chuyền 5 (dòng sở hữu mới) -> A giữ vị trí đầu lane 5 nhờ neo, không bị suy ra lại theo ngày
+    ops = [{"type": "ADD_FROM_UNPLANNED", "tempRowId": "n1", "sourceId": 1, "factory": "XN1", "line": "5", "afterRowUid": None}]
+    rows2, _ = apply_ops(rows, {1: unplanned()}, ops, CAL, FACTORIES)
+    order5 = [r["row_uid"] for r in sorted((r for r in rows2 if "5" in r["line_assignments"]), key=lambda r: r["extra"]["virtual_sequence"]["5"])]
+    assert order5 == ["A", "Dn1", "B"]
+
+
+def test_recheck_overlap_and_calc_use_virtual_lane_not_primary_line():
+    a = calc_row("A", 1, date(2026, 9, 14), line="4", qty=1000, cap=500)
+    a["line_assignments"], a["line_raw"] = ["4", "5"], "4 + 5"
+    a["extra"]["ref"] = {}
+    b = row("B", 1, line="5", begin=date(2026, 9, 15), end=date(2026, 9, 17))   # bắt đầu 15/09 trong khi A (lane 5) kết thúc muộn hơn
+    assert a["end_prod_date"] and b["begin_prod_date"] < a["end_prod_date"]
+    out = recheck([a, b], CAL, FACTORIES)
+    overlap = [i for i in out["issues"] if i["rule_code"] == "LINE_OVERLAP"]
+    assert len(overlap) == 1 and overlap[0]["row_uid"] == "B" and "XN1/5" in overlap[0]["message"]   # chỉ thấy được khi so theo lane ảo 5
+    # B đặt sau A (theo lane ảo) nên PREVIOUS_SEQUENCE để tính lại BEGIN là A
+    c = row("C", 2, line="4", begin=date(2026, 9, 14))
+    out2 = recheck([a, b, c], CAL, FACTORIES)
+    assert sum(1 for i in out2["issues"] if i["rule_code"] == "LINE_OVERLAP" and i["row_uid"] == "C") == 1
+
+
+def test_recalc_lane_walks_virtual_lane_including_secondary_members():
+    a = calc_row("A", 1, date(2026, 9, 14), line="4", qty=1000, cap=500)
+    a["line_assignments"], a["line_raw"] = ["4", "5"], "4 + 5"
+    b = row("B", 1, line="5", qty=500, cap=500, begin=date(2026, 9, 20), end=date(2026, 9, 21))   # bắt đầu sau A -> B đứng sau A trong lane 5
+    rows, changed = apply_ops([a, b], {}, [{"type": "RECALC_LANE", "factory": "XN1", "line": "5"}], CAL, FACTORIES)
+    by = {r["row_uid"]: r for r in rows}
+    assert {"A", "B"} <= changed                                                # lane 5 gồm cả A (thành viên phụ) và B
+    assert by["B"]["begin_prod_date"] <= date(2026, 9, 20) and by["B"]["begin_prod_date"] >= by["A"]["end_prod_date"]   # B tính lại từ A (PREVIOUS_SEQUENCE theo lane ảo)
+
+
+def test_resource_checks_and_release_use_every_line_of_the_row():
+    from app.services import resource_service as rs
+
+    r = multi("M", 1, ["4", "5"], begin=date(2026, 9, 14), end=date(2026, 9, 18), cap=1000)
+    r["extra"] = {"ref": {"worker": 60.0}}
+    res = rs.Resources(
+        cap_defs=[{"id": 1, "capacity_per_day": 600, "factory_code": "XN1", "line": "4", "style_cc": "", "model_code": "", "version": 1, "status": "ACTIVE", "source": "IE"},
+                  {"id": 2, "capacity_per_day": 400, "factory_code": "XN1", "line": "5", "style_cc": "", "model_code": "", "version": 1, "status": "ACTIVE", "source": "IE"}],
+        labor={("XN1", "4"): 20, ("XN1", "5"): 20},                             # tổng 40 < 60 cần
+        requirements={"S": [("MAN", 2)]}, machines={("XN1", "4", "MAN"): 5, ("XN1", "5", "MAN"): 1},   # chuyền 5 thiếu máy (không phải chuyền chính)
+        as_of=date(2026, 9, 1),
+    )
+    out = {code: msg for _s, _c, msg, code in rs.check_row_resources(res, r)}
+    assert "CAPACITY_DEFINITION_MISMATCH" not in out                            # 600 + 400 = 1000
+    assert "LABOR_SHORTAGE" in out and "40" in out["LABOR_SHORTAGE"] and "4 + 5" in out["LABOR_SHORTAGE"]
+    assert "MACHINE_SHORTAGE" in out and "XN1/5" in out["MACHINE_SHORTAGE"]
+    sched = rs.release_schedule([r], date(2026, 9, 14))
+    lines = {l["line"]: l["days"][0]["reserved_labor"] for f in sched["factories"] for l in f["lines"]}
+    assert lines == {"4": 30.0, "5": 30.0}                                      # giữ nguồn lực trên cả hai chuyền

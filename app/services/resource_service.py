@@ -1,4 +1,4 @@
-"""Capacity Definition (phân giải theo mức cụ thể nhất), Machine Capacity, nhân lực khả dụng, kiểm tra nguồn lực và Lịch giải phóng nguồn lực."""
+"""Capacity Definition (phân giải theo mức cụ thể nhất), Machine Capacity, nhân lực khả dụng, kiểm tra nguồn lực và Lịch nguồn lực rảnh."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from app.models.planning import PlanningVersionRow
 from app.models.resources import CapacityDefinition, LaborDaily, MachineCapacity, MachineRequirement, MachineType
 from app.services.audit import write_audit
 from app.services.formula import EXCEL_EPOCH
+from app.services.lanes import row_lines
 
 
 # ------------------------------------------------------------------ Capacity Definition
@@ -250,32 +251,44 @@ def load_resources(db: Session) -> Resources:
 
 
 def check_row_resources(res: Resources, row: dict) -> list[tuple[str, str, str, str]]:
-    """Trả [(severity, column, message, rule_code)] cho một dòng Planning."""
+    """Trả [(severity, column, message, rule_code)] cho một dòng Planning.
+
+    Theo LANE ẢO: dòng chạy 4 + 5 được kiểm tra trên cả chuyền 4 và chuyền 5 (không chỉ primary_line):
+    năng suất chuẩn = tổng định nghĩa từng chuyền; lao động so với tổng người có mặt của các chuyền; máy theo yêu cầu mã hàng cho TỪNG chuyền.
+    """
     out: list[tuple[str, str, str, str]] = []
-    xn, line, style = row.get("factory_code", ""), row.get("primary_line", ""), row.get("style_cc", "")
+    xn, style = row.get("factory_code", ""), row.get("style_cc", "")
+    lines = row_lines(row)
+    where = f"{xn}/{' + '.join(lines)}"
     cap = row.get("capacity")
-    d = res.capacity_for(row, row.get("begin_prod_date"))
-    if d and cap and abs(cap - d["capacity_per_day"]) / d["capacity_per_day"] > 0.02:
-        out.append(("WARNING", "capacity", f"CAPACITY {cap:,.0f} khác định nghĩa năng suất {d['capacity_per_day']:,.0f} pcs/ngày (nguồn {d['source']} v{d['version']})", "CAPACITY_DEFINITION_MISMATCH"))
+    defs = [res.capacity_for({**row, "primary_line": ln}, row.get("begin_prod_date")) for ln in lines]
+    if defs and all(defs) and cap:
+        expected = sum(d["capacity_per_day"] for d in defs)
+        if abs(cap - expected) / expected > 0.02:
+            out.append(("WARNING", "capacity", f"CAPACITY {cap:,.0f} khác định nghĩa năng suất {expected:,.0f} pcs/ngày (nguồn {defs[0]['source']} v{defs[0]['version']})", "CAPACITY_DEFINITION_MISMATCH"))
     worker = ((row.get("extra") or {}).get("ref") or {}).get("worker")
-    present = res.labor.get((xn, line))
+    known = [res.labor[(xn, ln)] for ln in lines if (xn, ln) in res.labor]
+    present = sum(known) if known else None
     end_day = _floor_day(row, "end_prod_date", "end_prod_date")
     still_running = end_day is None or end_day >= res.as_of
     if worker and present is not None and still_running and worker > present:
-        out.append(("WARNING", "worker", f"Cần {worker:.0f} lao động nhưng chuyền {xn}/{line} chỉ có {present} người có mặt (lần đồng bộ gần nhất)", "LABOR_SHORTAGE"))
+        out.append(("WARNING", "worker", f"Cần {worker:.0f} lao động nhưng chuyền {where} chỉ có {present} người có mặt (lần đồng bộ gần nhất)", "LABOR_SHORTAGE"))
+    cap_per_line = (cap / len(lines)) if cap and lines else None
     for mtype, need in res.requirements.get(style, []):
-        k = (xn, line, mtype)
-        if k in res.machines:
+        for line in lines:
+            k = (xn, line, mtype)
+            if k not in res.machines:
+                continue
             if res.machine_status.get(k) == "DOWN":
                 out.append(("WARNING", "line", f"Nhóm máy {mtype} của chuyền {xn}/{line} đang ngừng (DOWN)", "MACHINE_UNAVAILABLE"))
             elif res.machines[k] < need:
                 out.append(("WARNING", "line", f"Mã {style} cần {need} máy {mtype} nhưng chuyền {xn}/{line} chỉ có {res.machines[k]}", "MACHINE_SHORTAGE"))
-            elif k in res.machine_output and cap and res.machine_output[k] < cap:
-                out.append(("WARNING", "capacity", f"Máy {mtype} của chuyền {xn}/{line} chỉ đạt {res.machine_output[k]:,.0f} pcs/ngày, thấp hơn CAPACITY {cap:,.0f} (nút thắt máy)", "MACHINE_BOTTLENECK"))
+            elif k in res.machine_output and cap_per_line and res.machine_output[k] < cap_per_line:
+                out.append(("WARNING", "capacity", f"Máy {mtype} của chuyền {xn}/{line} chỉ đạt {res.machine_output[k]:,.0f} pcs/ngày, thấp hơn phần CAPACITY của chuyền {cap_per_line:,.0f} (nút thắt máy)", "MACHINE_BOTTLENECK"))
     return out
 
 
-# ------------------------------------------------------------------ Lịch giải phóng nguồn lực
+# ------------------------------------------------------------------ Lịch nguồn lực rảnh
 def _floor_day(row: dict, field: str, serial_key: str) -> date | None:
     serial = ((row.get("extra") or {}).get("serial") or {}).get(serial_key)
     if serial is not None:
@@ -287,7 +300,7 @@ def _floor_day(row: dict, field: str, serial_key: str) -> date | None:
 
 
 def release_schedule(rows: list[dict], week_start: date, requirements: dict[str, list[tuple[str, int]]] | None = None) -> dict:
-    """Giải phóng trong ngày D của một chuyền = max(0, đang giữ(D−1) − đang giữ(D)).
+    """Nguồn lực rảnh trong ngày D của một chuyền = max(0, đang giữ(D−1) − đang giữ(D)).
 
     Lao động giữ = tổng WORKER của các dòng đang chạy trên chuyền; máy giữ = tổng số máy theo yêu cầu mã hàng (nếu có).
     """
@@ -301,11 +314,13 @@ def release_schedule(rows: list[dict], week_start: date, requirements: dict[str,
             continue
         worker = float(((r.get("extra") or {}).get("ref") or {}).get("worker") or 0)
         machines = float(sum(q for _t, q in requirements.get(r.get("style_cc", ""), [])))
-        key = (r["factory_code"], r["primary_line"])
-        for d in span:
-            if b <= d <= e:
-                reserved[key][d][0] += worker
-                reserved[key][d][1] += machines
+        lines = row_lines(r) or [r["primary_line"]]
+        for line in lines:  # giữ nguồn lực trên MỌI chuyền của dòng: nhân công chia đều, mỗi chuyền cần đủ bộ máy theo mã hàng
+            key = (r["factory_code"], line)
+            for d in span:
+                if b <= d <= e:
+                    reserved[key][d][0] += worker / len(lines)
+                    reserved[key][d][1] += machines
     tree: dict[str, list[dict]] = defaultdict(list)
     def natural(s: str):
         return [int(t) if t.isdigit() else t for t in __import__("re").split(r"(\d+)", s)]
@@ -322,7 +337,7 @@ def release_schedule(rows: list[dict], week_start: date, requirements: dict[str,
         totals = [{"date": d.isoformat(), "labor": round(sum(l["days"][i]["labor"] for l in lines), 1), "machine": round(sum(l["days"][i]["machine"] for l in lines), 1)} for i, d in enumerate(days)]
         factories.append({"factory": xn, "totals": totals, "lines": lines})
     return {"week_start": week_start.isoformat(), "days": [d.isoformat() for d in days], "factories": factories,
-            "note": "Giải phóng = phần nguồn lực được trả lại trong ngày (đang giữ hôm trước trừ đang giữ hôm nay). Máy chỉ tính cho mã hàng có yêu cầu máy."}
+            "note": "Nguồn lực rảnh = phần nguồn lực được trả lại trong ngày (đang giữ hôm trước trừ đang giữ hôm nay). Máy chỉ tính cho mã hàng có yêu cầu máy."}
 
 
 def week_start_of(d: date) -> date:
