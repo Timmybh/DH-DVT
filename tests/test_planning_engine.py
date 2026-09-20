@@ -193,3 +193,29 @@ def test_unplan_then_add_returned_roundtrip():
     assert (a["factory_code"], a["primary_line"]) == ("XN2", "3") and returned2 == [] and "a" in changed
     with pytest.raises(OpError):
         apply_ops(base, {}, [{"type": "ADD_RETURNED", "rowUid": "zzz", "factory": "XN1", "line": "7", "afterRowUid": None}], CAL, FACTORIES, [])
+
+
+def test_recalc_lane_cascades_downstream_and_keeps_overrides():
+    a = calc_row("a", 1, date(2026, 9, 14))
+    fs = fx.active()
+    b, c = row("b", 2, qty=1000, cap=500), row("c", 3, qty=1000, cap=500)
+    for prev, cur in ((a, b), (b, c)):
+        fs.apply(cur, prev, "TOTAL_DAY"); fs.apply(cur, prev, "BEGIN_PROD_DATE"); fs.apply(cur, prev, "END_BEGIN_DATE")
+    old_c_begin = c["extra"]["serial"]["begin_prod_date"]
+    ops = [
+        {"type": "EDIT_FIELD", "rowUid": "a", "field": "quantity", "value": 5000},  # a kéo dài: 5000/500 = 10 ngày
+        {"type": "RECALC_LANE", "factory": "XN1", "line": "7"},
+    ]
+    rows, changed = apply_ops([a, b, c], {}, ops, CAL, FACTORIES)
+    by = {r["row_uid"]: r for r in rows}
+    assert by["a"]["total_day"] == 10.0 and {"a", "b", "c"} <= changed
+    assert by["c"]["extra"]["serial"]["begin_prod_date"] > old_c_begin + 5  # dòng sau đẩy lùi theo a
+    assert by["b"]["extra"]["serial"]["begin_prod_date"] == pytest.approx(by["a"]["extra"]["serial"]["end_prod_date"] + 1 / 9)
+
+    # ô đang OVERRIDE giữ nguyên khi tính lại
+    b["extra"]["overrides"] = {"begin_prod_date": {"source": "OVERRIDE", "calculated": None}}
+    fs.set_stored(b, "BEGIN_PROD_DATE", to_serial(date(2026, 12, 1)))
+    rows, _ = apply_ops([a, b, c], {}, [{"type": "RECALC_LANE", "factory": "XN1", "line": "7", "fromRowUid": "b"}], CAL, FACTORIES)
+    assert next(r for r in rows if r["row_uid"] == "b")["begin_prod_date"] == date(2026, 12, 1)
+    with pytest.raises(OpError):
+        apply_ops([a], {}, [{"type": "RECALC_LANE", "factory": "XN9", "line": "1"}], CAL, FACTORIES)

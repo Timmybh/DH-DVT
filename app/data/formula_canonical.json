@@ -24,6 +24,36 @@
    "matched": 16581,
    "rate": 1.0
   },
+  "SOT": {
+   "tested": 14241,
+   "matched": 14241,
+   "rate": 1.0
+  },
+  "TOTAL_SOT": {
+   "tested": 17851,
+   "matched": 17848,
+   "rate": 0.9998
+  },
+  "OUTPUT_DATE": {
+   "tested": 18039,
+   "matched": 18039,
+   "rate": 1.0
+  },
+  "END_PROD_DATE": {
+   "tested": 18039,
+   "matched": 18033,
+   "rate": 0.9997
+  },
+  "BEGIN_WAREHOUSE_IMPORT": {
+   "tested": 18039,
+   "matched": 18036,
+   "rate": 0.9998
+  },
+  "END_WAREHOUSE_IMPORT": {
+   "tested": 18039,
+   "matched": 18034,
+   "rate": 0.9997
+  },
   "BEGIN_PROD_DATE": {
    "tested": 17846,
    "matched": 15993,
@@ -247,6 +277,138 @@
     },
     "expected": "",
     "synthetic": true
+   }
+  ],
+  "SOT": [
+   {
+    "kind": "worker_zero",
+    "inputs": {
+     "WORKING_DAY": 540.0,
+     "WORKER": 0.0,
+     "CAPACITY": 1200.0
+    },
+    "expected": 0.0,
+    "source_row": 4
+   },
+   {
+    "kind": "normal",
+    "inputs": {
+     "WORKING_DAY": 540.0,
+     "WORKER": 36.0,
+     "CAPACITY": 1200.0
+    },
+    "expected": 16.2,
+    "source_row": 7
+   },
+   {
+    "kind": "capacity_zero",
+    "inputs": {
+     "WORKING_DAY": 540,
+     "WORKER": 36,
+     "CAPACITY": 0
+    },
+    "expected": "",
+    "synthetic": true
+   }
+  ],
+  "TOTAL_SOT": [
+   {
+    "kind": "zero_sot",
+    "inputs": {
+     "SOT": 0.0,
+     "QUANTITY": 1110.0
+    },
+    "expected": 0.0,
+    "source_row": 4
+   },
+   {
+    "kind": "normal",
+    "inputs": {
+     "SOT": 16.2,
+     "QUANTITY": 1200.0
+    },
+    "expected": 19440.0,
+    "source_row": 7
+   }
+  ],
+  "OUTPUT_DATE": [
+   {
+    "kind": "lead_1",
+    "inputs": {
+     "BEGIN_PROD_DATE": 45990.0,
+     "LEAD_DAYS": 1
+    },
+    "expected": 45991.0,
+    "source_row": 4
+   },
+   {
+    "kind": "lead_3",
+    "inputs": {
+     "BEGIN_PROD_DATE": 45987.0,
+     "LEAD_DAYS": 3
+    },
+    "expected": 45990.0,
+    "source_row": 5517
+   }
+  ],
+  "END_PROD_DATE": [
+   {
+    "kind": "lead_1",
+    "inputs": {
+     "END_BEGIN_DATE": 45991.05714285715,
+     "LEAD_DAYS": 1
+    },
+    "expected": 45992.05714285715,
+    "source_row": 4
+   },
+   {
+    "kind": "lead_3",
+    "inputs": {
+     "END_BEGIN_DATE": 45987.07666666667,
+     "LEAD_DAYS": 3
+    },
+    "expected": 45990.07666666667,
+    "source_row": 5517
+   }
+  ],
+  "BEGIN_WAREHOUSE_IMPORT": [
+   {
+    "kind": "lead_1",
+    "inputs": {
+     "OUTPUT_DATE": 45991.0,
+     "LEAD_DAYS": 1
+    },
+    "expected": 45992.0,
+    "source_row": 4
+   },
+   {
+    "kind": "lead_3",
+    "inputs": {
+     "OUTPUT_DATE": 45990.0,
+     "LEAD_DAYS": 3
+    },
+    "expected": 45993.0,
+    "source_row": 5517
+   }
+  ],
+  "END_WAREHOUSE_IMPORT": [
+   {
+    "kind": "lead_1",
+    "inputs": {
+     "END_PROD_DATE": 45992.05714285715,
+     "LEAD_DAYS": 1
+    },
+    "expected": 45993.05714285715,
+    "source_row": 4
+   },
+   {
+    "kind": "lead_3",
+    "inputs": {
+     "END_PROD_DATE": 45990.07666666667,
+     "LEAD_DAYS": 3
+    },
+    "expected": 45993.07666666667,
+    "source_row": 5517
    }
   ]
  }

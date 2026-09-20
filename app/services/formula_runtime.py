@@ -68,6 +68,8 @@ class FormulaSet:
             return row.get(f)
         if meta.ref_key:
             v = self._ref(row).get(meta.ref_key)
+            if meta.code == "LEAD_DAYS" and v is None:
+                return 1.0  # mặc định 1 ngày (workbook: OUT PUT DATE = ngày vào chuyền + 1)
             if meta.value_type == "date" and isinstance(v, str):
                 try:
                     return to_serial(date.fromisoformat(v[:10]))
@@ -156,13 +158,16 @@ class FormulaSet:
     def display(self, row: dict) -> dict[str, Any]:
         """Cột chỉ tính, không lưu trong DB (OFF_DAYS, ON_TIME) — để UI/API hiển thị."""
         out: dict[str, Any] = {}
-        for code in ("OFF_DAYS", "ON_TIME"):
+        for code in ("OFF_DAYS", "ON_TIME", "SOT", "TOTAL_SOT", "OUTPUT_DATE", "END_PROD_DATE", "END_WAREHOUSE_IMPORT"):
             if code in self.formulas:
                 try:
                     v = self.calculated(row, None, code)
                 except FormulaError:
                     v = None
-                out[code.lower()] = None if v == "" else v
+                v = None if v == "" else v
+                if v is not None and self.columns[code].value_type == "date":
+                    v = defs.serial_to_iso(float(v))
+                out[code.lower()] = v
         return out
 
     # ------------------------------------------------------------ phiên bản

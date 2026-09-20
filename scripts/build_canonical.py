@@ -49,6 +49,14 @@ def main(path: str):
 
     prev = None
     node = {c: f.node for c, f in fs.formulas.items()}
+    # LEAD_DAYS theo khách hàng (đa số phiếu của OUT PUT DATE − BEGINING P. DATE), giống lúc import
+    from collections import Counter
+
+    votes = defaultdict(Counter)
+    for _xl, v in rows:
+        if num(v[22]) and num(v[24]) and 0 < round(v[24] - v[22]) <= 10:
+            votes[v[9]][round(v[24] - v[22])] += 1
+    lead_of = {c: x.most_common(1)[0][0] for c, x in votes.items()}
     for xl, v in rows:
         q, cap, td, off, b, e = v[10], v[12], v[13], v[14], v[22], v[23]
         # ---- TOTAL_DAY
@@ -101,6 +109,33 @@ def main(path: str):
             stats["ON_TIME"]["matched"] += ok
             if ok:
                 pick("ON_TIME", txt, {"inputs": {"EHD_ETD": v[29], "CHD": v[28]}, "expected": txt, "source_row": xl})
+        # ---- SOT / TOTAL_SOT
+        if num(v[19]) and num(v[11]) and num(v[12]) and v[12] and num(v[20]):
+            exp = run_case(node["SOT"], {"WORKING_DAY": v[19], "WORKER": v[11], "CAPACITY": v[12]})
+            stats["SOT"]["tested"] += 1
+            ok = abs(exp - v[20]) < 1e-6
+            stats["SOT"]["matched"] += ok
+            if ok:
+                pick("SOT", "worker_zero" if v[11] == 0 else "normal", {"inputs": {"WORKING_DAY": v[19], "WORKER": v[11], "CAPACITY": v[12]}, "expected": v[20], "source_row": xl})
+        if num(v[20]) and num(v[10]) and num(v[21]):
+            exp = run_case(node["TOTAL_SOT"], {"SOT": v[20], "QUANTITY": v[10]})
+            stats["TOTAL_SOT"]["tested"] += 1
+            ok = abs(exp - v[21]) < 1e-6
+            stats["TOTAL_SOT"]["matched"] += ok
+            if ok:
+                pick("TOTAL_SOT", "zero_sot" if v[20] == 0 else "normal", {"inputs": {"SOT": v[20], "QUANTITY": v[10]}, "expected": v[21], "source_row": xl})
+        # ---- mốc ngày nối tiếp: OUTPUT / END_PROD / W.HOUSE / END W.HOUS (cộng LEAD_DAYS theo khách hàng)
+        lead = lead_of.get(v[9], 1)
+        row_lead = round(v[24] - v[22]) if num(v[22]) and num(v[24]) else lead
+        for code, a, b, kind_key in (("OUTPUT_DATE", v[22], v[24], "BEGIN_PROD_DATE"), ("END_PROD_DATE", v[23], v[25], "END_BEGIN_DATE"),
+                                     ("BEGIN_WAREHOUSE_IMPORT", v[24], v[26], "OUTPUT_DATE"), ("END_WAREHOUSE_IMPORT", v[25], v[27], "END_PROD_DATE")):
+            if num(a) and num(b):
+                exp = run_case(node[code], {kind_key: a, "LEAD_DAYS": lead})
+                stats[code]["tested"] += 1
+                ok = abs(exp - b) < 1e-4
+                stats[code]["matched"] += ok
+                if ok:
+                    pick(code, f"lead_{lead}", {"inputs": {kind_key: a, "LEAD_DAYS": lead}, "expected": b, "source_row": xl})
         prev = (key, {"e": e if num(e) else None, "td": td if num(td) else None})
 
     # ---- ca tổng hợp (biên / rỗng) — đánh dấu rõ SYNTHETIC
@@ -109,6 +144,7 @@ def main(path: str):
             {"kind": "capacity_zero", "inputs": {"QUANTITY": 100, "CAPACITY": 0}, "expected": "", "synthetic": True},
             {"kind": "capacity_blank", "inputs": {"QUANTITY": 100, "CAPACITY": None}, "expected": "", "synthetic": True},
         ],
+        "SOT": [{"kind": "capacity_zero", "inputs": {"WORKING_DAY": 540, "WORKER": 36, "CAPACITY": 0}, "expected": "", "synthetic": True}],
         "OFF_DAYS": [{"kind": "total_day_blank", "inputs": {"TOTAL_DAY": None}, "expected": "", "synthetic": True}],
         "ON_TIME": [
             {"kind": "diff_4.5_on_time", "inputs": {"EHD_ETD": 104.5, "CHD": 100.0}, "expected": "ON TIME", "synthetic": True},

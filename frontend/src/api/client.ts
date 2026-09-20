@@ -216,11 +216,12 @@ export interface RowRef {
   risk?: "OK" | "ADVANCE" | "LATE" | "MATERIAL";
   risk_reason?: string;
   gap_days?: number | null;
+  lead_days?: number;
 }
 
 export interface PlanRowDto {
   ref?: RowRef;
-  calc?: { off_days?: number | null; on_time?: string | null }; // cột chỉ tính theo công thức (không lưu DB)
+  calc?: { off_days?: number | null; on_time?: string | null; sot?: number | null; total_sot?: number | null; output_date?: string | null; end_prod_date?: string | null; end_warehouse_import?: string | null }; // cột chỉ tính theo công thức (không lưu DB)
   row_uid: string;
   sequence: number;
   origin: "EXISTING" | "DRAFT_NEW";

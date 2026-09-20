@@ -128,3 +128,22 @@ def test_display_columns_off_days_and_on_time():
     assert fs.display(r)["on_time"] == "ON TIME"
     r["extra"]["ref"] = {}
     assert fs.display(r)["on_time"] is None
+
+
+def test_workbook_lead_days_chain_and_sot():
+    # END P DATE = END BE + LEAD_DAYS ; W.HOUSE = OUTPUT + LEAD_DAYS ; SOT = WORKING_DAY * WORKER / CAPACITY
+    assert ev("END_BEGIN_DATE + LEAD_DAYS", {"END_BEGIN_DATE": 45991.05714, "LEAD_DAYS": 1}) == pytest.approx(45992.05714)
+    assert ev("END_BEGIN_DATE + LEAD_DAYS", {"END_BEGIN_DATE": 45991.05714, "LEAD_DAYS": 3}) == pytest.approx(45994.05714)
+    assert ev("IFERROR(WORKING_DAY * WORKER / CAPACITY, \"\")", {"WORKING_DAY": 540, "WORKER": 36, "CAPACITY": 1200}) == pytest.approx(16.2)
+    assert ev("IFERROR(WORKING_DAY * WORKER / CAPACITY, \"\")", {"WORKING_DAY": 540, "WORKER": 36, "CAPACITY": 0}) == ""
+
+
+def test_display_uses_lead_days_default_and_customer_value():
+    fs = fx.active()
+    r = {"quantity": 1000, "capacity": 500, "total_day": 2.0, "begin_prod_date": date(2026, 9, 14),
+         "extra": {"serial": {"begin_prod_date": 46279.0, "end_prod_date": 46281.3}, "ref": {"worker": 36, "working_day": 540}}}
+    d = fs.display(r)
+    assert d["output_date"] == "2026-09-15"  # LEAD_DAYS mặc định 1
+    assert d["sot"] == pytest.approx(540 * 36 / 500) and d["total_sot"] == pytest.approx(540 * 36 / 500 * 1000)
+    r["extra"]["ref"]["lead_days"] = 3
+    assert fs.display(r)["output_date"] == "2026-09-17"

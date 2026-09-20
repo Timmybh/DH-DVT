@@ -29,14 +29,15 @@ COLUMNS: list[tuple] = [
     ("NO_ISSUE", "No issue", "NO ISSUE", "text", "MANUAL", "", "ref:no_issue"),
     ("DATE_ISSUE", "Date issue", "NO ISSUE (ngày)", "date", "MANUAL", "", "ref:date_issue"),
     ("WORKING_DAY", "Working day", "WORKING DAY", "number", "MANUAL", "", "ref:working_day"),
-    ("SOT", "SOT", "SOT", "number", "MANUAL", "", "ref:sot"),
-    ("TOTAL_SOT", "Total SOT", "TOTAL SOT", "number", "MANUAL", "", "ref:total_sot"),
+    ("SOT", "SOT", "SOT", "number", "CALCULATED", "", "ref:sot"),
+    ("TOTAL_SOT", "Total SOT", "TOTAL SOT", "number", "CALCULATED", "", "ref:total_sot"),
+    ("LEAD_DAYS", "Lead days", "(suy ra) OUT PUT DATE − BEGINING P. DATE", "number", "MANUAL", "", "ref:lead_days"),
     ("BEGIN_PROD_DATE", "Begin prod date", "BEGINING P. DATE", "date", "CALCULATED", "", "row:begin_prod_date"),
     ("END_BEGIN_DATE", "End begin date", "END BE. DATE", "date", "CALCULATED", "", "row:end_prod_date"),
-    ("OUTPUT_DATE", "Output date", "OUT PUT DATE", "date", "MANUAL", "", "ref:output_date"),
-    ("END_PROD_DATE", "End prod date", "END P DATE", "date", "MANUAL", "", "ref:end_p_date"),
-    ("BEGIN_WAREHOUSE_IMPORT", "Begin warehouse import", "W.HOUSE", "date", "MANUAL", "", "row:warehouse_date"),
-    ("END_WAREHOUSE_IMPORT", "End warehouse import", "END W. HOUS", "date", "MANUAL", "", "ref:end_wh"),
+    ("OUTPUT_DATE", "Output date", "OUT PUT DATE", "date", "CALCULATED", "", "ref:output_date"),
+    ("END_PROD_DATE", "End prod date", "END P DATE", "date", "CALCULATED", "", "ref:end_p_date"),
+    ("BEGIN_WAREHOUSE_IMPORT", "Begin warehouse import", "W.HOUSE", "date", "CALCULATED", "", "row:warehouse_date"),
+    ("END_WAREHOUSE_IMPORT", "End warehouse import", "END W. HOUS", "date", "CALCULATED", "", "ref:end_wh"),
     ("CHD", "CHD", "CHD", "date", "MANUAL", "", "row:chd"),
     ("EHD_ETD", "EHD/ETD", "EHD/ ETD", "date", "MANUAL", "", "ref:ehd_etd"),
     ("AHD", "AHD", "AHD", "date", "MANUAL", "", "ref:ahd"),
@@ -86,16 +87,53 @@ V1 = {
     ),
 }
 
-# Bản nháp: chưa có công thức được xác minh 100% với workbook nên KHÔNG được publish (bằng chứng: xem ca chuẩn)
-DRAFTS = {
-    "END_PROD_DATE": dict(
-        expression="END_BEGIN_DATE + 1",
-        description="END P DATE ≈ END BE. DATE + 1 ngày (khớp 96% dòng); 4% dòng cộng thêm 2–14 ngày chưa rõ quy tắc.",
-        workbook_formula="(chưa xác định) — dữ liệu cho thấy END P DATE = END BE. DATE + 1, một số dòng + 3",
-        rounding="NONE", calendar="Chưa xác định",
-        result_type="date", source_columns="END BE. DATE (cột 23) → END P DATE (cột 25)",
+V1.update({
+    "SOT": dict(
+        expression="IFERROR(WORKING_DAY * WORKER / CAPACITY, \"\")",
+        description="SOT (phút chuẩn / sản phẩm) = số phút làm việc × số công nhân / năng suất ngày. Sheet1 của workbook ghi ngược (WORKING DAY × CAPACITY / WORKER) nhưng dữ liệu thật khớp công thức này.",
+        workbook_formula="SOT = WORKING DAY * WORKER / CAPACITY (dữ liệu xác nhận; mô tả Sheet1 ghi ngược)",
+        rounding="NONE", calendar="KHÔNG dùng lịch", result_type="number",
+        source_columns="WORKING DAY, WORKER, CAPACITY (cột 19, 11, 12) → SOT (cột 20)",
     ),
-}
+    "TOTAL_SOT": dict(
+        expression="IFERROR(SOT * QUANTITY, \"\")",
+        description="Tổng SOT = SOT × số lượng.",
+        workbook_formula="TOTAL SOT = SOT * QUANTITY",
+        rounding="NONE", calendar="KHÔNG dùng lịch", result_type="number",
+        source_columns="SOT, QUANTITY (cột 20, 10) → TOTAL SOT (cột 21)",
+    ),
+    "OUTPUT_DATE": dict(
+        expression="BEGIN_PROD_DATE + LEAD_DAYS",
+        description="Dự trữ ngày vào chuyền = ngày vào chuyền + LEAD_DAYS (mặc định 1 ngày; một số khách hàng 3 ngày).",
+        workbook_formula="OUT PUT DATE = BEGINING P. DATE + 1 (Sheet1); dữ liệu cho thấy hằng số này là 3 với một số khách hàng",
+        rounding="NONE (giữ số lẻ ngày)", calendar="KHÔNG dùng lịch làm việc (đúng như workbook)", result_type="date",
+        source_columns="BEGINING P. DATE (cột 22) → OUT PUT DATE (cột 24)",
+    ),
+    "END_PROD_DATE": dict(
+        expression="END_BEGIN_DATE + LEAD_DAYS",
+        description="Dự trữ ngày may ra = END BE. DATE + LEAD_DAYS.",
+        workbook_formula="END P DATE = END BE. DATE + 1 (Sheet1); dữ liệu: + LEAD_DAYS (1 hoặc 3 theo khách hàng)",
+        rounding="NONE (giữ số lẻ ngày)", calendar="KHÔNG dùng lịch làm việc (đúng như workbook)", result_type="date",
+        source_columns="END BE. DATE (cột 23) → END P DATE (cột 25)",
+    ),
+    "BEGIN_WAREHOUSE_IMPORT": dict(
+        expression="OUTPUT_DATE + LEAD_DAYS",
+        description="Ngày nhập kho thành phẩm (W.HOUSE) = OUT PUT DATE + LEAD_DAYS.",
+        workbook_formula="W.HOUSE = OUT PUT DATE + 1 (Sheet1); dữ liệu: + LEAD_DAYS",
+        rounding="NONE (giữ số lẻ ngày)", calendar="KHÔNG dùng lịch làm việc (đúng như workbook)", result_type="date",
+        source_columns="OUT PUT DATE (cột 24) → W.HOUSE (cột 26)",
+    ),
+    "END_WAREHOUSE_IMPORT": dict(
+        expression="END_PROD_DATE + LEAD_DAYS",
+        description="Ngày kết thúc nhập kho TP = END P DATE + LEAD_DAYS (Sheet1 ghi W.HOUSE + 1 nhưng dữ liệu thật khớp END P DATE + 1).",
+        workbook_formula="END W. HOUS = W.HOUSE + 1 (Sheet1); dữ liệu khớp END P DATE + LEAD_DAYS",
+        rounding="NONE (giữ số lẻ ngày)", calendar="KHÔNG dùng lịch làm việc (đúng như workbook)", result_type="date",
+        source_columns="END P DATE (cột 25) → END W. HOUS (cột 27)",
+    ),
+})
+
+# Bản nháp: công thức chưa được xác minh với workbook thì KHÔNG được publish
+DRAFTS: dict = {}
 
 BUILTIN_VERSION = 1
 

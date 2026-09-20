@@ -4,6 +4,7 @@ import { PlanRowDto, UnplannedDto } from "../api/client";
 export type Op =
   | { type: "ADD_FROM_UNPLANNED"; tempRowId: string; sourceId: number; factory: string; line: string; afterRowUid: string | null }
   | { type: "UNPLAN"; rowUid: string }
+  | { type: "RECALC_LANE"; factory: string; line: string; fromRowUid?: string }
   | { type: "ADD_RETURNED"; rowUid: string; factory: string; line: string; afterRowUid: string | null }
   | { type: "MOVE"; rowUid: string; factory: string; line: string; afterRowUid: string | null }
   | { type: "EDIT_FIELD"; rowUid: string; field: string; value: unknown }

@@ -94,7 +94,7 @@ def reindex(rows: list[dict]) -> list[dict]:
 
 
 # --------------------------------------------------------------------------- tự tính (theo Formula Definition đang Publish)
-CALC_CODE = {"total_day": "TOTAL_DAY", "begin_prod_date": "BEGIN_PROD_DATE", "end_prod_date": "END_BEGIN_DATE"}
+CALC_CODE = {"total_day": "TOTAL_DAY", "begin_prod_date": "BEGIN_PROD_DATE", "end_prod_date": "END_BEGIN_DATE", "warehouse_date": "BEGIN_WAREHOUSE_IMPORT"}
 
 
 def calc_total_day(quantity, capacity) -> float | None:
@@ -110,7 +110,7 @@ def calc_total_day(quantity, capacity) -> float | None:
 def recalc_row(row: dict, prev: dict | None) -> None:
     """Tính lại TOTAL_DAY → BEGIN_PROD_DATE → END_BEGIN_DATE của một dòng (bỏ qua cột đang override)."""
     fs = fx.active()
-    for code in ("TOTAL_DAY", "BEGIN_PROD_DATE", "END_BEGIN_DATE"):
+    for code in ("TOTAL_DAY", "BEGIN_PROD_DATE", "END_BEGIN_DATE", "BEGIN_WAREHOUSE_IMPORT"):
         if fs.has(code):
             fs.apply(row, prev, code)
 
@@ -239,6 +239,21 @@ def apply_ops(
                 by_uid[row["row_uid"]] = row
                 changed.add(row["row_uid"])
 
+            elif kind == "RECALC_LANE":
+                # Tính lại theo công thức từ một dòng (hoặc đầu chuyền) đến hết chuyền; ô đang OVERRIDE được giữ nguyên
+                lane_id = (op.get("factory") or "", str(op.get("line") or ""))
+                lane = sorted((r for r in rows if lane_key(r) == lane_id), key=lambda r: r["sequence"])
+                if not lane:
+                    raise OpError(f"Không có dòng nào trong chuyền {lane_id[0]}/{lane_id[1]}")
+                start = 0
+                if op.get("fromRowUid"):
+                    start = next((i for i, r in enumerate(lane) if r["row_uid"] == op["fromRowUid"]), None)
+                    if start is None:
+                        raise OpError("Dòng bắt đầu tính lại không thuộc chuyền này")
+                for i in range(start, len(lane)):
+                    recalc_row(lane[i], lane[i - 1] if i else None)
+                    changed.add(lane[i]["row_uid"])
+
             elif kind == "EDIT_FIELD":
                 row = by_uid.get(op["rowUid"])
                 field = op.get("field")
@@ -365,7 +380,7 @@ def recheck(rows: list[dict], cal: CalendarResolver, factory_codes: set[str]) ->
         fs = fx.active()
         prev_row = None
         for cur in lane:
-            for col, field, label in (("TOTAL_DAY", "total_day", "TOTAL_DAY"), ("BEGIN_PROD_DATE", "begin_prod_date", "BEGIN_PROD_DATE"), ("END_BEGIN_DATE", "end_prod_date", "END_BEGIN_DATE")):
+            for col, field, label in (("TOTAL_DAY", "total_day", "TOTAL_DAY"), ("BEGIN_PROD_DATE", "begin_prod_date", "BEGIN_PROD_DATE"), ("END_BEGIN_DATE", "end_prod_date", "END_BEGIN_DATE"), ("BEGIN_WAREHOUSE_IMPORT", "warehouse_date", "BEGIN_WAREHOUSE_IMPORT")):
                 if not fs.has(col) or fs.is_overridden(cur, col):
                     continue
                 if col == "BEGIN_PROD_DATE" and prev_row is None:

@@ -212,6 +212,8 @@ def _baseline_extra(pr: PlanRow) -> dict:
         serial["begin_prod_date"] = ref["begin_serial"]
     if ref.get("end_serial") is not None:
         serial["end_prod_date"] = ref["end_serial"]
+    if ref.get("wh_serial") is not None:
+        serial["warehouse_date"] = ref["wh_serial"]
     return {"ref": ref, "serial": serial}
 
 
@@ -220,14 +222,14 @@ def _reconcile_with_formulas(rows: list[dict]) -> dict:
     (giữ nguyên giá trị workbook, lưu kèm kết quả công thức) thay vì âm thầm thay đổi.
     """
     fs = fx.active()
-    counts = {"total_day": 0, "begin_prod_date": 0, "end_prod_date": 0}
+    counts = {"total_day": 0, "begin_prod_date": 0, "end_prod_date": 0, "warehouse_date": 0}
     lanes: dict[tuple[str, str], list[dict]] = {}
     for r in rows:
         lanes.setdefault((r["factory_code"], r["primary_line"]), []).append(r)
     for lane in lanes.values():
         prev = None
         for r in sorted(lane, key=lambda x: x["sequence"]):
-            for code, field in (("TOTAL_DAY", "total_day"), ("BEGIN_PROD_DATE", "begin_prod_date"), ("END_BEGIN_DATE", "end_prod_date")):
+            for code, field in (("TOTAL_DAY", "total_day"), ("BEGIN_PROD_DATE", "begin_prod_date"), ("END_BEGIN_DATE", "end_prod_date"), ("BEGIN_WAREHOUSE_IMPORT", "warehouse_date")):
                 if not fs.has(code) or (code == "BEGIN_PROD_DATE" and prev is None):
                     continue
                 try:
@@ -455,14 +457,16 @@ def unplanned_facets(db: Session) -> dict:
 
 
 # ------------------------------------------------------------------ Recheck / Commit / Issue
-def build_draft(db: Session, base_version_id: int, ops: list[dict], with_returned: bool = False):
+def build_draft(db: Session, base_version_id: int, ops: list[dict], with_returned: bool = False, with_changed: bool = False):
     base = get_version(db, base_version_id)
     base_rows = load_rows(db, base_version_id)
     returned = [dict(r) for r in (base.returned or [])]
     try:
-        rows, _ = apply_ops(base_rows, unplanned_lookup(db, base_version_id), ops, load_resolver(db), factory_codes(db), returned)
+        rows, changed = apply_ops(base_rows, unplanned_lookup(db, base_version_id), ops, load_resolver(db), factory_codes(db), returned)
     except OpError as exc:
         raise HTTPException(422, str(exc))
+    if with_changed:
+        return rows, returned, changed
     return (rows, returned) if with_returned else rows
 
 
@@ -480,13 +484,12 @@ def _row_out(r: dict) -> dict:
 
 
 def run_recheck(db: Session, user: User, session: PlanningEditSession, base_version_id: int, ops: list[dict], draft_revision: int) -> dict:
-    rows = build_draft(db, base_version_id, ops)
+    rows, _returned, changed_uids_engine = build_draft(db, base_version_id, ops, with_changed=True)
     result = recheck(rows, load_resolver(db), factory_codes(db))
     session.last_recheck_revision, session.last_recheck_hash = draft_revision, ops_hash(ops)
     session.last_recheck_result, session.last_recheck_trace = result["result"], result["trace_id"]
     db.commit()
-    changed_uids = {op.get("tempRowId") and "D" + "".join(c for c in str(op["tempRowId"]) if c.isalnum())[:30] for op in ops if op.get("type") == "ADD_FROM_UNPLANNED"}
-    changed_uids |= {op["rowUid"] for op in ops if op.get("rowUid")}
+    changed_uids = set(changed_uids_engine) | {op["rowUid"] for op in ops if op.get("rowUid")}
     computed = [{**_row_out(r), "calc": row_calc(r)} for r in rows if r["row_uid"] in changed_uids]
     write_audit("PLANNING_RECHECK", user=user, object_type="EditSession", object_id=session.id, result=result["result"], detail=f"rev={draft_revision} rows={len(rows)}", trace_id=result["trace_id"])
     return {**result, "draft_revision": draft_revision, "computed_rows": computed}

@@ -11,6 +11,7 @@ interface Props {
   drag: MutableRefObject<DragInfo>;
   onDropAt: (xn: string, line: string, afterUid: string | null) => void;
   onOpenRow: (row: DraftRow) => void;
+  onRecalc: (xn: string, line: string, fromUid: string | null) => void;
   highlightUid: string | null;
   issueMap: Map<string, "ERROR" | "WARNING">;
 }
@@ -31,7 +32,7 @@ function onTimeClass(v: string | undefined): string {
   return "";
 }
 
-export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow, highlightUid, issueMap }: Props) {
+export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow, onRecalc, highlightUid, issueMap }: Props) {
   const cols = PLANNED_COLS;
   const [sort, setSort] = useState<Sort>(null);
   const [filters, setFilters] = useState<Record<string, string>>({});
@@ -257,6 +258,19 @@ export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow,
                               <div className="pg-gin" style={{ paddingLeft: 22 }}>
                                 <span className="pg-caret">{lCollapsed ? "▶" : "▼"}</span> Chuyền <b>{l.line}</b>
                                 <span className="pg-meta">{shown.length} dòng · SL {num(shown.reduce((s, r) => s + r.quantity, 0))} · Worker {num(shown.reduce((s, r) => s + (r.ref?.worker ?? 0), 0))}</span>
+                                {editable && (
+                                  <button
+                                    className="pg-btn"
+                                    style={{ marginLeft: 12, padding: "1px 10px" }}
+                                    title="Tính lại ngày theo công thức cho cả chuyền (ô đang ghi đè được giữ nguyên)"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onRecalc(f.xn, l.line, null);
+                                    }}
+                                  >
+                                    Tính lại chuyền
+                                  </button>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -313,7 +327,14 @@ export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow,
                                             <div><dt>Ghi chú</dt><dd>{r.note || "—"}</dd></div>
                                             <div><dt>Ghi đè thủ công</dt><dd>{overrides.length ? overrides.join(", ") : "—"}</dd></div>
                                           </dl>
-                                          <button className="pg-btn" onClick={() => onOpenRow(r)}>{editable ? "Sửa dòng" : "Xem dòng"}</button>
+                                          <div className="flex flex-col gap-2">
+                                            <button className="pg-btn" onClick={() => onOpenRow(r)}>{editable ? "Sửa dòng" : "Xem dòng"}</button>
+                                            {editable && (
+                                              <button className="pg-btn" title="Tính lại từ dòng này đến hết chuyền theo công thức" onClick={() => onRecalc(f.xn, l.line, r.row_uid)}>
+                                                Tính lại từ dòng này
+                                              </button>
+                                            )}
+                                          </div>
                                         </div>
                                       </td>
                                     </tr>

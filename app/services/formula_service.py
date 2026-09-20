@@ -89,25 +89,31 @@ def seed_columns_and_formulas(db: Session) -> None:
             db.add(PlanColumn(code=code, label=label, workbook_header=header, value_type=vtype, input_type=itype, list_source=lsrc, source=source, sort_order=i))
 
     canon = _canonical()
-    have = {(f.column_code, f.version) for f in db.query(FormulaDefinition.column_code, FormulaDefinition.version).all()}
+    have = {(f.column_code, f.version): f for f in db.query(FormulaDefinition).all()}
     ver_stats = canon.get("verification", {})
     for group, spec_map in (("V1", defs.V1), ("DRAFT", defs.DRAFTS)):
         for code, spec in spec_map.items():
-            if (code, 1) in have:
-                continue
+            cur = have.get((code, 1))
+            if cur is not None and not (cur.status == "DRAFT" and group == "V1"):
+                continue  # đã tồn tại (bản Publish là bất biến); chỉ làm mới bản nháp v1 vừa được xác minh
             node, deps = compile_expression(spec["expression"], set(fx.BUILTIN_COLUMNS))
             cases = (canon.get("cases") or {}).get(code, [])
             v = dict(ver_stats.get(code, {}))
             if group == "DRAFT":
                 v["note"] = "Chưa publish: quy tắc chưa được xác minh trọn vẹn với workbook."
-            defn = FormulaDefinition(
-                column_code=code, version=1, status="DRAFT", expression=spec["expression"], result_type=spec["result_type"],
-                rounding_policy=spec["rounding"], calendar_policy=spec["calendar"], description=spec["description"],
-                workbook_formula=spec["workbook_formula"], source_document=canon.get("source_document", ""), source_sheet=canon.get("source_sheet", ""),
-                source_columns=spec["source_columns"], dependencies=deps.as_json(), canonical_cases=cases,
-                tolerance=canon.get("tolerance", 1e-4), verification=v, created_by="system",
+            fields = dict(
+                expression=spec["expression"], result_type=spec["result_type"], rounding_policy=spec["rounding"], calendar_policy=spec["calendar"],
+                description=spec["description"], workbook_formula=spec["workbook_formula"], source_document=canon.get("source_document", ""),
+                source_sheet=canon.get("source_sheet", ""), source_columns=spec["source_columns"], dependencies=deps.as_json(), canonical_cases=cases,
+                tolerance=canon.get("tolerance", 1e-4), verification=v,
             )
-            db.add(defn)
+            if cur is not None:
+                for k, val in fields.items():
+                    setattr(cur, k, val)
+                defn = cur
+            else:
+                defn = FormulaDefinition(column_code=code, version=1, status="DRAFT", created_by="system", **fields)
+                db.add(defn)
             db.flush()
             if group == "V1" and cases and all(r["ok"] for r in run_cases(defn)):
                 defn.status, defn.published_by, defn.published_at = "PUBLISHED", "system (đối chiếu workbook)", utcnow()

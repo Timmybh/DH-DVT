@@ -339,6 +339,12 @@ export default function Planning() {
     setPending(null);
   }
 
+  function recalcLane(xn: string, line: string, fromUid: string | null) {
+    if (!editing) return;
+    pushOps([...ops, { type: "RECALC_LANE", factory: xn, line, ...(fromUid ? { fromRowUid: fromUid } : {}) }]);
+    setNotice({ ok: true, text: `Đã thêm thao tác "Tính lại" cho chuyền ${xn}/${line}. Bấm Recheck All Plan để xem ngày mới theo công thức.` });
+  }
+
   function dropPlannedToUnplanned(uid: string) {
     const row = draftRows.find((r) => r.row_uid === uid);
     if (row && editing) setPendingMove({ kind: "unplan", row });
@@ -527,6 +533,7 @@ export default function Planning() {
             drag={drag}
             onDropAt={handleDropAt}
             onOpenRow={setOpenRow}
+            onRecalc={recalcLane}
             highlightUid={highlight}
             issueMap={issueMap}
           />

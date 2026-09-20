@@ -37,7 +37,7 @@ GRID_COLS = {
     "off_days": (14, "n"), "fabric_ready": (15, "d"), "acc_ready": (16, "d"), "no_issue": (17, "t"), "date_issue": (18, "d"),
     "working_day": (19, "n"), "sot": (20, "n"), "total_sot": (21, "n"), "output_date": (24, "d"), "end_p_date": (25, "d"),
     "end_wh": (27, "d"), "ahd": (30, "d"), "on_time": (32, "t"),
-    "begin_serial": (22, "n"), "end_serial": (23, "n"),  # số serial có phần lẻ ngày: workbook nối BEGIN/END bằng số lẻ
+    "begin_serial": (22, "n"), "end_serial": (23, "n"), "wh_serial": (26, "n"),  # số serial có phần lẻ ngày: workbook nối BEGIN/END bằng số lẻ
 }
 
 
@@ -225,7 +225,30 @@ def parse_plan_workbook(path: Path) -> ParsedPlan:
                 if xn is None or count is None:
                     continue
                 parsed.labor.append(dict(fac_num=int(xn), team=team[:20], headcount=int(count)))
+    _assign_lead_days(parsed)
     return parsed
+
+
+def _assign_lead_days(parsed: "ParsedPlan") -> None:
+    """LEAD_DAYS (OUT PUT DATE − BEGINING P. DATE): workbook cho thấy hằng số này quyết định hoàn toàn bởi KHÁCH HÀNG
+    (1 ngày với đa số, 3 ngày với một số khách hàng). Suy ra theo khách hàng từ dòng đã lên kế hoạch; mặc định 1.
+    """
+    from collections import Counter, defaultdict
+    from datetime import date as _date
+
+    votes: dict[str, Counter] = defaultdict(Counter)
+    for r in parsed.planned:
+        g = r["grid"]
+        if g.get("begin_serial") is not None and g.get("output_date"):
+            try:
+                lead = (_date.fromisoformat(g["output_date"]) - excel_serial_to_date(g["begin_serial"])).days
+            except (ValueError, TypeError):
+                continue
+            if 0 < lead <= 10:
+                votes[r["customer"]][lead] += 1
+    lead_of = {c: v.most_common(1)[0][0] for c, v in votes.items() if v}
+    for r in parsed.planned + parsed.new:
+        r["grid"]["lead_days"] = lead_of.get(r["customer"], 1)
 
 
 def _sync(db: Session, run: SyncRun, path: Path, filename: str, username: str) -> None:
