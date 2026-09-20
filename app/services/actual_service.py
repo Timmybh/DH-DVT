@@ -346,8 +346,8 @@ def plan_row_status(planned_qty: float, sewn: int, fg: int, has_actual: bool, pl
     }
 
 
-def plan_vs_actual(db: Session, today: date) -> dict:
-    ver = reference_version(db)
+def plan_vs_actual(db: Session, today: date, version_id: int | None = None) -> dict:
+    ver = db.get(PlanningVersion, version_id) if version_id else reference_version(db)
     if ver is None:
         return {"version": None, "rows": [], "unmapped": 0}
     plan = _plan_rows(db, ver.id)

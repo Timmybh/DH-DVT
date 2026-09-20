@@ -1,8 +1,10 @@
 import { QaSummary } from "../api/client";
 import { num } from "../lib/format";
 import Section from "./Section";
+import { factoryColor } from "../theme/palette";
+import { useTheme } from "../theme/ThemeContext";
 
-const FACTORY_COLOR: Record<string, string> = { XN1: "#6366f1", XN2: "#0ea5e9", XN3: "#f59e0b" };
+const FACTORY_COLOR = new Proxy({} as Record<string, string>, { get: (_t, code: string) => factoryColor(code) }); // màu theo xí nghiệp từ bảng màu trung tâm
 
 interface Props {
   data: QaSummary;
@@ -11,6 +13,7 @@ interface Props {
 
 /** QA: Total Defect Count. Dòng = xí nghiệp, cột = nhóm kiểm tra; mỗi ô có số lỗi và thanh so sánh trong cùng nhóm. */
 export default function QaSection({ data, onDrill }: Props) {
+  useTheme();
   const [y, m] = data.month.split("-");
   const cats = data.categories;
   const codes = cats[0]?.by_factory.map((b) => b.code) ?? [];

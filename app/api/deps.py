@@ -23,6 +23,8 @@ def get_current_user_any(
     user = db.query(User).filter(User.username == payload.get("sub")).first()
     if user is None or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Tài khoản không tồn tại hoặc đã bị khóa")
+    if int(payload.get("tv", 0)) != int(user.token_version or 0):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Phiên đăng nhập đã bị thu hồi — vui lòng đăng nhập lại")
     return user
 
 

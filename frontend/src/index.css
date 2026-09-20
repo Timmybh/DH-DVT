@@ -6,6 +6,11 @@ body {
   @apply bg-[#070d1c] text-slate-800;
 }
 
+:root { --brand-rgb: 79 70 229; --st-ok: #16a34a; --st-warn: #f59e0b; --st-bad: #dc2626; --st-info: #38bdf8; --st-neutral: #94a3b8; }
+
+/* Chế độ sáng: bỏ lớp phủ .dvt-dark → giao diện Tailwind gốc; Navbar giữ nền tối */
+.dvt-light { background: #f1f5f9; color: #0f172a; color-scheme: light; min-height: 100vh; }
+
 /* ===== Giao diện tối (xanh navy, chữ sáng, nút viền) — áp dụng cho vùng đăng nhập rồi ===== */
 body { font-family: "Montserrat", "Segoe UI", system-ui, sans-serif; color: #e2e8f0; }
 

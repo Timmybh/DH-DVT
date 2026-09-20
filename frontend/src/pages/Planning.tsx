@@ -4,6 +4,7 @@ import { api, EditSessionView, errorMessage, PlanRowDto, PlanVersion, RecheckRes
 import PendingDropModal from "../components/planning/PendingDropModal";
 import { formatLines } from "../lib/lines";
 import type { CapDef } from "../lib/capacityRef";
+import { useTheme } from "../theme/ThemeContext";
 import { quickCheck, touchedRowUids } from "../lib/quickCheck";
 import { AddLinesModal, MergeLinesModal, SplitLinesModal } from "../components/planning/LineActions";
 import ConfirmMoveModal, { PendingMove } from "../components/planning/ConfirmMoveModal";
@@ -60,6 +61,7 @@ export default function Planning() {
   const [commitKind, setCommitKind] = useState<"F" | "V">("F");
   const [baselineFrom, setBaselineFrom] = useState("");
 
+  const { mode } = useTheme();
   const editing = !!session && !sessionLost;
   const version = versions.find((v) => v.id === versionId) ?? null;
 
@@ -507,7 +509,7 @@ export default function Planning() {
           <button onClick={enterEdit} disabled={busy !== "" || loadingRows} className="rounded-lg bg-brand px-4 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50" data-testid="enter-edit">Vào Edit Mode</button>
         ) : undefined}
         fill={fill}
-        light={fill}
+        light={fill || mode === "light"}
       />
       <UnplannedPanel
         baseVersionId={versionId}
@@ -521,7 +523,7 @@ export default function Planning() {
         onRows={handleUnplannedRows}
         onDropPlanned={dropPlannedToUnplanned}
         fill={fill}
-        light={fill}
+        light={fill || mode === "light"}
       />
     </>
   );

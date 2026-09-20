@@ -2,6 +2,8 @@ import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAx
 import { ProgressOverview } from "../api/client";
 import { dateTimeVi, num, pct } from "../lib/format";
 import Section from "./Section";
+import { palette } from "../theme/palette";
+import { useTheme } from "../theme/ThemeContext";
 
 interface Props {
   data: ProgressOverview;
@@ -16,6 +18,7 @@ const RISK_TILES = [
 ] as const;
 
 export default function ProgressSection({ data, onDrill }: Props) {
+  useTheme();
   if (!data.available || !data.pipeline || !data.risks) {
     return (
       <Section title="Tiến độ thực hiện" subtitle="Chưa có dữ liệu kế hoạch sản xuất">
@@ -94,10 +97,10 @@ export default function ProgressSection({ data, onDrill }: Props) {
               <YAxis type="category" dataKey="name" tick={{ fontSize: 12 }} width={44} />
               <Tooltip />
               <Legend />
-              <Bar dataKey="Đúng hạn" stackId="a" fill="#22c55e" />
-              <Bar dataKey="Sớm" stackId="a" fill="#38bdf8" />
-              <Bar dataKey="Thiếu NPL" stackId="a" fill="#f59e0b" />
-              <Bar dataKey="Trễ" stackId="a" fill="#ef4444" />
+              <Bar dataKey="Đúng hạn" stackId="a" fill={palette.status.ok} />
+              <Bar dataKey="Sớm" stackId="a" fill={palette.status.info} />
+              <Bar dataKey="Thiếu NPL" stackId="a" fill={palette.status.warn} />
+              <Bar dataKey="Trễ" stackId="a" fill={palette.status.bad} />
             </BarChart>
           </ResponsiveContainer>
         </div>

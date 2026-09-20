@@ -1,4 +1,6 @@
 from app.models.actual import ActualMapping, ActualObservation
+from app.models.lifecycle import CarryForwardItem, YearArchive, YearCarryForward
+from app.models.theme import ThemeSetting
 from app.models.core import AuditLog, Factory, SsoConfig, SyncConfig, User
 from app.models.data import (
     LaborHeadcount,
@@ -24,6 +26,10 @@ from app.models.resources import CapacityDefinition, LaborDaily, MachineCapacity
 from app.models.planning import FormulaDefinition, PlanColumn, PlanningEditSession, PlanningVersion, PlanningVersionRow, WorkingCalendarRule
 
 __all__ = [
+    "ThemeSetting",
+    "CarryForwardItem",
+    "YearArchive",
+    "YearCarryForward",
     "ActualMapping",
     "ActualObservation",
     "AuditLog",

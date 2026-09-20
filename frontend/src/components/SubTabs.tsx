@@ -23,6 +23,9 @@ export const ADMIN_TABS: TabDef[] = [
   { to: "/admin/sync", label: "Sync Log", perm: "sync.view" },
   { to: "/admin/dashboard", label: "Cấu hình Dashboard", perm: "dashboard.config_view" },
   { to: "/admin/users", label: "Người dùng", perm: "admin.user_manage" },
+  { to: "/admin/monitoring", label: "Giám sát", perm: "monitoring.view" },
+  { to: "/admin/lifecycle", label: "Vòng đời năm", perm: "lifecycle.manage" },
+  { to: "/admin/theme", label: "Giao diện", perm: "theme.manage" },
   { to: "/admin/audit", label: "Audit", perm: "audit.view" },
   { to: "/admin/sso", label: "Đăng nhập / SSO", perm: "admin.sso_manage" },
 ];

@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     jwt_secret: str = "change-me-in-env"
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 8
+    # Chống dò mật khẩu: sai liên tiếp quá số lần này thì khóa tạm tài khoản
+    login_max_failures: int = 5
+    login_lockout_minutes: int = 15
 
     postgres_dsn: str = "postgresql+psycopg2://dhdvt:dhdvt@localhost:5432/dhdvt"
 
@@ -37,6 +40,10 @@ class Settings(BaseSettings):
     planning_session_timeout_seconds: int = 180  # quá thời gian này không heartbeat -> phiên EXPIRED (§2.1/§14)
     planning_max_undo: int = 100
     planning_issue_requires_pass: bool = True  # §19.3: chỉ Issue khi Recheck = PASS
+
+    # Vòng đời năm: thư mục lưu trữ (rỗng = <thư mục dự án>/archive) và số năm giữ online (năm hiện hành tính là 1)
+    archive_dir: str = ""
+    retention_online_years: int = 2
 
     # Cảnh báo khi file kế hoạch cũ hơn số ngày này / dữ liệu eGMF chưa làm mới sau số giờ này
     plan_stale_days: int = 45

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Navigate, NavLink, useParams } from "react-router-dom";
+import { Navigate, NavLink, useParams, useSearchParams } from "react-router-dom";
 import { api, errorMessage } from "../../api/client";
 import { useAuth } from "../../context/AuthContext";
 import { dateVi, num } from "../../lib/format";
@@ -262,11 +262,16 @@ function History() {
   const [runs, setRuns] = useState<RunRow[]>([]);
   const [runId, setRunId] = useState<number | null>(null);
   const [changes, setChanges] = useState<{ total: number; new: number; rows: Obs[] } | null>(null);
-  const [po, setPo] = useState("");
+  const [params] = useSearchParams();
+  const [po, setPo] = useState(params.get("po") ?? "");
   const [hist, setHist] = useState<Obs[] | null>(null);
   const [state, setState] = useState<Obs[] | null>(null);
   const [err, setErr] = useState("");
 
+  useEffect(() => {
+    if (params.get("po")) search(params.get("po") as string); // đến từ drill-down Dashboard: tự tra cứu PO
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params]);
   useEffect(() => {
     api.get<RunRow[]>("/planning/actual/runs").then((r) => setRuns(r.data)).catch((e) => setErr(errorMessage(e)));
   }, []);
@@ -275,12 +280,12 @@ function History() {
     api.get(`/planning/actual/runs/${runId}/changes`, { params: { limit: 300 } }).then((r) => setChanges(r.data)).catch((e) => setErr(errorMessage(e)));
   }, [runId]);
 
-  const search = async () => {
-    if (!po.trim()) return;
+  const search = async (value = po) => {
+    if (!value.trim()) return;
     setErr("");
     try {
-      setHist((await api.get<Obs[]>("/planning/actual/history", { params: { po: po.trim() } })).data);
-      setState(runId !== null ? (await api.get<Obs[]>("/planning/actual/state", { params: { run_id: runId, po: po.trim() } })).data : null);
+      setHist((await api.get<Obs[]>("/planning/actual/history", { params: { po: value.trim() } })).data);
+      setState(runId !== null ? (await api.get<Obs[]>("/planning/actual/state", { params: { run_id: runId, po: value.trim() } })).data : null);
     } catch (e) {
       setErr(errorMessage(e));
     }
@@ -305,7 +310,7 @@ function History() {
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-2">
             <input value={po} onChange={(e) => setPo(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} placeholder="Nhập PO để xem lịch sử..." className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm" aria-label="PO" data-testid="history-po" />
-            <button onClick={search} className="rounded-full bg-brand px-4 py-1.5 text-xs font-semibold text-white">Xem lịch sử</button>
+            <button onClick={() => search()} className="rounded-full bg-brand px-4 py-1.5 text-xs font-semibold text-white">Xem lịch sử</button>
             {runId !== null && <span className="text-xs text-slate-400">Trạng thái tại lần đã chọn sẽ hiện kèm khi tìm PO.</span>}
           </div>
           {hist && (

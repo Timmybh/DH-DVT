@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import actual, admin, auth, dashboard, dashboard_admin, formulas, planning, resources, sync
+from app.api import actual, admin, auth, dashboard, dashboard_admin, formulas, lifecycle, monitoring, planning, resources, sync, theme
 from app.core.config import ROOT_DIR, settings
 from app.services.scheduler import start_scheduler, stop_scheduler
 from app.services.seed import run_seed
@@ -34,8 +34,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+
+@app.middleware("http")
+async def security_headers(request, call_next):
+    """Header bảo mật cơ bản cho mọi phản hồi (không đặt CSP vì cần script Google SSO)."""
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if request.url.path.startswith("/api/"):
+        response.headers.setdefault("Cache-Control", "no-store")
+    return response
+
+
 api = APIRouter(prefix="/api")
-for module in (auth, admin, sync, dashboard, dashboard_admin, planning, formulas, resources, actual):
+for module in (auth, admin, sync, dashboard, dashboard_admin, planning, formulas, resources, actual, lifecycle, monitoring, theme):
     api.include_router(module.router)
 
 

@@ -12,6 +12,7 @@ from app.core.security import create_access_token, hash_password, verify_passwor
 from app.db.session import get_db
 from app.models.core import SsoConfig, User
 from app.services.audit import write_audit
+from app.services.auth_guard import check_not_locked, register_failure, register_success
 from app.services.sso import authenticate_google
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -59,7 +60,7 @@ def _user_payload(user: User, db: Session | None = None) -> dict:
 def _token_response(user: User, db: Session) -> dict:
     user.last_login_at = datetime.now(timezone.utc)
     db.commit()
-    return {"access_token": create_access_token(user.username, user.role), "token_type": "bearer", "user": _user_payload(user, db)}
+    return {"access_token": create_access_token(user.username, user.role, user.token_version or 0), "token_type": "bearer", "user": _user_payload(user, db)}
 
 
 def _sso(db: Session) -> SsoConfig:
@@ -92,13 +93,16 @@ def login_local(payload: LoginRequest, db: Session = Depends(get_db)) -> dict:
     if not cfg.local_fallback_enabled:
         write_audit("LOGIN_LOCAL", username=ident, result="DENIED", detail="Đăng nhập nội bộ đang tắt")
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Đăng nhập tài khoản nội bộ đang tắt. Vui lòng dùng Google SSO.")
+    check_not_locked(user)
     if user is None or not user.is_active or not verify_password(payload.password, user.password_hash):
         write_audit("LOGIN_LOCAL", user=user, username=ident, result="FAILED", detail="Sai tài khoản hoặc mật khẩu")
+        register_failure(db, user)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Sai tài khoản hoặc mật khẩu")
     if not user.allow_local_login:
         write_audit("LOGIN_LOCAL", user=user, result="DENIED", detail="Tài khoản không được phép đăng nhập nội bộ")
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Tài khoản này chỉ được đăng nhập bằng Google SSO")
 
+    register_success(db, user)
     write_audit("LOGIN_LOCAL", user=user, object_type="User", object_id=user.username)
     return _token_response(user, db)
 
@@ -130,6 +134,8 @@ def change_password(payload: ChangePasswordRequest, user: User = Depends(get_cur
 
 
 @router.post("/logout")
-def logout(user: User = Depends(get_current_user_any)) -> dict:
+def logout(user: User = Depends(get_current_user_any), db: Session = Depends(get_db)) -> dict:
+    user.token_version = (user.token_version or 0) + 1  # thu hồi token hiện hành (đăng xuất thật sự, không chỉ xóa phía trình duyệt)
+    db.commit()
     write_audit("LOGOUT", user=user, object_type="User", object_id=user.username)
     return {"ok": True}

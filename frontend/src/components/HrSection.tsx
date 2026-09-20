@@ -1,16 +1,19 @@
 import { HrOverview } from "../api/client";
 import { num } from "../lib/format";
 import Section from "./Section";
+import { factoryColor } from "../theme/palette";
+import { useTheme } from "../theme/ThemeContext";
 
 interface Props {
   data: HrOverview;
   onDrill: () => void;
 }
 
-const FACTORY_COLOR: Record<string, string> = { XN1: "#6366f1", XN2: "#0ea5e9", XN3: "#f59e0b" };
+const FACTORY_COLOR = new Proxy({} as Record<string, string>, { get: (_t, code: string) => factoryColor(code) }); // màu theo xí nghiệp từ bảng màu trung tâm
 
 /** Tình hình nhân sự: mỗi xí nghiệp một card (lao động có mặt, số tổ/chuyền, tỷ trọng trong tổng). */
 export default function HrSection({ data, onDrill }: Props) {
+  useTheme();
   if (!data.available) {
     return (
       <Section title="Tình hình nhân sự" subtitle="Chưa có dữ liệu lao động">

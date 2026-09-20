@@ -106,6 +106,8 @@ def update_user(user_id: int, payload: UserUpdate, db: Session = Depends(get_db)
     if user.is_active != payload.is_active:
         changes.append("kích hoạt" if payload.is_active else "vô hiệu hóa")
     user.full_name, user.email = payload.full_name.strip(), payload.email.strip().lower()
+    if changes:  # đổi quyền / khóa tài khoản -> thu hồi các phiên đang mở
+        user.token_version = (user.token_version or 0) + 1
     user.role, user.is_active, user.allow_local_login = payload.role, payload.is_active, payload.allow_local_login
     db.commit()
     db.refresh(user)
@@ -123,6 +125,8 @@ def reset_password(user_id: int, payload: PasswordReset, db: Session = Depends(g
         raise HTTPException(404, "Không tìm thấy người dùng")
     user.password_hash = hash_password(payload.new_password)
     user.must_change_password = True
+    user.token_version = (user.token_version or 0) + 1
+    user.failed_login_count, user.locked_until = 0, None  # admin đặt lại mật khẩu cũng mở khóa
     db.commit()
     write_audit("PASSWORD_RESET", user=actor, object_type="User", object_id=user.username)
     return {"ok": True}

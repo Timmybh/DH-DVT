@@ -1,3 +1,6 @@
+import { palette } from "../theme/palette";
+import { useTheme } from "../theme/ThemeContext";
+
 interface GaugeProps {
   label: string;
   sublabel?: string;
@@ -10,16 +13,18 @@ interface GaugeProps {
 }
 
 export function gaugeColor(pct: number | null, expected?: number): string {
-  if (pct === null) return "#94a3b8";
+  const st = palette.status;
+  if (pct === null) return st.neutral;
   if (expected !== undefined) {
-    if (pct >= expected) return "#16a34a";
-    if (pct >= expected - 10) return "#f59e0b";
-    return "#dc2626";
+    if (pct >= expected) return st.ok;
+    if (pct >= expected - 10) return st.warn;
+    return st.bad;
   }
-  return pct >= 90 ? "#16a34a" : pct >= 60 ? "#f59e0b" : "#dc2626";
+  return pct >= 90 ? st.ok : pct >= 60 ? st.warn : st.bad;
 }
 
 export default function Gauge({ label, sublabel, pct, expected, selected = false, onClick, children }: GaugeProps) {
+  useTheme(); // render lại khi đổi bảng màu
   const ratio = Math.max(0, Math.min(1, (pct ?? 0) / 100));
   const angle = ratio * 180;
   const r = 40;

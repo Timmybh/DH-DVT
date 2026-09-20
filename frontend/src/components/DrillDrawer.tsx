@@ -1,7 +1,16 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api, errorMessage } from "../api/client";
+import { useAuth } from "../context/AuthContext";
 import { dateVi, num } from "../lib/format";
 import RevenueDetail from "./RevenueDetail";
+
+/** PO trong bảng drill-down: bấm để xem lịch sử thực tế của PO ở Kế hoạch → Thực tế & Đối soát (chỉ khi có quyền xem mapping). */
+function PoLink({ po }: { po: string }) {
+  const { can } = useAuth();
+  if (!po || !can("mapping.view")) return <>{po}</>;
+  return <Link to={`/planning/actual/history?po=${encodeURIComponent(po)}`} className="text-brand underline-offset-2 hover:underline" title="Xem lịch sử thực tế của PO này">{po}</Link>;
+}
 
 export type DrillTarget =
   | { type: "po"; risk: string }
@@ -114,7 +123,7 @@ export default function DrillDrawer({ target, scope, onClose }: Props) {
                       {r.mapping_status === "WARNING" && <span title="Cảnh báo mapping" className="ml-1 text-amber-500">⚠</span>}
                     </td>
                     <td>{r.line}</td>
-                    <td>{r.po_number}</td>
+                    <td><PoLink po={r.po_number} /></td>
                     <td>{r.customer}</td>
                     <td className="max-w-[200px] truncate" title={r.description}>{r.description}</td>
                     <td className="text-right">{num(r.quantity)}</td>
@@ -187,7 +196,7 @@ export default function DrillDrawer({ target, scope, onClose }: Props) {
                   {data.rows.map((r: Json, i: number) => (
                     <tr key={i} className="border-b border-slate-50">
                       <td className="py-1.5 font-medium">{r.factory}</td>
-                      <td>{r.po}</td>
+                      <td><PoLink po={r.po} /></td>
                       <td>{r.customer}</td>
                       <td>{r.style}</td>
                       <td className="text-right">{num(r.qty)}</td>
