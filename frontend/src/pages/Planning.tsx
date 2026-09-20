@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api, EditSessionView, errorMessage, PlanRowDto, PlanVersion, RecheckResult, UnplannedDto } from "../api/client";
 import PendingDropModal from "../components/planning/PendingDropModal";
 import ConfirmMoveModal, { PendingMove } from "../components/planning/ConfirmMoveModal";
@@ -45,6 +46,7 @@ export default function Planning() {
   const [openRow, setOpenRow] = useState<DraftRow | null>(null);
   const [highlight, setHighlight] = useState<string | null>(null);
   const [showCommit, setShowCommit] = useState(false);
+  const [showValidation, setShowValidation] = useState(false);
   const [commitNote, setCommitNote] = useState("");
   const [commitKind, setCommitKind] = useState<"F" | "V">("F");
   const [baselineFrom, setBaselineFrom] = useState("");
@@ -418,8 +420,50 @@ export default function Planning() {
   const commitReady = editing && online && ops.length > 0 && recheck !== null && !stale && recheck.result !== "ERROR";
   const validationLabel = !recheck ? "Chưa Recheck" : stale ? "Needs Recheck" : recheck.result;
 
-  return (
-    <div className="space-y-4">
+  const grids = (fill: boolean) => (
+    <>
+      <PlannedGrid
+        rows={draftRows}
+        editable={editing}
+        drag={drag}
+        onDropAt={handleDropAt}
+        onOpenRow={setOpenRow}
+        onRecalc={recalcLane}
+        highlightUid={highlight}
+        issueMap={issueMap}
+        fill={fill}
+        light={fill}
+      />
+      <UnplannedPanel
+        baseVersionId={versionId}
+        factories={factories}
+        editable={editing}
+        excludeIds={excludeIds}
+        excludeReturned={excludeReturned}
+        extraRows={draftReturned}
+        reloadKey={unplannedReload}
+        drag={drag}
+        onRows={handleUnplannedRows}
+        onDropPlanned={dropPlannedToUnplanned}
+        fill={fill}
+        light={fill}
+      />
+    </>
+  );
+
+  // Edit Mode = chế độ tập trung: toàn màn hình, nền trắng chữ đen, chỉ còn thanh công cụ + hai lưới
+  useEffect(() => {
+    if (!editing) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [editing]);
+
+  const body = (
+    <div className={editing ? "flex min-h-0 flex-1 flex-col gap-2" : "space-y-4"}>
+      {!editing && (
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-slate-900">Kế hoạch sản xuất</h1>
@@ -446,6 +490,8 @@ export default function Planning() {
         </div>
       </div>
 
+      )}
+
       {notice && (
         <div className={`flex items-start justify-between rounded-xl border p-3 text-sm ${notice.ok ? "border-green-200 bg-green-50 text-green-800" : "border-red-200 bg-red-50 text-red-700"}`}>
           <span>{notice.text}</span>
@@ -458,6 +504,7 @@ export default function Planning() {
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-sm" data-testid="edit-bar">
           <div className="flex items-center gap-3">
             <span className="rounded-full bg-brand px-2.5 py-0.5 text-xs font-bold text-white">EDIT MODE</span>
+            {version && <span className="font-mono text-xs font-semibold text-slate-700" data-testid="focus-version">{version.code}</span>}
             <span className="text-indigo-900">{ops.length} thao tác · Validation: <b>{validationLabel}</b></span>
             {!online && <span className="rounded bg-red-100 px-2 py-0.5 text-xs font-bold text-red-700">OFFLINE — vẫn sửa được, tạm khóa Recheck/Commit</span>}
           </div>
@@ -527,32 +574,19 @@ export default function Planning() {
       {version && (
         <>
           {loadingRows && <p className="text-sm text-slate-500">Đang tải kế hoạch...</p>}
-          <PlannedGrid
-            rows={draftRows}
-            editable={editing}
-            drag={drag}
-            onDropAt={handleDropAt}
-            onOpenRow={setOpenRow}
-            onRecalc={recalcLane}
-            highlightUid={highlight}
-            issueMap={issueMap}
-          />
-          <UnplannedPanel
-            baseVersionId={versionId}
-            factories={factories}
-            editable={editing}
-            excludeIds={excludeIds}
-            excludeReturned={excludeReturned}
-            extraRows={draftReturned}
-            reloadKey={unplannedReload}
-            drag={drag}
-            onRows={handleUnplannedRows}
-            onDropPlanned={dropPlannedToUnplanned}
-          />
+          {editing ? <div className="flex min-h-0 flex-1 flex-col gap-2">{grids(true)}</div> : grids(false)}
         </>
       )}
 
-      {editing && <ValidationPanel result={recheck} stale={stale} overrides={overridesList} onFocus={focusRow} />}
+      {editing && (
+        <div className="shrink-0" data-testid="focus-validation">
+          <button onClick={() => setShowValidation((v) => !v)} className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700" aria-expanded={showValidation}>
+            <span>Kiểm tra (Validation): <b>{validationLabel}</b>{recheck && !stale ? ` · ${recheck.counts.ERROR} lỗi · ${recheck.counts.WARNING} cảnh báo` : ""}{overridesList.length ? ` · ${overridesList.length} ô ghi đè` : ""}</span>
+            <span>{showValidation ? "▼ Ẩn" : "▲ Xem chi tiết"}</span>
+          </button>
+          {showValidation && <div className="mt-2 max-h-[40vh] overflow-auto"><ValidationPanel result={recheck} stale={stale} overrides={overridesList} onFocus={focusRow} /></div>}
+        </div>
+      )}
 
       {pending && (
         <PendingDropModal
@@ -596,5 +630,13 @@ export default function Planning() {
         </div>
       )}
     </div>
+  );
+
+  if (!editing) return body;
+  return createPortal(
+    <div className="fixed inset-0 z-[60] flex flex-col bg-white p-2 text-slate-900" data-testid="planning-focus">
+      {body}
+    </div>,
+    document.body,
   );
 }

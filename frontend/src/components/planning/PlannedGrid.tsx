@@ -16,6 +16,8 @@ interface Props {
   onRecalc: (xn: string, line: string, fromUid: string | null) => void;
   highlightUid: string | null;
   issueMap: Map<string, "ERROR" | "WARNING">;
+  fill?: boolean; // chiếm hết chiều cao còn lại (chế độ tập trung)
+  light?: boolean; // nền trắng chữ đen
 }
 
 const CTRL_W = 92;
@@ -24,6 +26,7 @@ type Sort = { key: string; dir: 1 | -1 } | null;
 type Over = { key: string; pos: "before" | "after" } | null;
 
 const RISK_TONE: Record<string, string> = { LATE: "#3d1b27", MATERIAL: "#3b3115", ADVANCE: "#152f4a" };
+const RISK_TONE_LIGHT: Record<string, string> = { LATE: "#fee2e2", MATERIAL: "#fef3c7", ADVANCE: "#e0f2fe" };
 const RISK_LABEL: Record<string, string> = { LATE: "Nguy cơ trễ", MATERIAL: "Thiếu NPL", ADVANCE: "Sớm" };
 
 function onTimeClass(v: string | undefined): string {
@@ -34,7 +37,7 @@ function onTimeClass(v: string | undefined): string {
   return "";
 }
 
-export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow, onRecalc, highlightUid, issueMap }: Props) {
+export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow, onRecalc, highlightUid, issueMap, fill, light }: Props) {
   const cols = PLANNED_COLS;
   const cw = useColumnWidths("dvt_cols_planned", cols.map((c) => ({ key: c.key, w: c.w })));
   const [sort, setSort] = useState<Sort>(null);
@@ -204,7 +207,7 @@ export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow,
   const visibleCount = allVisible.length;
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white shadow-sm" data-testid="planned-grid">
+    <section className={`rounded-2xl border border-slate-200 bg-white shadow-sm ${fill ? "flex min-h-0 flex-[3] flex-col" : ""}`} data-testid="planned-grid">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
         <div>
           <h2 className="text-sm font-bold text-slate-900">Kế hoạch vận hành (Planned)</h2>
@@ -241,7 +244,7 @@ export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow,
         </div>
       </div>
 
-      <div className="pg max-h-[62vh] overflow-auto">
+      <div className={`pg overflow-auto ${fill ? "min-h-0 flex-1" : "max-h-[62vh]"} ${light ? "pg-light" : ""}`}>
         <table style={{ width: totalWidth }}>
           <colgroup>
             <col style={{ width: CTRL_W }} />
@@ -307,7 +310,7 @@ export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow,
                               const issue = issueMap.get(r.row_uid);
                               const risk = r.ref?.risk;
                               const isSel = selected.has(r.row_uid);
-                              const tone = highlightUid === r.row_uid ? "#3730a3" : isSel ? "#25336d" : risk ? RISK_TONE[risk] : undefined;
+                              const tone = highlightUid === r.row_uid ? (light ? "#c7d2fe" : "#3730a3") : isSel ? (light ? "#e0e7ff" : "#25336d") : risk ? (light ? RISK_TONE_LIGHT : RISK_TONE)[risk] : undefined;
                               const rowKey = `${r.row_uid}#row`;
                               const flagColor = r._flag === "NEW" ? "#22c55e" : r._flag === "MOVED" ? "#0ea5e9" : r._flag === "EDITED" ? "#fbbf24" : "transparent";
                               const overrides = Object.keys(r.extra?.overrides ?? {});

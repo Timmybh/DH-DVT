@@ -133,6 +133,8 @@ export interface QaSummary {
 export interface HrOverview {
   available: boolean;
   total?: number;
+  company_total?: number;
+  company_teams?: number;
   as_of_text?: string;
   teams?: number;
   by_factory?: { code: string; name: string; total: number; teams?: number }[];

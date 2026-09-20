@@ -130,3 +130,32 @@ body { font-family: "Montserrat", "Segoe UI", system-ui, sans-serif; color: #e2e
 .pg-rz::after { content: ""; position: absolute; top: 6px; bottom: 6px; left: 3px; width: 2px; border-radius: 1px; background: rgba(148,163,184,.35); }
 .pg-rz:hover::after { background: #818cf8; }
 .pg tr.pg-lane-start td { border-top: 2px solid rgba(129,140,248,.35); }
+
+/* ===== Lưới ở chế độ tập trung (Edit Mode): nền trắng, chữ đen ===== */
+.pg.pg-light { color: #0f172a; background: #ffffff; border-radius: 0 0 16px 16px; }
+.pg-light th, .pg-light td { border-bottom-color: rgba(15,23,42,.10); border-right-color: rgba(15,23,42,.06); }
+.pg-light thead th { background: #eef2f7; color: #475569; }
+.pg-light tr.pg-row td { background: var(--row-bg, #ffffff); color: #0f172a; }
+.pg-light tr.pg-row:hover td { background: color-mix(in srgb, var(--row-bg, #ffffff) 85%, #6366f1); }
+.pg-light .pg-filter { background: #ffffff !important; border-color: #cbd5e1 !important; color: #0f172a; }
+.pg-light .pg-filter::placeholder { color: #94a3b8; }
+.pg-light .pg-gf td { background: #dbe4f5; color: #0f172a; }
+.pg-light .pg-gl td { background: #e8eef9; color: #0f172a; }
+.pg-light .pg-end td { background: #f1f5f9; color: #64748b; }
+.pg-light .pg-meta, .pg-light .pg-caret { color: #475569; }
+.pg-light .pg-handle, .pg-light .pg-exp { color: #64748b; }
+.pg-light .pg-detail td { background: #f8fafc; }
+.pg-light .pg-detail-in dt { color: #64748b; }
+.pg-light .pg-detail-in dd { color: #0f172a; }
+.pg-light .pg-btn { border-color: #64748b; color: #0f172a; }
+.pg-light .pg-btn:hover { background: #e2e8f0; }
+.pg-light .pg-ok { background: #dcfce7; color: #166534; }
+.pg-light .pg-adv { background: #e0f2fe; color: #075985; }
+.pg-light .pg-late { background: #fee2e2; color: #991b1b; }
+.pg-light .pg-viol { background: #ede9fe; color: #5b21b6; }
+.pg-light .pg-known { background: #e0e7ff; color: #3730a3; }
+.pg-light .pg-unk { background: #e2e8f0; color: #334155; }
+.pg-light .pg-ovr { color: #c2410c; }
+.pg-light tr.pg-lane-start td { border-top-color: rgba(79,70,229,.35); }
+.pg-light .pg-rz::after { background: rgba(100,116,139,.45); }
+.pg-light.pg-zone-over { outline-color: #4f46e5; }

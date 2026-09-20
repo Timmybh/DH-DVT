@@ -17,6 +17,7 @@ export const PLANNING_TABS: TabDef[] = [
 ];
 
 export const ADMIN_TABS: TabDef[] = [
+  { to: "/admin/alerts", label: "Cảnh báo", perm: "sync.view" },
   { to: "/admin/sync", label: "Sync Log", perm: "sync.view" },
   { to: "/admin/dashboard", label: "Cấu hình Dashboard", perm: "dashboard.config_view" },
   { to: "/admin/users", label: "Người dùng", perm: "admin.user_manage" },

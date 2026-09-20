@@ -41,9 +41,11 @@ interface Props {
   drag: MutableRefObject<DragInfo>;
   onRows: (rows: UnplannedDto[]) => void;
   onDropPlanned: (uid: string) => void; // thả dòng Planned xuống đây = trả về Unplanned
+  fill?: boolean;
+  light?: boolean;
 }
 
-export default function UnplannedPanel({ baseVersionId, factories, editable, excludeIds, excludeReturned, extraRows, reloadKey, drag, onRows, onDropPlanned }: Props) {
+export default function UnplannedPanel({ baseVersionId, factories, editable, excludeIds, excludeReturned, extraRows, reloadKey, drag, onRows, onDropPlanned, fill, light }: Props) {
   const [filters, setFilters] = useState<UnplannedFilters>(loadFilters);
   const [facets, setFacets] = useState<{ customers: string[]; seasons: string[]; sports: string[] }>({ customers: [], seasons: [], sports: [] });
   const [data, setData] = useState<{ total: number; rows: UnplannedDto[] }>({ total: 0, rows: [] });
@@ -113,7 +115,7 @@ export default function UnplannedPanel({ baseVersionId, factories, editable, exc
   const input = "rounded-md border border-slate-200 bg-white px-2 py-1 text-xs";
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white shadow-sm" data-testid="unplanned-panel">
+    <section className={`rounded-2xl border border-slate-200 bg-white shadow-sm ${fill ? "flex min-h-0 flex-[2] flex-col" : ""}`} data-testid="unplanned-panel">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
         <div>
           <h2 className="text-sm font-bold text-slate-900">Chưa lên KH (Unplanned)</h2>
@@ -164,7 +166,7 @@ export default function UnplannedPanel({ baseVersionId, factories, editable, exc
       </div>
 
       <div
-        className={`pg max-h-[38vh] overflow-auto ${dropOver ? "pg-zone-over" : ""}`}
+        className={`pg overflow-auto ${fill ? "min-h-0 flex-1" : "max-h-[38vh]"} ${light ? "pg-light" : ""} ${dropOver ? "pg-zone-over" : ""}`}
         data-testid="unplanned-grid"
         onDragOver={(e) => {
           if (editable && drag.current?.kind === "row") {
@@ -210,7 +212,7 @@ export default function UnplannedPanel({ baseVersionId, factories, editable, exc
               <tr
                 key={r.returned ? `ret-${r.row_uid}` : r.id}
                 className="pg-row"
-                style={{ ["--row-bg" as string]: r.returned ? "#2a2350" : r.factory_assignment === "UNASSIGNED" ? "#1a1f33" : undefined }}
+                style={{ ["--row-bg" as string]: r.returned ? (light ? "#ede9fe" : "#2a2350") : r.factory_assignment === "UNASSIGNED" ? (light ? "#f1f5f9" : "#1a1f33") : undefined }}
                 draggable={editable}
                 onDragStart={(e) => {
                   e.dataTransfer.setData("text/plain", String(r.id));

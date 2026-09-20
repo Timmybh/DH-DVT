@@ -27,18 +27,23 @@ export default function QaSection({ data, onDrill }: Props) {
         <p className="text-sm text-slate-500">Chưa có dữ liệu QA từ eGMF — bấm "Đồng bộ ngay" ở Quản trị → Sync Log.</p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[520px] border-separate border-spacing-y-1.5 text-sm" data-testid="qa-matrix">
+          <table className="w-full min-w-[560px] table-fixed border-separate border-spacing-y-2 text-sm" data-testid="qa-matrix">
+            <colgroup>
+              <col style={{ width: 96 }} />
+              {cats.map((c) => <col key={c.key} />)}
+              <col />
+            </colgroup>
             <thead>
               <tr className="text-xs uppercase text-slate-400">
-                <th className="w-24 pb-1 text-left font-semibold">Xí nghiệp</th>
+                <th className="pb-1 pl-2 text-left font-semibold">Xí nghiệp</th>
                 {cats.map((c) => (
-                  <th key={c.key} className="pb-1 text-right font-semibold">
+                  <th key={c.key} className="px-4 pb-1 text-right font-semibold">
                     <button onClick={() => c.connected && onDrill(c.key)} disabled={!c.connected} data-testid={`qa-${c.key}`} className="uppercase hover:text-slate-200 disabled:cursor-default" title={c.connected ? "Xem theo ngày" : "Chưa kết nối"}>
                       {c.label}
                     </button>
                   </th>
                 ))}
-                <th className="pb-1 text-right font-semibold">Tổng</th>
+                <th className="px-4 pb-1 text-right font-semibold">Tổng</th>
               </tr>
             </thead>
             <tbody>
@@ -53,24 +58,26 @@ export default function QaSection({ data, onDrill }: Props) {
                     {cats.map((c) => {
                       const v = countOf(c, code);
                       return (
-                        <td key={c.key} className={`relative py-2 pr-2 text-right tabular-nums ${selected ? "bg-indigo-500/15" : ""}`} data-testid={`qa-cell-${code}-${c.key}`}>
-                          {c.connected && (
-                            <span className="absolute inset-y-1 right-0 rounded-l opacity-30" style={{ width: `${(v / colMax(c)) * 100}%`, background: FACTORY_COLOR[code] ?? "#94a3b8" }} aria-hidden />
-                          )}
-                          <span className="relative font-semibold">{c.connected ? num(v) : "—"}</span>
+                        <td key={c.key} className="px-3 py-0.5" data-testid={`qa-cell-${code}-${c.key}`}>
+                          <div className={`relative overflow-hidden rounded-lg px-4 py-2 text-right tabular-nums ${selected ? "ring-1 ring-indigo-400/60" : ""}`}>
+                            {c.connected && (
+                              <span className="absolute inset-y-0 right-0 rounded-lg opacity-30" style={{ width: `${Math.max(v > 0 ? 4 : 0, (v / colMax(c)) * 100)}%`, background: FACTORY_COLOR[code] ?? "#94a3b8" }} aria-hidden />
+                            )}
+                            <span className="relative font-semibold">{c.connected ? num(v) : "—"}</span>
+                          </div>
                         </td>
                       );
                     })}
-                    <td className={`rounded-r-lg py-2 pr-2 text-right font-bold tabular-nums ${selected ? "bg-indigo-500/15" : ""}`}>{num(rowTotal(code))}</td>
+                    <td className={`rounded-r-lg px-7 py-2 text-right font-bold tabular-nums ${selected ? "bg-indigo-500/15" : ""}`}>{num(rowTotal(code))}</td>
                   </tr>
                 );
               })}
               <tr className="border-t border-slate-200 text-slate-500">
                 <td className="pl-2 pt-1 text-xs font-semibold uppercase">Cộng</td>
                 {cats.map((c) => (
-                  <td key={c.key} className="pr-2 pt-1 text-right text-xs font-bold tabular-nums">{c.connected ? num(c.total) : "—"}</td>
+                  <td key={c.key} className="px-7 pt-1 text-right text-xs font-bold tabular-nums">{c.connected ? num(c.total) : "—"}</td>
                 ))}
-                <td className="pr-2 pt-1 text-right text-xs font-bold tabular-nums">{num(cats.reduce((s, c) => s + (c.total ?? 0), 0))}</td>
+                <td className="px-7 pt-1 text-right text-xs font-bold tabular-nums">{num(cats.reduce((s, c) => s + (c.total ?? 0), 0))}</td>
               </tr>
             </tbody>
           </table>

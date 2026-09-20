@@ -19,14 +19,15 @@ export default function HrSection({ data, onDrill }: Props) {
     );
   }
   const factories = data.by_factory ?? [];
-  const total = Math.max(1, data.total ?? 0);
+  const companyTotal = data.company_total ?? data.total ?? 0;
+  const total = Math.max(1, companyTotal);
   return (
     <Section
       title="Tình hình nhân sự"
-      subtitle={`${data.as_of_text || "Lao động có mặt"} · tổng ${num(data.total)} lao động · ${num(data.teams)} tổ/chuyền`}
+      subtitle={data.as_of_text || "Lao động có mặt"}
       right={<button onClick={onDrill} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">Xem theo tổ</button>}
     >
-      <div className={`grid gap-3 ${factories.length > 1 ? "grid-cols-1 sm:grid-cols-3" : "grid-cols-1"}`} data-testid="hr-cards">
+      <div className={`grid gap-3 ${factories.length > 1 ? "grid-cols-1 sm:grid-cols-2 lg:grid-cols-4" : "grid-cols-1 sm:grid-cols-2"}`} data-testid="hr-cards">
         {factories.map((f) => (
           <button
             key={f.code}
@@ -48,6 +49,22 @@ export default function HrSection({ data, onDrill }: Props) {
             </div>
           </button>
         ))}
+        <button
+          onClick={onDrill}
+          data-testid="hr-card-TONG"
+          className="rounded-xl border border-slate-200 bg-indigo-500/10 p-4 text-left transition hover:shadow-md"
+          style={{ borderTop: "4px solid #a78bfa" }}
+          aria-label={`Tổng công ty: ${companyTotal} lao động`}
+        >
+          <p className="text-xs font-semibold uppercase text-slate-400">Tổng công ty</p>
+          <p className="mt-1 text-4xl font-bold tabular-nums text-slate-900">{num(companyTotal)}</p>
+          <p className="text-[11px] text-slate-400">lao động có mặt</p>
+          <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
+            <span>{num(data.company_teams ?? data.teams ?? 0)} tổ/chuyền</span>
+            <span>100%</span>
+          </div>
+          <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-500/20"><div className="h-full w-full rounded-full" style={{ background: "#a78bfa" }} /></div>
+        </button>
       </div>
     </Section>
   );

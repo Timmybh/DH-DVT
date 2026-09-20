@@ -250,22 +250,22 @@ def hr_overview(db: Session, factories: list[Factory], is_total: bool) -> dict:
     batch = current_batch(db)
     if batch is None:
         return {"available": False}
-    fids = [f.id for f in factories]
-    q = db.query(LaborHeadcount).filter(LaborHeadcount.batch_id == batch.id)
-    if not is_total:
-        q = q.filter(LaborHeadcount.factory_id.in_(fids))
-    rows = q.all()
+    rows = db.query(LaborHeadcount).filter(LaborHeadcount.batch_id == batch.id).all()
     by_fid: dict[int | None, int] = {}
     teams_fid: dict[int | None, int] = {}
     for r in rows:
         by_fid[r.factory_id] = by_fid.get(r.factory_id, 0) + r.headcount
         teams_fid[r.factory_id] = teams_fid.get(r.factory_id, 0) + 1
+    in_scope = {f.id for f in factories}
+    scoped = rows if is_total else [r for r in rows if r.factory_id in in_scope]
     return {
         "available": True,
-        "total": sum(by_fid.values()),
+        "total": sum(r.headcount for r in scoped),  # theo phạm vi đang xem
+        "company_total": sum(by_fid.values()),  # Tổng công ty luôn cộng dồn tất cả xí nghiệp
+        "company_teams": len(rows),
         "as_of_text": (rows[0].as_of_text if rows else "") or "",
         "by_factory": [{"code": f.code, "name": f.name, "total": by_fid.get(f.id, 0), "teams": teams_fid.get(f.id, 0)} for f in factories],
-        "teams": len(rows),
+        "teams": len(scoped),
     }
 
 
