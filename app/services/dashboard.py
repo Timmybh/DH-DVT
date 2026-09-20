@@ -18,6 +18,9 @@ from app.models.data import (
     LaborHeadcount,
     PlanImportBatch,
     PlanRow,
+    PoPackDaily,
+    PoProgress,
+    QaDefectDaily,
     RevenueDaily,
     RevenueMonthly,
     RevenueYearly,
@@ -369,3 +372,139 @@ def drill_hr(db: Session, factories: list[Factory], is_total: bool) -> dict:
         q = q.filter(LaborHeadcount.factory_id.in_([f.id for f in factories]))
     rows = q.order_by(LaborHeadcount.factory_id, LaborHeadcount.team).all()
     return {"rows": [{"factory": fmap.get(r.factory_id, "—"), "team": r.team, "headcount": r.headcount, "as_of": r.as_of_text} for r in rows]}
+
+
+# ---------------------------------------------------------------- Order Progress (thực tế từ eGMF)
+def _fg_excluded() -> set[str]:
+    return {c.strip().lower() for c in settings.progress_fg_excluded_customers.split(",") if c.strip()}
+
+
+def _po_units(db: Session, factories: list[Factory], kind: str) -> list[dict]:
+    """Gom theo (PO, xí nghiệp): PO hoàn thành khi MỌI chuyền có SL đều đã đạt đủ; ngày hoàn thành = ngày muộn nhất; hạn giao = sớm nhất."""
+    fids = [f.id for f in factories]
+    fcode = {f.id: f.code for f in factories}
+    excluded = _fg_excluded() if kind == "FG" else set()
+    packs: dict[str, list[tuple[date, int]]] = {}
+    if kind == "FG":
+        for po, day, qty in db.query(PoPackDaily.po, PoPackDaily.day, PoPackDaily.qty).order_by(PoPackDaily.day):
+            packs.setdefault(po, []).append((day, qty))
+    groups: dict[tuple[str, int], list[PoProgress]] = {}
+    for r in db.query(PoProgress).filter(PoProgress.factory_id.in_(fids)):
+        if kind == "FG" and (r.customer or "").strip().lower() in excluded:
+            continue
+        groups.setdefault((r.po, r.factory_id), []).append(r)
+    out = []
+    for (po, fid), lines in groups.items():
+        live = [x for x in lines if x.qty > 0] or lines
+        if kind == "FG" and po in packs:
+            # nhập kho/đóng gói hoàn tất = ngày đầu tiên số lượng đóng gói đã xác nhận (lũy kế) đạt tổng SL đơn
+            need, run_total, fg_day = sum(x.qty for x in live), 0, None
+            for day, q in packs[po]:
+                run_total += q
+                if need > 0 and run_total >= need:
+                    fg_day = day
+                    break
+            done_dates = [fg_day]
+        else:
+            done_dates = [(x.sewn_done_date if kind == "SEWN" else x.fg_done_date) for x in live]
+        complete = all(d is not None for d in done_dates)
+        dues = [x.due_date for x in lines if x.due_date]
+        out.append({
+            "po": po, "factory": fcode[fid], "customer": lines[0].customer, "style": lines[0].style, "qty": sum(x.qty for x in live),
+            "done_date": max(done_dates) if complete else None, "due_date": min(dues) if dues else None, "lines": len(lines),
+            "last_seen": max((x.last_seen for x in lines if x.last_seen), default=None),
+        })
+    return out
+
+
+def _status(u: dict) -> str | None:
+    if u["done_date"] is None:
+        return None
+    if u["due_date"] is None:
+        return "NO_DUE"
+    return "ON_TIME" if u["done_date"] <= u["due_date"] else "LATE"
+
+
+ACTIVE_WINDOW_DAYS = 30  # PO không còn xuất hiện trong báo cáo eGMF quá 30 ngày được coi là đã đóng/không theo dõi
+
+
+def _is_overdue_open(u: dict, today: date) -> bool:
+    if u["done_date"] is not None or not u["due_date"] or u["due_date"] >= today:
+        return False
+    return u.get("last_seen") is not None and (today - u["last_seen"]).days <= ACTIVE_WINDOW_DAYS
+
+
+def order_kpi(db: Session, factories: list[Factory], year: int, month: int, today: date) -> dict:
+    first, last = month_bounds(year, month)
+    out: dict = {"month": f"{year}-{month:02d}", "has_data": db.query(PoProgress.id).first() is not None}
+    for kind, key in (("SEWN", "sewing"), ("FG", "fg")):
+        units = _po_units(db, factories, kind)
+        counts = {"ON_TIME": 0, "LATE": 0, "NO_DUE": 0}
+        for u in units:
+            if u["done_date"] and first <= u["done_date"] <= last:
+                counts[_status(u)] += 1
+        overdue = sum(1 for u in units if _is_overdue_open(u, today))
+        out[key] = {"on_time": counts["ON_TIME"], "late": counts["LATE"], "no_due": counts["NO_DUE"], "overdue_open": overdue}
+    out["fg_excluded_customers"] = sorted(c for c in settings.progress_fg_excluded_customers.split(",") if c.strip())
+    latest = db.query(func.max(PoProgress.last_seen)).scalar()
+    out["as_of"] = latest.isoformat() if latest else None
+    return out
+
+
+def drill_order(db: Session, factories: list[Factory], kind: str, status: str, year: int, month: int, today: date) -> dict:
+    first, last = month_bounds(year, month)
+    units = _po_units(db, factories, "SEWN" if kind == "SEWING" else "FG")
+    rows = []
+    for u in units:
+        if status == "OVERDUE":
+            if not _is_overdue_open(u, today):
+                continue
+        elif not (u["done_date"] and first <= u["done_date"] <= last and _status(u) == status):
+            continue
+        if u["done_date"] and u["due_date"]:
+            diff = (u["done_date"] - u["due_date"]).days
+        elif u["due_date"]:
+            diff = (today - u["due_date"]).days
+        else:
+            diff = None
+        rows.append({**u, "done_date": u["done_date"].isoformat() if u["done_date"] else None, "due_date": u["due_date"].isoformat() if u["due_date"] else None, "days_diff": diff})
+    rows.sort(key=lambda r: (-(r["days_diff"] or 0), r["po"]))
+    return {"kind": kind, "status": status, "month": f"{year}-{month:02d}", "total": len(rows), "rows": rows[:500]}
+
+
+# ---------------------------------------------------------------- QA (Total Defect Count)
+QA_LABELS = [("DAU_CHUYEN", "Đầu chuyền"), ("QC", "QC"), ("INLINE", "Inline"), ("ENDLINE", "Endline"), ("PREFINAL", "Prefinal (Final)")]
+
+
+def qa_summary(db: Session, all_factories: list[Factory], selected: list[Factory], is_total: bool, year: int, month: int) -> dict:
+    first, last = month_bounds(year, month)
+    rows = (
+        db.query(QaDefectDaily.category, QaDefectDaily.factory_id, func.sum(QaDefectDaily.defect_count))
+        .filter(QaDefectDaily.day >= first, QaDefectDaily.day <= last)
+        .group_by(QaDefectDaily.category, QaDefectDaily.factory_id)
+        .all()
+    )
+    data = {(c, f): int(n or 0) for c, f, n in rows}
+    cats = []
+    for key, label in QA_LABELS:
+        connected = key != "QC"
+        by = [{"code": f.code, "count": data.get((key, f.id), 0) if connected else None} for f in all_factories]
+        cats.append({"key": key, "label": label, "connected": connected, "by_factory": by, "total": sum(b["count"] or 0 for b in by) if connected else None})
+    latest = db.query(func.max(QaDefectDaily.day)).scalar()
+    return {"month": f"{year}-{month:02d}", "categories": cats, "selected": None if is_total else selected[0].code, "latest_day": latest.isoformat() if latest else None,
+            "has_data": latest is not None, "note_qc": "Nhóm QC nằm trên DB hipro — chưa kết nối."}
+
+
+def drill_qa(db: Session, all_factories: list[Factory], category: str, year: int, month: int) -> dict:
+    first, last = month_bounds(year, month)
+    fcode = {f.id: f.code for f in all_factories}
+    q = db.query(QaDefectDaily).filter(QaDefectDaily.day >= first, QaDefectDaily.day <= last)
+    if category != "ALL":
+        q = q.filter(QaDefectDaily.category == category)
+    by_day: dict[date, dict[str, int]] = {}
+    for r in q:
+        by_day.setdefault(r.day, {c: 0 for c in fcode.values()})
+        by_day[r.day][fcode[r.factory_id]] = by_day[r.day].get(fcode[r.factory_id], 0) + r.defect_count
+    rows = [{"day": d.isoformat(), **v, "total": sum(v.values())} for d, v in sorted(by_day.items())]
+    label = dict(QA_LABELS).get(category, "Tất cả nhóm")
+    return {"category": category, "label": label, "month": f"{year}-{month:02d}", "factories": [f.code for f in all_factories], "rows": rows}

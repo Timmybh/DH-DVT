@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, Drill, errorMessage, Overview, Signal } from "../api/client";
+import OrderKpiSection from "../components/OrderKpiSection";
+import QaSection from "../components/QaSection";
 import DrillDrawer, { DrillTarget } from "../components/DrillDrawer";
 import HrSection from "../components/HrSection";
 import ProgressSection from "../components/ProgressSection";
@@ -126,6 +128,8 @@ export default function Dashboard() {
         <div className="flex flex-col gap-5 xl:flex-row xl:items-start">
           <div className="min-w-0 flex-1 space-y-5">
             <RevenueSection data={overview.revenue} onDrill={(code) => setDrill({ type: "revenue", month: overview.month, scope: code })} />
+            <OrderKpiSection data={overview.order_kpi} onDrill={(kind, status) => setDrill({ type: "order", kind, status, month: overview.month })} />
+            <QaSection data={overview.qa} onDrill={(category) => setDrill({ type: "qa", category, month: overview.month })} />
             <ProgressSection data={overview.progress} onDrill={(risk) => setDrill({ type: "po", risk })} />
             <HrSection data={overview.hr} onDrill={() => setDrill({ type: "hr" })} />
           </div>

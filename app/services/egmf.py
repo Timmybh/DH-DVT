@@ -250,6 +250,21 @@ def _sync(db: Session, run: SyncRun) -> None:
     unmatched_total += len(bad)
     updated += len(rows)
 
+    # ---- Vận hành: tiến độ PO + QA (lỗi phần này không làm hỏng doanh thu)
+    try:
+        from app.services.egmf_ops import sync_ops
+
+        with get_engine().connect() as conn_ops:
+            ops = sync_ops(db, run, conn_ops, fmap)
+        objects.extend(ops["objects"])
+        matched_total += ops["rows"]
+        unmatched_total += ops["unmatched"] + ops["errors"]
+        updated += ops["rows"]
+    except Exception as exc:  # noqa: BLE001
+        log.exception("Đồng bộ vận hành eGMF lỗi")
+        add_items(db, run.id, "ERROR", "QA / Tiến độ eGMF", [("kết nối", f"Không đồng bộ được phần vận hành: {str(exc)[:180]}", {})])
+        unmatched_total += 1
+
     if matched_total > 0:
         for model in (RevenueDaily, RevenueMonthly, RevenueYearly):
             db.query(model).filter(model.source == "DEMO").delete()

@@ -106,6 +106,30 @@ export interface ProgressOverview {
   by_factory?: { code: string; name: string; po: number; qty: number; ok: number; advance: number; late: number; material: number }[];
 }
 
+export interface OrderKpiBucket {
+  on_time: number;
+  late: number;
+  no_due: number;
+  overdue_open: number;
+}
+
+export interface OrderKpi {
+  month: string;
+  has_data: boolean;
+  as_of: string | null;
+  sewing: OrderKpiBucket;
+  fg: OrderKpiBucket;
+  fg_excluded_customers: string[];
+}
+
+export interface QaSummary {
+  month: string;
+  has_data: boolean;
+  latest_day: string | null;
+  selected: string | null;
+  categories: { key: string; label: string; connected: boolean; total: number | null; by_factory: { code: string; count: number | null }[] }[];
+}
+
 export interface HrOverview {
   available: boolean;
   total?: number;
@@ -133,6 +157,8 @@ export interface Overview {
   revenue: RevenueOverview;
   progress: ProgressOverview;
   hr: HrOverview;
+  order_kpi: OrderKpi;
+  qa: QaSummary;
   sync: { revenue: SyncBrief | null; plan: SyncBrief | null };
 }
 

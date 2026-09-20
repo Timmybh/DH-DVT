@@ -3,7 +3,14 @@ import { api, errorMessage } from "../api/client";
 import { dateVi, num } from "../lib/format";
 import RevenueDetail from "./RevenueDetail";
 
-export type DrillTarget = { type: "po"; risk: string } | { type: "revenue"; month: string; scope?: string } | { type: "hr" };
+export type DrillTarget =
+  | { type: "po"; risk: string }
+  | { type: "revenue"; month: string; scope?: string }
+  | { type: "hr" }
+  | { type: "order"; kind: "SEWING" | "FG"; status: "ON_TIME" | "LATE" | "OVERDUE"; month: string }
+  | { type: "qa"; category: string; month: string };
+
+const ORDER_TITLE: Record<string, string> = { ON_TIME: "đúng hạn", LATE: "trễ hạn", OVERDUE: "quá hạn giao nhưng chưa hoàn thành" };
 
 interface Props {
   target: DrillTarget | null;
@@ -40,7 +47,11 @@ export default function DrillDrawer({ target, scope, onClose }: Props) {
         ? api.get("/dashboard/drill/po", { params: { scope, risk: target.risk } })
         : target.type === "revenue"
           ? api.get("/dashboard/drill/revenue", { params: { scope: target.scope ?? scope, month: target.month } })
-          : api.get("/dashboard/drill/hr", { params: { scope } });
+          : target.type === "order"
+            ? api.get("/dashboard/drill/order", { params: { scope, kind: target.kind, status: target.status, month: target.month } })
+            : target.type === "qa"
+              ? api.get("/dashboard/drill/qa", { params: { category: target.category, month: target.month } })
+              : api.get("/dashboard/drill/hr", { params: { scope } });
     req
       .then((r) => setData(r.data))
       .catch((e) => setError(errorMessage(e)))
@@ -49,7 +60,15 @@ export default function DrillDrawer({ target, scope, onClose }: Props) {
 
   if (!target) return null;
   const title =
-    target.type === "po" ? RISK_TITLE[target.risk] ?? "Chi tiết PO" : target.type === "revenue" ? `Chi tiết doanh thu${target.scope && target.scope !== "TONG" ? ` ${target.scope}` : ""} — ${target.month}` : "Nhân sự theo tổ";
+    target.type === "po"
+      ? RISK_TITLE[target.risk] ?? "Chi tiết PO"
+      : target.type === "revenue"
+        ? `Chi tiết doanh thu${target.scope && target.scope !== "TONG" ? ` ${target.scope}` : ""} — ${target.month}`
+        : target.type === "order"
+          ? `PO ${target.kind === "SEWING" ? "may xong" : "nhập kho TP"} ${ORDER_TITLE[target.status]} — ${target.month}`
+          : target.type === "qa"
+            ? `Tổng số lỗi ${data?.label ?? ""} — ${target.month}`
+            : "Nhân sự theo tổ";
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/30" onClick={onClose}>
@@ -142,6 +161,75 @@ export default function DrillDrawer({ target, scope, onClose }: Props) {
                 {data.rows.length === 0 && (
                   <tr>
                     <td colSpan={data.codes.length + 3} className="py-6 text-center text-slate-400">Chưa có số liệu doanh thu ngày trong tháng này.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          )}
+
+          {data && target.type === "order" && (
+            <>
+              <p className="mb-2 text-xs text-slate-500">{num(data.total)} PO{data.total > data.rows.length ? ` · hiển thị ${data.rows.length} dòng đầu` : ""} · hạn giao = ngày xuất hàng trên ERP</p>
+              <table className="w-full min-w-[640px] text-left text-xs">
+                <thead className="sticky top-0 bg-white">
+                  <tr className="border-b border-slate-200 text-slate-400">
+                    <th className="py-2">XN</th>
+                    <th>PO</th>
+                    <th>Khách hàng</th>
+                    <th>Mã hàng</th>
+                    <th className="text-right">SL</th>
+                    <th>Hoàn thành</th>
+                    <th>Hạn giao</th>
+                    <th className="text-right">Chênh (ngày)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.rows.map((r: Json, i: number) => (
+                    <tr key={i} className="border-b border-slate-50">
+                      <td className="py-1.5 font-medium">{r.factory}</td>
+                      <td>{r.po}</td>
+                      <td>{r.customer}</td>
+                      <td>{r.style}</td>
+                      <td className="text-right">{num(r.qty)}</td>
+                      <td>{dateVi(r.done_date)}</td>
+                      <td>{dateVi(r.due_date)}</td>
+                      <td className={`text-right font-semibold ${r.days_diff !== null && r.days_diff > 0 ? "text-red-600" : "text-slate-700"}`}>{r.days_diff === null ? "—" : r.days_diff}</td>
+                    </tr>
+                  ))}
+                  {data.rows.length === 0 && (
+                    <tr>
+                      <td colSpan={8} className="py-6 text-center text-slate-400">Không có PO nào.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </>
+          )}
+
+          {data && target.type === "qa" && (
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 text-xs text-slate-400">
+                  <th className="py-2">Ngày</th>
+                  {data.factories.map((c: string) => (
+                    <th key={c} className="text-right">{c}</th>
+                  ))}
+                  <th className="text-right">Tổng</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.rows.map((r: Json) => (
+                  <tr key={r.day} className="border-b border-slate-50">
+                    <td className="py-1.5">{dateVi(r.day)}</td>
+                    {data.factories.map((c: string) => (
+                      <td key={c} className="text-right text-slate-600">{num(r[c])}</td>
+                    ))}
+                    <td className="text-right font-semibold">{num(r.total)}</td>
+                  </tr>
+                ))}
+                {data.rows.length === 0 && (
+                  <tr>
+                    <td colSpan={data.factories.length + 2} className="py-6 text-center text-slate-400">Chưa có số liệu lỗi trong tháng này.</td>
                   </tr>
                 )}
               </tbody>

@@ -165,3 +165,54 @@ class LaborHeadcount(Base):
     team: Mapped[str] = mapped_column(String(20), default="")
     headcount: Mapped[int] = mapped_column(Integer, default=0)
     as_of_text: Mapped[str] = mapped_column(String(100), default="")
+
+
+class QaDefectDaily(Base):
+    """Tổng số lỗi theo ngày / xí nghiệp / nhóm kiểm tra (Total Defect Count = số lần xuất hiện lỗi, không phải tỷ lệ sản phẩm lỗi)."""
+
+    __tablename__ = "qa_defect_daily"
+    __table_args__ = (UniqueConstraint("factory_id", "category", "day", name="uq_qa_defect_daily"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    factory_id: Mapped[int] = mapped_column(ForeignKey("factories.id"), index=True)
+    category: Mapped[str] = mapped_column(String(12), index=True)  # DAU_CHUYEN | INLINE | ENDLINE | PREFINAL
+    day: Mapped[date] = mapped_column(Date, index=True)
+    defect_count: Mapped[int] = mapped_column(Integer, default=0)
+    sync_run_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PoProgress(Base):
+    """Tiến độ thực tế theo PO/chuyền (snapshot mới nhất từ eGMF Report_BaoCaoMayRa): may xong, nhập kho TP, hạn giao."""
+
+    __tablename__ = "po_progress"
+    __table_args__ = (UniqueConstraint("po", "line", "factory_id", name="uq_po_progress"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    po: Mapped[str] = mapped_column(String(80), index=True)
+    line: Mapped[str] = mapped_column(String(20), default="")
+    factory_id: Mapped[int] = mapped_column(ForeignKey("factories.id"), index=True)
+    customer: Mapped[str] = mapped_column(String(100), default="")
+    style: Mapped[str] = mapped_column(String(60), default="")
+    qty: Mapped[int] = mapped_column(Integer, default=0)
+    sewn_qty: Mapped[int] = mapped_column(Integer, default=0)
+    fg_qty: Mapped[int] = mapped_column(Integer, default=0)
+    due_date: Mapped[date | None] = mapped_column(Date, nullable=True)  # NgayXuatHang
+    sewn_done_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    fg_done_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    last_seen: Mapped[date | None] = mapped_column(Date, nullable=True)
+    sync_run_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PoPackDaily(Base):
+    """Số lượng đóng gói đã xác nhận theo PO / ngày (eGMF Lib_XacNhanTemDongGoi: mỗi dòng = một thùng được quét xác nhận tem)."""
+
+    __tablename__ = "po_pack_daily"
+    __table_args__ = (UniqueConstraint("po", "day", name="uq_po_pack_daily"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    po: Mapped[str] = mapped_column(String(80), index=True)
+    day: Mapped[date] = mapped_column(Date)
+    qty: Mapped[int] = mapped_column(Integer, default=0)
+    sync_run_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

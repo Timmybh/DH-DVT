@@ -53,6 +53,8 @@ def overview(scope: str = "TONG", month: str | None = None, db: Session = Depend
         "revenue": _revenue_summary_payload(db, factories, is_total, year, mon, today),
         "progress": svc.progress_overview(db, factories, is_total),
         "hr": svc.hr_overview(db, factories, is_total),
+        "order_kpi": svc.order_kpi(db, factories, year, mon, today),
+        "qa": svc.qa_summary(db, svc.scope_factories(db, "TONG")[0], factories, is_total, year, mon),
         "sync": {
             "revenue": svc.sync_brief(svc.last_sync(db, "EGMF_REVENUE")),
             "plan": svc.sync_brief(svc.last_sync(db, "PLAN_EXCEL")),
@@ -87,6 +89,27 @@ def drill_revenue(scope: str = "TONG", month: str | None = None, db: Session = D
     year, mon = parse_month(month, today)
     factories, _is_total = svc.scope_factories(db, scope)
     return svc.drill_revenue(db, factories, year, mon)
+
+
+@router.get("/drill/order")
+def drill_order(
+    scope: str = "TONG",
+    kind: str = Query("SEWING", pattern="^(SEWING|FG)$"),
+    status: str = Query("LATE", pattern="^(ON_TIME|LATE|NO_DUE|OVERDUE)$"),
+    month: str | None = None,
+    db: Session = Depends(get_db),
+    _: User = Viewer,
+):
+    today = svc.today_local()
+    year, mon = parse_month(month, today)
+    factories, _is_total = svc.scope_factories(db, scope)
+    return svc.drill_order(db, factories, kind, status, year, mon, today)
+
+
+@router.get("/drill/qa")
+def drill_qa(category: str = Query("ALL", pattern="^(ALL|DAU_CHUYEN|INLINE|ENDLINE|PREFINAL)$"), month: str | None = None, db: Session = Depends(get_db), _: User = Viewer):
+    year, mon = parse_month(month, svc.today_local())
+    return svc.drill_qa(db, svc.scope_factories(db, "TONG")[0], category, year, mon)
 
 
 @router.get("/drill/hr")

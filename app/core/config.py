@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     sqlserver_driver: str = "ODBC Driver 18 for SQL Server"
 
     revenue_unit: str = "USD"
+    # Khách hàng KHÔNG quản lý nhập kho thành phẩm (phân tách bằng dấu phẩy) -> loại khỏi yêu cầu "nhập kho hoàn tất"
+    progress_fg_excluded_customers: str = ""
     timezone: str = "Asia/Ho_Chi_Minh"
     scheduler_enabled: bool = True
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
