@@ -253,8 +253,11 @@ export interface RowRef {
 }
 
 export interface PlanRowDto {
+  so_id?: number | null; // SO: danh tính nghiệp vụ (chỉ đọc)
+  so_number?: string;
+  so_description?: string;
   ref?: RowRef;
-  calc?: { off_days?: number | null; on_time?: string | null; sot?: number | null; total_sot?: number | null; output_date?: string | null; end_prod_date?: string | null; end_warehouse_import?: string | null }; // cột chỉ tính theo công thức (không lưu DB)
+  calc?: { off_days_detail?: { calculated: number | null; override: number | null; source: "EXCEL_IMPORT" | "MANUAL" | null; reason: string; by: string; at: string; effective: number | null; overridden: boolean }; off_days?: number | null; on_time?: string | null; sot?: number | null; total_sot?: number | null; output_date?: string | null; end_prod_date?: string | null; end_warehouse_import?: string | null }; // cột chỉ tính theo công thức (không lưu DB)
   row_uid: string;
   sequence: number;
   origin: "EXISTING" | "DRAFT_NEW";
@@ -284,6 +287,9 @@ export interface PlanRowDto {
 }
 
 export interface UnplannedDto {
+  so_id?: number | null;
+  so_number?: string;
+  so_description?: string;
   ref?: RowRef;
   returned?: boolean; // dòng đã được trả về Unplanned từ kế hoạch
   row_uid?: string;

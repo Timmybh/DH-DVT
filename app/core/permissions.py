@@ -22,6 +22,7 @@ ALL_PERMISSIONS = [
     "lifecycle.manage",
     "monitoring.view",
     "snapshot.view",
+    "so.manage",
     "theme.manage",
     "sync.view",
     "sync.run",

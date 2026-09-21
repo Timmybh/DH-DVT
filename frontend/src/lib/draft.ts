@@ -13,7 +13,9 @@ export type Op =
   | { type: "ADD_RETURNED"; rowUid: string; factory: string; line: string; afterRowUid: string | null }
   | { type: "MOVE"; rowUid: string; factory: string; line: string; afterRowUid: string | null }
   | { type: "EDIT_FIELD"; rowUid: string; field: string; value: unknown }
-  | { type: "RETURN_TO_AUTO_CALC"; rowUid: string; field: string };
+  | { type: "RETURN_TO_AUTO_CALC"; rowUid: string; field: string }
+  | { type: "SET_OFF_DAYS"; rowUid: string; value: number; reason: string; at: string }
+  | { type: "RESET_OFF_DAYS"; rowUid: string };
 
 export interface DraftRow extends PlanRowDto {
   _flag?: "NEW" | "MOVED" | "EDITED";
@@ -74,6 +76,7 @@ export function applyOpsLocal(
       const row: DraftRow = {
         row_uid: uid, sequence: 0, origin: "DRAFT_NEW", source_key: src.source_key, source_plan_row_id: src.id,
         factory_code: op.factory, primary_line: op.line, line_raw: op.line, line_assignments: [op.line], transfer: null,
+        so_id: src.so_id, so_number: src.so_number, so_description: src.so_description,
         po_number: src.po_number, style_cc: src.style_cc, model_code: src.model_code, description: src.description,
         customer: src.customer, sport: src.sport, season: src.season, quantity: src.quantity, capacity: src.capacity,
         total_day: src.capacity ? src.quantity / src.capacity : null, begin_prod_date: null, end_prod_date: null,
@@ -207,6 +210,19 @@ export function applyOpsLocal(
       }
       if (op.field === "transfer_effective_date" && row.transfer) row.transfer = { ...row.transfer, effective_date: (op.value as string) || null };
       else rec[op.field] = op.value === "" ? null : op.value;
+      row._flag = row._flag ?? "EDITED";
+    } else if (op.type === "SET_OFF_DAYS") {
+      // hiển thị tạm: giá trị áp dụng = giá trị ghi đè; ngày kết thúc do server tính lại khi Recheck
+      const row = byUid.get(op.rowUid);
+      if (!row) continue;
+      const prev = row.calc?.off_days_detail;
+      row.calc = { ...(row.calc ?? {}), off_days: op.value, off_days_detail: { calculated: prev?.calculated ?? null, override: op.value, source: "MANUAL", reason: op.reason, by: "", at: op.at, effective: op.value, overridden: true } };
+      row._flag = row._flag ?? "EDITED";
+    } else if (op.type === "RESET_OFF_DAYS") {
+      const row = byUid.get(op.rowUid);
+      if (!row) continue;
+      const prev = row.calc?.off_days_detail;
+      row.calc = { ...(row.calc ?? {}), off_days: prev?.calculated ?? null, off_days_detail: { calculated: prev?.calculated ?? null, override: null, source: null, reason: "", by: "", at: "", effective: prev?.calculated ?? null, overridden: false } };
       row._flag = row._flag ?? "EDITED";
     } else if (op.type === "RETURN_TO_AUTO_CALC") {
       const row = byUid.get(op.rowUid);

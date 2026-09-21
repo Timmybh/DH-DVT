@@ -23,6 +23,10 @@ class WorkingCalendarRule(Base):
     month_day: Mapped[int | None] = mapped_column(Integer, nullable=True)  # lặp hằng tháng / hằng năm: ngày trong tháng (1–31)
     valid_from: Mapped[date | None] = mapped_column(Date, nullable=True)  # giới hạn hiệu lực của quy tắc lặp (VD trong năm 2027); trống = mọi năm
     valid_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    status: Mapped[str] = mapped_column(String(10), default="ACTIVE", index=True)  # ACTIVE | INACTIVE — không xóa; Inactive không tham gia tính nhưng giữ lịch sử/Audit
+    status_changed_by: Mapped[str] = mapped_column(String(100), default="")
+    status_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status_reason: Mapped[str] = mapped_column(String(200), default="")
     note: Mapped[str] = mapped_column(String(200), default="")
     created_by: Mapped[str] = mapped_column(String(100), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -114,6 +118,7 @@ class PlanningVersionRow(Base):
     origin: Mapped[str] = mapped_column(String(14), default="EXISTING")  # EXISTING | DRAFT_NEW
     source_key: Mapped[str] = mapped_column(String(300), default="", index=True)  # khóa nghiệp vụ ổn định (§25)
     source_plan_row_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # chỉ tham chiếu kỹ thuật phụ
+    so_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # SO: danh tính cấp business order; row_uid là danh tính cấp Planning Row
     factory_code: Mapped[str] = mapped_column(String(20), default="")
     primary_line: Mapped[str] = mapped_column(String(20), default="")
     line_raw: Mapped[str] = mapped_column(String(60), default="")  # chuỗi hiển thị "4 + 5 + 9" (chỉ để trình bày)

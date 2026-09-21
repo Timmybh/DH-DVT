@@ -12,6 +12,7 @@ import Versions from "./pages/Versions";
 import ColumnConfig from "./pages/planning/ColumnConfig";
 import Actual from "./pages/planning/Actual";
 import Resources from "./pages/planning/Resources";
+import SalesOrders from "./pages/planning/SalesOrders";
 import SyncDetail from "./pages/SyncDetail";
 import SyncLog from "./pages/SyncLog";
 import Alerts from "./pages/admin/Alerts";
@@ -61,13 +62,14 @@ export default function App() {
       <Route path="/planning/resources/:section" element={<Protected perm="planning.view"><SubTabs tabs={PLANNING_TABS}><Resources /></SubTabs></Protected>} />
       <Route path="/planning/actual" element={<Navigate to="/planning/actual/plan-vs-actual" replace />} />
       <Route path="/planning/actual/:section" element={<Protected perm="mapping.view"><SubTabs tabs={PLANNING_TABS}><Actual /></SubTabs></Protected>} />
+      <Route path="/planning/so" element={<Protected perm="planning.view"><SubTabs tabs={PLANNING_TABS}><SalesOrders /></SubTabs></Protected>} />
       <Route path="/planning/columns" element={<Protected perm="planning.view"><SubTabs tabs={PLANNING_TABS}><ColumnConfig /></SubTabs></Protected>} />
       <Route path="/admin" element={<AdminIndex />} />
       <Route path="/admin/dashboard" element={<Navigate to="/admin/dashboard/indicators" replace />} />
       <Route path="/admin/dashboard/:section" element={<Protected perm="dashboard.config_view"><SubTabs tabs={ADMIN_TABS}><DashboardConfig /></SubTabs></Protected>} />
-      <Route path="/admin/alerts" element={<Protected perm="sync.view"><SubTabs tabs={ADMIN_TABS}><Alerts /></SubTabs></Protected>} />
-      <Route path="/admin/sync" element={<Protected perm="sync.view"><SubTabs tabs={ADMIN_TABS}><SyncLog /></SubTabs></Protected>} />
-      <Route path="/admin/sync/:runId" element={<Protected perm="sync.view"><SubTabs tabs={ADMIN_TABS}><SyncDetail /></SubTabs></Protected>} />
+      <Route path="/admin/alerts" element={<Protected perm="monitoring.view"><SubTabs tabs={ADMIN_TABS}><Alerts /></SubTabs></Protected>} />
+      <Route path="/admin/sync" element={<Protected perm="monitoring.view"><SubTabs tabs={ADMIN_TABS}><SyncLog /></SubTabs></Protected>} />
+      <Route path="/admin/sync/:runId" element={<Protected perm="monitoring.view"><SubTabs tabs={ADMIN_TABS}><SyncDetail /></SubTabs></Protected>} />
       <Route path="/admin/users" element={<Protected perm="admin.user_manage"><SubTabs tabs={ADMIN_TABS}><Users /></SubTabs></Protected>} />
       <Route path="/admin/snapshots" element={<Protected perm="snapshot.view"><SubTabs tabs={ADMIN_TABS}><Snapshots /></SubTabs></Protected>} />
       <Route path="/admin/monitoring" element={<Protected perm="monitoring.view"><SubTabs tabs={ADMIN_TABS}><Monitoring /></SubTabs></Protected>} />

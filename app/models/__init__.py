@@ -2,6 +2,7 @@ from app.models.actual import ActualMapping, ActualObservation
 from app.models.lifecycle import CarryForwardItem, YearArchive, YearCarryForward
 from app.models.theme import ThemeSetting
 from app.models.labor_snapshot import LaborSnapshot, LaborSnapshotLine
+from app.models.so import PlanningSO, PlanningSOExternalIdentity, SOSequence
 from app.models.core import AuditLog, Factory, SsoConfig, SyncConfig, User
 from app.models.data import (
     LaborHeadcount,
@@ -27,6 +28,9 @@ from app.models.resources import CapacityDefinition, LaborDaily, MachineCapacity
 from app.models.planning import CalendarDayType, FormulaDefinition, PlanColumn, PlanningEditSession, PlanningVersion, PlanningVersionRow, WorkingCalendarRule
 
 __all__ = [
+    "PlanningSO",
+    "PlanningSOExternalIdentity",
+    "SOSequence",
     "LaborSnapshot",
     "LaborSnapshotLine",
     "CalendarDayType",

@@ -117,19 +117,24 @@ def test_reconcile_keeps_manual_and_ignored_and_can_reset():
     assert (res["MATCHED"], res["REVIEW"], res["UNMATCHED"]) == (1, 2, 1)
     review = db.query(ActualMapping).filter(ActualMapping.po == "PO3").one()
     assert review.status == "REVIEW" and set(review.candidates) == {"c", "d"}
-    svc.set_manual(db, review.id, "d", "planner")
+    svc.set_manual(db, review.id, "d", "planner", "đúng dòng")
     svc.set_ignored(db, db.query(ActualMapping).filter(ActualMapping.po == "PO9").one().id, "planner", "PO thử")
     db.commit()
     svc.reconcile(db, "sync")                                                          # đồng bộ lại không ghi đè quyết định tay
     again = {m.po: m for m in db.query(ActualMapping)}
     assert again["PO3"].status == "MATCHED" and again["PO3"].mapped_row_uid == "d" and again["PO3"].method == "MANUAL"
     assert again["PO9"].status == "IGNORED"
-    try:
-        svc.set_manual(db, again["PO1"].id, "b", "planner")                             # khác PO -> từ chối
-        raise AssertionError("phải từ chối")
-    except ValueError:
-        pass
-    svc.reset_mapping(db, again["PO3"].id)
+    svc.set_manual(db, again["PO1"].id, "b", "planner", "cùng Style khác PO")                # spec §29: không còn ép cùng PO
+    assert db.get(ActualMapping, again["PO1"].id).mapped_row_uid == "b"
+    for bad in (lambda: svc.set_manual(db, again["PO1"].id, "a", "planner", ""), lambda: svc.set_ignored(db, again["PO1"].id, "p", " "), lambda: svc.reset_mapping(db, again["PO1"].id, "p", "")):
+        try:
+            bad()
+            raise AssertionError("thiếu lý do phải bị từ chối")
+        except ValueError:
+            pass
+    hist = svc.mapping_history(db, again["PO1"].id)
+    assert hist and hist[0]["action"] == "MAP" and hist[0]["new_row_uid"] == "b" and hist[0]["reason"] == "cùng Style khác PO" and hist[0]["changed_by"] == "planner"
+    svc.reset_mapping(db, again["PO3"].id, "planner", "làm lại")
     svc.reconcile(db, "sync")
     assert db.query(ActualMapping).filter(ActualMapping.po == "PO3").one().status == "REVIEW"
 

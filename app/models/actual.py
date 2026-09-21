@@ -66,6 +66,26 @@ class ActualMapping(Base):
     mapped_version_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     mapped_row_uid: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
     mapped_source_key: Mapped[str] = mapped_column(String(300), default="")
+    mapped_so_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # SO của dòng kế hoạch được gán (spec §29: mapping theo SO, không chỉ PO)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     reconciled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     reconciled_by: Mapped[str] = mapped_column(String(100), default="")
+
+
+class ActualMappingHistory(Base):
+    """Lịch sử mọi thay đổi mapping tay (spec §30): mapping cũ/mới, lý do, người đổi, thời điểm. Không xóa."""
+
+    __tablename__ = "actual_mapping_history"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    mapping_id: Mapped[int] = mapped_column(Integer, index=True)
+    action: Mapped[str] = mapped_column(String(16))  # MAP | IGNORE | RESET
+    old_row_uid: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    new_row_uid: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    old_so_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    new_so_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    old_status: Mapped[str] = mapped_column(String(16), default="")
+    new_status: Mapped[str] = mapped_column(String(16), default="")
+    reason: Mapped[str] = mapped_column(String(300), default="")
+    changed_by: Mapped[str] = mapped_column(String(100), default="")
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

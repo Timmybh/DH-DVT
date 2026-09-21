@@ -21,7 +21,7 @@ Manage = Depends(require_perm("mapping.manage"))
 def _map_view(m: ActualMapping) -> dict:
     return {
         "id": m.id, "actual_key": m.actual_key, "source_system": m.source_system, "source_id": m.source_id, "fingerprint": m.fingerprint, "po": m.po, "style": m.style,
-        "customer": m.customer, "factory_code": m.factory_code, "line": m.line, "attrs": m.attrs or {}, "status": m.status, "method": m.method, "confidence": m.confidence,
+        "customer": m.customer, "factory_code": m.factory_code, "line": m.line, "attrs": m.attrs or {}, "status": m.status, "method": m.method, "grade": svc.match_grade(m), "mapped_so_id": m.mapped_so_id,
         "reason": m.reason, "candidates": m.candidates or [], "mapped_version_id": m.mapped_version_id, "mapped_row_uid": m.mapped_row_uid,
         "reconciled_at": m.reconciled_at.isoformat() if m.reconciled_at else None, "reconciled_by": m.reconciled_by,
     }
@@ -57,19 +57,24 @@ def list_mappings(status: str = "", q: str = "", factory: str = "", limit: int =
 
 
 @router.get("/mappings/{mid}/candidates")
-def candidates(mid: int, db: Session = Depends(get_db), _: User = View):
-    """Các dòng kế hoạch cùng PO trong phiên bản tham chiếu — để người dùng chọn khi gán tay."""
-    from app.models.planning import PlanningVersionRow
+def candidates(mid: int, q: str = "", db: Session = Depends(get_db), _: User = View):
+    """Ứng viên gán tay: tìm theo PO / Style / Customer / SO; mặc định gợi ý theo PO+Style của thực tế. Kèm lý do gợi ý — KHÔNG giới hạn cùng PO."""
+    from app.models.so import PlanningSO
 
     m = db.get(ActualMapping, mid)
     if m is None:
         raise HTTPException(404, "Không có bản ghi mapping")
-    ver = svc.reference_version(db)
-    if ver is None:
-        return []
-    rows = db.query(PlanningVersionRow).filter(PlanningVersionRow.version_id == ver.id, func.upper(PlanningVersionRow.po_number) == svc.norm(m.po)).all()
-    return [{"row_uid": r.row_uid, "po": r.po_number, "style": r.style_cc, "customer": r.customer, "factory_code": r.factory_code, "line": r.line_raw or r.primary_line, "quantity": r.quantity,
-             "begin": r.begin_prod_date.isoformat() if r.begin_prod_date else None, "end": r.end_prod_date.isoformat() if r.end_prod_date else None} for r in rows]
+    rows = svc.candidate_rows(db, m, q)
+    so = {x.id: x for x in db.query(PlanningSO).filter(PlanningSO.id.in_([r["so_id"] for r in rows if r["so_id"]] or [0]))}
+    for r in rows:
+        x = so.get(r["so_id"])
+        r["so_number"], r["so_description"] = (x.so_number, x.description) if x else ("", "")
+    return rows
+
+
+@router.get("/mappings/{mid}/history")
+def mapping_history(mid: int, db: Session = Depends(get_db), _: User = View):
+    return svc.mapping_history(db, mid)
 
 
 @router.post("/reconcile")
@@ -82,12 +87,13 @@ def reconcile(db: Session = Depends(get_db), user: User = Manage):
 
 class MapBody(BaseModel):
     row_uid: str = Field(min_length=1, max_length=40)
+    reason: str = Field("", max_length=300)
 
 
 @router.post("/mappings/{mid}/map")
 def map_manual(mid: int, body: MapBody, db: Session = Depends(get_db), user: User = Manage):
     try:
-        m = svc.set_manual(db, mid, body.row_uid, user.username)
+        m = svc.set_manual(db, mid, body.row_uid, user.username, body.reason)
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
     except ValueError as exc:
@@ -107,20 +113,24 @@ def ignore(mid: int, body: IgnoreBody, db: Session = Depends(get_db), user: User
         m = svc.set_ignored(db, mid, user.username, body.reason)
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     db.commit()
     write_audit("ACTUAL_MAP_IGNORE", user=user, object_type="ActualMapping", object_id=str(mid), detail=m.actual_key)
     return _map_view(m)
 
 
 @router.post("/mappings/{mid}/reset")
-def reset(mid: int, db: Session = Depends(get_db), user: User = Manage):
+def reset(mid: int, body: IgnoreBody, db: Session = Depends(get_db), user: User = Manage):
     try:
-        svc.reset_mapping(db, mid)
+        svc.reset_mapping(db, mid, user.username, body.reason)
         db.flush()
         svc.reconcile(db, user.username)
         m = db.get(ActualMapping, mid)
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     db.commit()
     write_audit("ACTUAL_MAP_RESET", user=user, object_type="ActualMapping", object_id=str(mid), detail=m.actual_key)
     return _map_view(m)

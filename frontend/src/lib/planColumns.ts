@@ -9,6 +9,7 @@ export interface Col<T> {
   kind: ColKind;
   digits?: number;
   frozen?: boolean;
+  hidden?: boolean; // mặc định ẩn; người dùng bật qua Column Chooser (VD SO Number)
   frozenRight?: boolean; // đóng băng bên phải (luôn thấy khi cuộn ngang)
   get: (r: T) => string | number | null | undefined;
 }
@@ -20,6 +21,8 @@ export const PLANNED_COLS: Col<PlanRowDto>[] = [
   { key: "line", label: "Line", w: 60, kind: "text", frozen: true, get: (r) => r.line_raw || r.primary_line },
   { key: "po", label: "PO", w: 112, kind: "text", frozen: true, get: (r) => r.po_number },
   { key: "style", label: "Style/CC", w: 88, kind: "text", frozen: true, get: (r) => r.style_cc },
+  { key: "so", label: "SO Number", w: 118, kind: "text", hidden: true, get: (r) => r.so_number },
+  { key: "so_desc", label: "SO Description", w: 230, kind: "text", hidden: true, get: (r) => r.so_description },
   { key: "factory", label: "Factory", w: 74, kind: "text", get: (r) => r.factory_code },
   { key: "model", label: "Model", w: 92, kind: "text", get: (r) => r.model_code },
   { key: "description", label: "Description", w: 230, kind: "text", get: (r) => r.description },
@@ -54,6 +57,8 @@ export const UNPLANNED_COLS: Col<UnplannedDto>[] = [
   { key: "factory", label: "Factory", w: 128, kind: "text", frozen: true, get: (r) => (r.factory_assignment === "KNOWN" ? r.factory_code : "Chưa xác định XN") },
   { key: "po", label: "PO", w: 112, kind: "text", frozen: true, get: (r) => r.po_number },
   { key: "style", label: "Style/CC", w: 88, kind: "text", get: (r) => r.style_cc },
+  { key: "so", label: "SO Number", w: 118, kind: "text", hidden: true, get: (r) => r.so_number },
+  { key: "so_desc", label: "SO Description", w: 230, kind: "text", hidden: true, get: (r) => r.so_description },
   { key: "model", label: "Model", w: 92, kind: "text", get: (r) => r.model_code },
   { key: "description", label: "Description", w: 230, kind: "text", get: (r) => r.description },
   { key: "customer", label: "Customer", w: 110, kind: "text", get: (r) => r.customer },

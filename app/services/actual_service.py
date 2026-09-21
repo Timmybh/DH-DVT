@@ -14,7 +14,7 @@ from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
 from app.db.session import utcnow
-from app.models.actual import ActualMapping, ActualObservation
+from app.models.actual import ActualMapping, ActualMappingHistory, ActualObservation
 from app.models.planning import PlanningVersion, PlanningVersionRow
 
 TRACKED = ("qty", "sewn_qty", "fg_qty", "due_date", "sewn_done_date", "fg_done_date", "customer", "style")
@@ -233,7 +233,7 @@ def _plan_rows(db: Session, version_id: int) -> list[dict]:
     return [
         {"row_uid": r.row_uid, "source_key": r.source_key, "po_number": r.po_number, "style_cc": r.style_cc, "customer": r.customer, "factory_code": r.factory_code,
          "primary_line": r.primary_line, "line_assignments": r.line_assignments or [], "quantity": r.quantity, "end_prod_date": r.end_prod_date, "warehouse_date": r.warehouse_date,
-         "begin_prod_date": r.begin_prod_date, "line_raw": r.line_raw, "description": r.description, "sequence": r.sequence}
+         "begin_prod_date": r.begin_prod_date, "line_raw": r.line_raw, "description": r.description, "sequence": r.sequence, "so_id": r.so_id}
         for r in db.query(PlanningVersionRow).filter(PlanningVersionRow.version_id == version_id)
     ]
 
@@ -241,6 +241,7 @@ def _plan_rows(db: Session, version_id: int) -> list[dict]:
 def _apply(m: ActualMapping, res: dict, version_id: int | None, rows_by_uid: dict[str, dict], who: str) -> None:
     m.status, m.method, m.confidence, m.reason, m.candidates = res["status"], res["method"], res["confidence"], res["reason"], res["candidates"]
     m.mapped_row_uid = res["row_uid"]
+    m.mapped_so_id = rows_by_uid[res["row_uid"]].get("so_id") if res["row_uid"] in rows_by_uid else None
     m.mapped_version_id = version_id if res["row_uid"] else None
     m.mapped_source_key = rows_by_uid[res["row_uid"]]["source_key"] if res["row_uid"] in rows_by_uid else ""
     m.reconciled_at, m.reconciled_by = utcnow(), who
@@ -289,19 +290,37 @@ def record_and_reconcile(db: Session, run_id: int, rows: list[dict]) -> dict:
     return {**rec, **reconcile(db, "sync")}
 
 
-def set_manual(db: Session, mapping_id: int, row_uid: str, who: str) -> ActualMapping:
+def _need_reason(reason: str) -> str:
+    r = (reason or "").strip()
+    if len(r) < 3:
+        raise ValueError("Cần nhập lý do (tối thiểu 3 ký tự)")
+    return r[:300]
+
+
+def _log(db: Session, m: ActualMapping, action: str, old: tuple, reason: str, who: str) -> None:
+    db.add(ActualMappingHistory(mapping_id=m.id, action=action, old_row_uid=old[0], new_row_uid=m.mapped_row_uid, old_so_id=old[1], new_so_id=m.mapped_so_id,
+                                old_status=old[2], new_status=m.status, reason=reason, changed_by=who))
+
+
+def _snap(m: ActualMapping) -> tuple:
+    return (m.mapped_row_uid, m.mapped_so_id, m.status)
+
+
+def set_manual(db: Session, mapping_id: int, row_uid: str, who: str, reason: str = "") -> ActualMapping:
+    """Gán tay vào BẤT KỲ dòng kế hoạch của phiên bản tham chiếu (không còn ép cùng PO — PO chỉ là một tín hiệu; spec §29). Bắt buộc có lý do, lưu lịch sử."""
     m = db.get(ActualMapping, mapping_id)
     if m is None:
         raise LookupError("Không có bản ghi mapping")
+    reason = _need_reason(reason)
     ver = reference_version(db)
     row = db.query(PlanningVersionRow).filter(PlanningVersionRow.version_id == (ver.id if ver else -1), PlanningVersionRow.row_uid == row_uid).first()
     if row is None:
         raise ValueError("Dòng kế hoạch không thuộc phiên bản tham chiếu")
-    if norm(row.po_number) != norm(m.po):
-        raise ValueError("Chỉ được gán vào dòng kế hoạch có cùng PO")
-    m.status, m.method, m.confidence, m.reason, m.candidates = "MATCHED", "MANUAL", 1.0, f"Gán tay bởi {who}", []
-    m.mapped_row_uid, m.mapped_version_id, m.mapped_source_key = row_uid, ver.id, row.source_key
+    old = _snap(m)
+    m.status, m.method, m.confidence, m.reason, m.candidates = "MATCHED", "MANUAL", 1.0, f"Gán tay bởi {who}: {reason}", []
+    m.mapped_row_uid, m.mapped_version_id, m.mapped_source_key, m.mapped_so_id = row_uid, ver.id, row.source_key, row.so_id
     m.reconciled_at, m.reconciled_by = utcnow(), who
+    _log(db, m, "MAP", old, reason, who)
     return m
 
 
@@ -309,19 +328,90 @@ def set_ignored(db: Session, mapping_id: int, who: str, reason: str) -> ActualMa
     m = db.get(ActualMapping, mapping_id)
     if m is None:
         raise LookupError("Không có bản ghi mapping")
-    m.status, m.method, m.confidence, m.reason, m.candidates = "IGNORED", "IGNORED", 0.0, reason or f"Bỏ qua bởi {who}", []
-    m.mapped_row_uid, m.mapped_version_id, m.mapped_source_key = None, None, ""
+    reason = _need_reason(reason)
+    old = _snap(m)
+    m.status, m.method, m.confidence, m.reason, m.candidates = "IGNORED", "IGNORED", 0.0, f"Loại khỏi mapping bởi {who}: {reason}", []
+    m.mapped_row_uid, m.mapped_version_id, m.mapped_source_key, m.mapped_so_id = None, None, "", None
     m.reconciled_at, m.reconciled_by = utcnow(), who
+    _log(db, m, "IGNORE", old, reason, who)
     return m
 
 
-def reset_mapping(db: Session, mapping_id: int) -> ActualMapping:
+def reset_mapping(db: Session, mapping_id: int, who: str = "", reason: str = "") -> ActualMapping:
     """Bỏ mapping tay / bỏ qua để lần đối soát sau tự khớp lại."""
     m = db.get(ActualMapping, mapping_id)
     if m is None:
         raise LookupError("Không có bản ghi mapping")
-    m.method, m.status, m.mapped_row_uid, m.reason = "", "UNMATCHED", None, "Đã bỏ mapping tay — chờ đối soát lại"
+    reason = _need_reason(reason)
+    old = _snap(m)
+    m.method, m.status, m.mapped_row_uid, m.mapped_so_id, m.reason = "", "UNMATCHED", None, None, "Đã bỏ mapping tay — chờ đối soát lại"
+    _log(db, m, "RESET", old, reason, who)
     return m
+
+
+def mapping_history(db: Session, mapping_id: int) -> list[dict]:
+    rows = db.query(ActualMappingHistory).filter(ActualMappingHistory.mapping_id == mapping_id).order_by(ActualMappingHistory.id.desc()).all()
+    return [{"id": h.id, "action": h.action, "old_row_uid": h.old_row_uid, "new_row_uid": h.new_row_uid, "old_so_id": h.old_so_id, "new_so_id": h.new_so_id, "old_status": h.old_status,
+             "new_status": h.new_status, "reason": h.reason, "changed_by": h.changed_by, "changed_at": h.changed_at.isoformat() if h.changed_at else None} for h in rows]
+
+
+def match_grade(m: ActualMapping) -> str:
+    """Nhãn gợi ý thay cho % tin cậy (spec §30): EXACT | STRONG | POSSIBLE | CONFIRM."""
+    if m.status == "MATCHED":
+        return "EXACT" if m.method in ("AUTO_FULL", "MANUAL") else "STRONG"
+    if m.status == "REVIEW":
+        return "POSSIBLE" if (m.confidence or 0) >= 0.3 else "CONFIRM"
+    return "CONFIRM" if m.status == "UNMATCHED" else ""
+
+
+def candidate_rows(db: Session, m: ActualMapping, q: str = "", limit: int = 60) -> list[dict]:
+    """Ứng viên gán tay: tìm theo PO/Style/Customer/SO trong phiên bản tham chiếu, kèm lý do gợi ý (✓ cùng Style/Customer/XN/chuyền, chênh ngày)."""
+    from app.models.so import PlanningSO
+
+    ver = reference_version(db)
+    if ver is None:
+        return []
+    qs = db.query(PlanningVersionRow).filter(PlanningVersionRow.version_id == ver.id)
+    q = (q or "").strip()
+    if q:
+        like = f"%{q}%"
+        so_ids = [x for (x,) in db.query(PlanningSO.id).filter(PlanningSO.so_number.ilike(like) | PlanningSO.description.ilike(like)).limit(500)]
+        cond = PlanningVersionRow.po_number.ilike(like) | PlanningVersionRow.style_cc.ilike(like) | PlanningVersionRow.customer.ilike(like)
+        if so_ids:
+            cond = cond | PlanningVersionRow.so_id.in_(so_ids)
+        qs = qs.filter(cond)
+    else:
+        # Không gõ gì: gợi ý theo PO / Style / Customer của thực tế
+        cond = None
+        for col, val in ((PlanningVersionRow.po_number, m.po), (PlanningVersionRow.style_cc, m.style)):
+            if val:
+                c = func.upper(col) == norm(val)
+                cond = c if cond is None else (cond | c)
+        if cond is None:
+            return []
+        qs = qs.filter(cond)
+    ref = _ref_date(m.attrs or {})
+    out = []
+    for r in qs.limit(400).all():
+        why = []
+        if norm(r.po_number) == norm(m.po) and m.po:
+            why.append("Cùng PO")
+        if norm(r.style_cc) == norm(m.style) and m.style:
+            why.append("Cùng Style")
+        if norm(r.customer) == norm(m.customer) and m.customer:
+            why.append("Cùng Customer")
+        if r.factory_code == m.factory_code:
+            why.append("Cùng XN")
+        if str(r.primary_line or "") == str(m.line or ""):
+            why.append("Cùng chuyền")
+        gap = None
+        if ref and r.begin_prod_date and r.end_prod_date:
+            gap = 0 if r.begin_prod_date <= ref <= r.end_prod_date else min(abs((ref - r.begin_prod_date).days), abs((ref - r.end_prod_date).days))
+        out.append({"row_uid": r.row_uid, "po": r.po_number, "style": r.style_cc, "customer": r.customer, "factory_code": r.factory_code, "line": r.line_raw or r.primary_line, "quantity": r.quantity,
+                    "begin": r.begin_prod_date.isoformat() if r.begin_prod_date else None, "end": r.end_prod_date.isoformat() if r.end_prod_date else None,
+                    "so_id": r.so_id, "reasons": why, "date_gap_days": gap})
+    out.sort(key=lambda x: (-len(x["reasons"]), x["date_gap_days"] if x["date_gap_days"] is not None else 10**6))
+    return out[:limit]
 
 
 # --------------------------------------------------------------------------- Plan vs Actual

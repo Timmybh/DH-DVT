@@ -23,12 +23,13 @@ const PVA_STATUS: Record<string, { label: string; cls: string }> = {
   FG_COMPLETE: { label: "Đã nhập kho TP", cls: "bg-green-500/20 text-green-600" },
 };
 const MAP_STATUS: Record<string, { label: string; cls: string }> = {
-  MATCHED: { label: "Đã khớp", cls: "bg-green-500/20 text-green-600" },
-  REVIEW: { label: "Cần xem", cls: "bg-amber-500/20 text-amber-600" },
-  UNMATCHED: { label: "Không khớp", cls: "bg-red-500/20 text-red-500" },
-  OUT_OF_PLAN: { label: "Trước kỳ KH", cls: "bg-slate-500/20 text-slate-500" },
-  IGNORED: { label: "Đã bỏ qua", cls: "bg-slate-500/20 text-slate-400" },
+  MATCHED: { label: "Tự động liên kết", cls: "bg-green-500/20 text-green-600" },
+  REVIEW: { label: "Cần xác nhận", cls: "bg-amber-500/20 text-amber-600" },
+  UNMATCHED: { label: "Chưa liên kết", cls: "bg-red-500/20 text-red-500" },
+  OUT_OF_PLAN: { label: "Loại khỏi mapping (trước kỳ KH)", cls: "bg-slate-500/20 text-slate-500" },
+  IGNORED: { label: "Loại khỏi mapping", cls: "bg-slate-500/20 text-slate-400" },
 };
+const GRADE: Record<string, string> = { EXACT: "Khớp chính xác", STRONG: "Ứng viên mạnh", POSSIBLE: "Ứng viên có thể", CONFIRM: "Cần xác nhận", "": "" };
 const METHOD: Record<string, string> = { AUTO_FULL: "PO+Style+KH", AUTO_STYLE: "PO+Style", AUTO_PO: "Chỉ PO", AUTO_STYLE_WINDOW: "Style+chuyền+thời gian", MANUAL: "Gán tay", IGNORED: "Bỏ qua", "": "—" };
 
 const Badge = ({ map, k }: { map: Record<string, { label: string; cls: string }>; k: string }) => (
@@ -119,10 +120,11 @@ function PlanVsActual() {
 
 // ---------------------------------------------------------------- Ngoại lệ mapping
 interface Mapping {
-  id: number; po: string; style: string; customer: string; factory_code: string; line: string; status: string; method: string; confidence: number; reason: string;
+  id: number; po: string; style: string; customer: string; factory_code: string; line: string; status: string; method: string; grade: string; mapped_so_id: number | null; reason: string;
   candidates: string[]; mapped_row_uid: string | null; attrs: { qty?: number; sewn_qty?: number; fg_qty?: number; last_seen?: string | null }; reconciled_by: string;
 }
-interface Cand { row_uid: string; po: string; style: string; customer: string; factory_code: string; line: string; quantity: number; begin: string | null; end: string | null }
+interface Cand { row_uid: string; po: string; style: string; customer: string; factory_code: string; line: string; quantity: number; begin: string | null; end: string | null; so_number: string; so_description: string; reasons: string[]; date_gap_days: number | null }
+interface Hist { id: number; action: string; old_row_uid: string | null; new_row_uid: string | null; old_status: string; new_status: string; reason: string; changed_by: string; changed_at: string | null }
 
 function Exceptions({ canManage }: { canManage: boolean }) {
   const [summary, setSummary] = useState<{ version: { code: string } | null; mappings: Record<string, number>; observations: number; last_run: { code: string; at: string } | null } | null>(null);
@@ -134,6 +136,9 @@ function Exceptions({ canManage }: { canManage: boolean }) {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [pick, setPick] = useState<{ m: Mapping; cands: Cand[] } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [pq, setPq] = useState("");
+  const [preason, setPreason] = useState("");
+  const [hist, setHist] = useState<{ m: Mapping; rows: Hist[] } | null>(null);
 
   const load = useCallback(async () => {
     const [s, l] = await Promise.all([
@@ -161,10 +166,28 @@ function Exceptions({ canManage }: { canManage: boolean }) {
       setBusy(false);
     }
   };
-  const openPick = async (m: Mapping) => {
+  const searchCands = async (m: Mapping, term: string) => {
     try {
-      const r = await api.get<Cand[]>(`/planning/actual/mappings/${m.id}/candidates`);
+      const r = await api.get<Cand[]>(`/planning/actual/mappings/${m.id}/candidates`, { params: { q: term || undefined } });
       setPick({ m, cands: r.data });
+    } catch (e) {
+      setMsg({ ok: false, text: errorMessage(e) });
+    }
+  };
+  const openPick = async (m: Mapping) => {
+    setPq("");
+    setPreason("");
+    await searchCands(m, "");
+  };
+  // Mọi thao tác tay đều cần lý do (spec §30) và được ghi lịch sử
+  const withReason = (m: Mapping, path: "ignore" | "reset", ok: string) => {
+    const reason = window.prompt(path === "ignore" ? "Lý do loại khỏi mapping?" : "Lý do đặt lại mapping?");
+    if (!reason || reason.trim().length < 3) return;
+    void act(() => api.post(`/planning/actual/mappings/${m.id}/${path}`, { reason: reason.trim() }), ok);
+  };
+  const openHist = async (m: Mapping) => {
+    try {
+      setHist({ m, rows: (await api.get<Hist[]>(`/planning/actual/mappings/${m.id}/history`)).data });
     } catch (e) {
       setMsg({ ok: false, text: errorMessage(e) });
     }
@@ -174,7 +197,7 @@ function Exceptions({ canManage }: { canManage: boolean }) {
     <div className="space-y-3">
       <p className="text-xs text-slate-500">
         Thực tế eGMF được khớp với phiên bản kế hoạch tham chiếu{summary?.version ? <> (<b>{summary.version.code}</b>)</> : ""} theo khóa nghiệp vụ (PO + Style/CC + Khách hàng; không dùng ID nội bộ eGMF, không dùng số lượng).
-        Kế hoạch hiện có phần lớn là dòng dự báo không có PO thật nên hệ thống còn khớp theo Style/CC + xí nghiệp + chuyền + cửa sổ thời gian. Mapping gán tay hoặc bỏ qua được giữ nguyên qua các lần đồng bộ.
+        Kế hoạch hiện có phần lớn là dòng dự báo không có PO thật nên hệ thống còn khớp theo Style/CC + xí nghiệp + chuyền + cửa sổ thời gian; khi gán tay có thể chọn bất kỳ dòng nào (kèm lý do, có lịch sử). Mapping gán tay hoặc bỏ qua được giữ nguyên qua các lần đồng bộ.
       </p>
       <div className="flex flex-wrap items-center gap-2">
         {Object.entries(MAP_STATUS).map(([k, v]) => (
@@ -203,13 +226,14 @@ function Exceptions({ canManage }: { canManage: boolean }) {
                 <td className={`${td} text-right`}>{num(m.attrs.qty)}</td><td className={`${td} text-right`}>{num(m.attrs.sewn_qty)}</td><td className={`${td} text-right`}>{num(m.attrs.fg_qty)}</td>
                 <td className={td}>{dateVi(m.attrs.last_seen)}</td>
                 <td className={td}><Badge map={MAP_STATUS} k={m.status} /></td>
-                <td className={td}>{METHOD[m.method] ?? m.method}{m.confidence ? <span className="ml-1 text-xs text-slate-400">{Math.round(m.confidence * 100)}%</span> : null}</td>
+                <td className={td}>{METHOD[m.method] ?? m.method}{m.grade ? <span className="ml-1 text-xs text-slate-400">· {GRADE[m.grade]}</span> : null}</td>
                 <td className="max-w-[340px] px-3 py-1.5 text-xs text-slate-500">{m.reason}{m.reconciled_by && m.method === "MANUAL" ? ` — ${m.reconciled_by}` : ""}</td>
                 {canManage && (
                   <td className={`${td} text-right`}>
                     <button disabled={busy} onClick={() => openPick(m)} className="rounded-full border border-slate-300 px-3 py-1 text-xs" data-testid={`map-pick-${m.id}`}>Gán dòng KH</button>
-                    {m.status !== "IGNORED" && <button disabled={busy} onClick={() => act(() => api.post(`/planning/actual/mappings/${m.id}/ignore`, { reason: "Không thuộc kế hoạch" }), "Đã bỏ qua bản ghi này.")} className="ml-1 rounded-full border border-slate-300 px-3 py-1 text-xs">Bỏ qua</button>}
-                    {(m.method === "MANUAL" || m.status === "IGNORED") && <button disabled={busy} onClick={() => act(() => api.post(`/planning/actual/mappings/${m.id}/reset`), "Đã bỏ quyết định tay, hệ thống khớp lại tự động.")} className="ml-1 rounded-full border border-slate-300 px-3 py-1 text-xs">Đặt lại</button>}
+                    {m.status !== "IGNORED" && <button disabled={busy} onClick={() => withReason(m, "ignore", "Đã loại bản ghi khỏi mapping.")} className="ml-1 rounded-full border border-slate-300 px-3 py-1 text-xs">Loại khỏi mapping</button>}
+                    {(m.method === "MANUAL" || m.status === "IGNORED") && <button disabled={busy} onClick={() => withReason(m, "reset", "Đã bỏ quyết định tay, hệ thống khớp lại tự động.")} className="ml-1 rounded-full border border-slate-300 px-3 py-1 text-xs">Đặt lại</button>}
+                    <button onClick={() => openHist(m)} className="ml-1 rounded-full border border-slate-300 px-3 py-1 text-xs">Lịch sử</button>
                   </td>
                 )}
               </tr>
@@ -219,21 +243,45 @@ function Exceptions({ canManage }: { canManage: boolean }) {
         </table>
       </div>
 
+      {hist && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" onClick={() => setHist(null)}>
+          <div className="max-h-[80vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 text-slate-900 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-bold">Lịch sử mapping — PO {hist.m.po}</h3>
+            <ul className="mt-3 space-y-2 text-sm">
+              {hist.rows.map((h) => (
+                <li key={h.id} className="rounded-lg border border-slate-200 p-2">
+                  <b>{h.action === "MAP" ? "Gán tay" : h.action === "IGNORE" ? "Loại khỏi mapping" : "Đặt lại"}</b> · {h.changed_by} · {h.changed_at ? dateVi(h.changed_at.slice(0, 10)) : ""}
+                  <div className="text-xs text-slate-500">{h.old_row_uid ?? "—"} ({h.old_status}) → {h.new_row_uid ?? "—"} ({h.new_status})</div>
+                  <div className="text-xs">Lý do: {h.reason}</div>
+                </li>
+              ))}
+              {hist.rows.length === 0 && <li className="text-xs text-slate-400">Chưa có thay đổi tay.</li>}
+            </ul>
+          </div>
+        </div>
+      )}
+
       {pick && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" onClick={() => setPick(null)}>
           <div className="max-h-[85vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-6 text-slate-900 shadow-xl" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold">Gán thực tế vào dòng kế hoạch</h3>
-            <p className="mt-1 text-xs text-slate-500">PO {pick.m.po} · {pick.m.style} · {pick.m.factory_code}/{pick.m.line} — chỉ gán được vào dòng kế hoạch có cùng PO.</p>
+            <p className="mt-1 text-xs text-slate-500">PO {pick.m.po} · {pick.m.style} · {pick.m.customer} · {pick.m.factory_code}/{pick.m.line} — gán được vào bất kỳ dòng kế hoạch nào (PO chỉ là một tín hiệu gợi ý).</p>
+            <div className="mt-2 flex gap-2">
+              <input value={pq} onChange={(e) => setPq(e.target.value)} onKeyDown={(e) => e.key === "Enter" && searchCands(pick.m, pq)} placeholder="Tìm theo PO / Style / Customer / SO..." className="flex-1 rounded-lg border border-slate-200 px-3 py-1.5 text-sm" aria-label="Tìm dòng kế hoạch" />
+              <button onClick={() => searchCands(pick.m, pq)} className="rounded-full border border-slate-300 px-4 py-1 text-xs">Tìm</button>
+            </div>
+            <input value={preason} onChange={(e) => setPreason(e.target.value)} placeholder="Lý do gán tay (bắt buộc)" className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-1.5 text-sm" aria-label="Lý do" data-testid="map-reason" />
             {pick.cands.length === 0 ? (
-              <p className="mt-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">Kế hoạch không có dòng nào cùng PO này. Nếu kế hoạch chỉ ghi dòng dự báo (FCAST…), hệ thống khớp theo Style/CC + chuyền + thời gian; nếu không đúng, chọn "Bỏ qua".</p>
+              <p className="mt-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">Không có dòng kế hoạch phù hợp. Hãy thử tìm theo PO / Style / Customer / SO khác, hoặc chọn "Loại khỏi mapping".</p>
             ) : (
               <table className="mt-3 w-full text-sm">
-                <thead><tr><th className={th}>XN</th><th className={th}>Chuyền</th><th className={th}>Mã hàng</th><th className={`${th} text-right`}>SL</th><th className={th}>Bắt đầu</th><th className={th}>Kết thúc</th><th className={th} /></tr></thead>
+                <thead><tr><th className={th}>SO</th><th className={th}>PO</th><th className={th}>XN</th><th className={th}>Chuyền</th><th className={th}>Mã hàng</th><th className={`${th} text-right`}>SL</th><th className={th}>Bắt đầu</th><th className={th}>Kết thúc</th><th className={th}>Gợi ý</th><th className={th} /></tr></thead>
                 <tbody>
                   {pick.cands.map((c) => (
                     <tr key={c.row_uid} className={`border-t border-slate-100 ${pick.m.mapped_row_uid === c.row_uid ? "bg-indigo-50" : ""}`}>
-                      <td className={td}>{c.factory_code}</td><td className={td}>{c.line}</td><td className={td}>{c.style}</td><td className={`${td} text-right`}>{num(c.quantity)}</td><td className={td}>{dateVi(c.begin)}</td><td className={td}>{dateVi(c.end)}</td>
-                      <td className={td}><button onClick={() => act(() => api.post(`/planning/actual/mappings/${pick.m.id}/map`, { row_uid: c.row_uid }), "Đã gán tay — sẽ được giữ qua các lần đồng bộ.").then(() => setPick(null))} className="rounded-full bg-brand px-3 py-1 text-xs font-semibold text-white" data-testid={`map-to-${c.row_uid}`}>Gán</button></td>
+                      <td className={`${td} font-mono text-[11px]`} title={c.so_description}>{c.so_number}</td><td className={td}>{c.po}</td><td className={td}>{c.factory_code}</td><td className={td}>{c.line}</td><td className={td}>{c.style}</td><td className={`${td} text-right`}>{num(c.quantity)}</td><td className={td}>{dateVi(c.begin)}</td><td className={td}>{dateVi(c.end)}</td>
+                      <td className="px-3 text-xs text-green-700">{c.reasons.map((r) => `✓ ${r}`).join(" ")}{c.date_gap_days ? ` · lệch ${c.date_gap_days} ngày` : ""}</td>
+                      <td className={td}><button onClick={() => act(() => api.post(`/planning/actual/mappings/${pick.m.id}/map`, { row_uid: c.row_uid, reason: preason }), "Đã gán tay — sẽ được giữ qua các lần đồng bộ.").then(() => setPick(null))} disabled={preason.trim().length < 3} className="rounded-full bg-brand disabled:opacity-40 px-3 py-1 text-xs font-semibold text-white" data-testid={`map-to-${c.row_uid}`}>Gán</button></td>
                     </tr>
                   ))}
                 </tbody>

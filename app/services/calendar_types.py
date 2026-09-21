@@ -122,15 +122,17 @@ def update_type(db: Session, code: str, data: dict, username: str) -> CalendarDa
     return t
 
 
-def delete_type(db: Session, code: str) -> None:
-    t = db.query(CalendarDayType).filter(CalendarDayType.code == code).first()
-    if t is None:
-        raise HTTPException(404, "Không tìm thấy loại ngày")
-    used = db.query(WorkingCalendarRule).filter(WorkingCalendarRule.day_type == code).count()
-    if used:
-        raise HTTPException(409, f"Loại ngày đang được dùng bởi {used} quy tắc — xóa các quy tắc đó trước")
-    db.delete(t)
+def set_rule_status(db: Session, rule_id: int, active: bool, username: str, reason: str = "") -> WorkingCalendarRule:
+    """Ngưng áp dụng / áp dụng lại một quy tắc (KHÔNG xóa): Inactive không tham gia tính lịch hiện hành, vẫn giữ lịch sử để giải thích phiên bản kế hoạch cũ."""
+    r = db.get(WorkingCalendarRule, rule_id)
+    if r is None:
+        raise HTTPException(404, "Không tìm thấy quy tắc")
+    want = "ACTIVE" if active else "INACTIVE"
+    if r.status == want:
+        raise HTTPException(409, "Quy tắc đã ở trạng thái này")
+    r.status, r.status_changed_by, r.status_changed_at, r.status_reason = want, username, utcnow(), (reason or "").strip()[:200]
     db.commit()
+    return r
 
 
 def normalize_rule(t: CalendarDayType, repeat: str, weekday: int | None = None, month: int | None = None, month_day: int | None = None, rule_date: date | None = None,

@@ -60,13 +60,6 @@ def update_type(code: str, body: TypeUpdate, db: Session = Depends(get_db), user
     return ct.type_view(t)
 
 
-@router.delete("/types/{code}")
-def delete_type(code: str, db: Session = Depends(get_db), user: User = Manage):
-    ct.delete_type(db, code)
-    write_audit("CALENDAR_TYPE", user=user, object_type="CalendarDayType", object_id=code, detail="delete")
-    return {"deleted": True}
-
-
 # ------------------------------------------------------------------ quy tắc
 class RuleBody(BaseModel):
     scope_type: str = Field(pattern="^(COMPANY|XN|LINE)$")
@@ -90,7 +83,8 @@ def _rule_out(r: WorkingCalendarRule) -> dict:
     iso = lambda d: d.isoformat() if d else None  # noqa: E731
     return {"id": r.id, "scope_type": r.scope_type, "scope_key": r.scope_key, "rule_type": r.rule_type, "repeat": "NONE" if kind_of(r.rule_type) == "DATE" else kind_of(r.rule_type), "effect": RULE_TYPES[r.rule_type][0],
             "day_type": r.day_type, "weekday": r.weekday, "month": r.month, "month_day": r.month_day, "rule_date": iso(r.rule_date), "rule_end_date": iso(r.rule_end_date),
-            "valid_from": iso(r.valid_from), "valid_to": iso(r.valid_to), "note": r.note, "created_by": r.created_by}
+            "valid_from": iso(r.valid_from), "valid_to": iso(r.valid_to), "note": r.note, "created_by": r.created_by, "status": r.status, "status_changed_by": r.status_changed_by,
+            "status_changed_at": iso(r.status_changed_at), "status_reason": r.status_reason}
 
 
 @router.get("")
@@ -117,20 +111,31 @@ def add_rule(body: RuleBody, db: Session = Depends(get_db), user: User = Manage)
     db.add(rule)
     db.commit()
     db.refresh(rule)
+    svc.load_resolver(db)  # làm mới lịch dùng cho công thức OFF_DAYS
     write_audit("CALENDAR_CHANGE", user=user, object_type="CalendarRule", object_id=str(rule.id),
                 detail=f"add {rule.scope_type}:{rule.scope_key} {t.name} {repeat} {rule.rule_date or rule.weekday or rule.month_day}{('→' + str(rule.rule_end_date)) if rule.rule_end_date else ''}")
     return _rule_out(rule)
 
 
-@router.delete("/{rule_id}")
-def delete_rule(rule_id: int, db: Session = Depends(get_db), user: User = Manage):
-    rule = db.get(WorkingCalendarRule, rule_id)
-    if rule is None:
-        raise HTTPException(404, "Không tìm thấy quy tắc")
-    db.delete(rule)
-    db.commit()
-    write_audit("CALENDAR_CHANGE", user=user, object_type="CalendarRule", object_id=str(rule_id), detail="delete")
-    return {"deleted": True}
+class StatusBody(BaseModel):
+    reason: str = Field("", max_length=200)
+
+
+@router.post("/{rule_id}/deactivate")
+def deactivate(rule_id: int, body: StatusBody, db: Session = Depends(get_db), user: User = Manage):
+    """Ngưng áp dụng (thay cho Xóa): quy tắc không còn tham gia tính lịch nhưng vẫn được lưu."""
+    rule = ct.set_rule_status(db, rule_id, False, user.username, body.reason)
+    svc.load_resolver(db)
+    write_audit("CALENDAR_CHANGE", user=user, object_type="CalendarRule", object_id=str(rule_id), detail=f"ngưng áp dụng {body.reason}".strip())
+    return _rule_out(rule)
+
+
+@router.post("/{rule_id}/activate")
+def activate(rule_id: int, body: StatusBody, db: Session = Depends(get_db), user: User = Manage):
+    rule = ct.set_rule_status(db, rule_id, True, user.username, body.reason)
+    svc.load_resolver(db)
+    write_audit("CALENDAR_CHANGE", user=user, object_type="CalendarRule", object_id=str(rule_id), detail=f"áp dụng lại {body.reason}".strip())
+    return _rule_out(rule)
 
 
 @router.get("/resolve")

@@ -34,6 +34,9 @@ export default function RowEditorModal({ row, editable, onApply, onClose, lineOp
   const [toText, setToText] = useState("");
   const [effDate, setEffDate] = useState("");
   const [remaining, setRemaining] = useState("");
+  const [offValue, setOffValue] = useState("");
+  const [offReason, setOffReason] = useState("");
+  const off = row.calc?.off_days_detail;
   const newLines = splitLines(linesText);
   const toLines = splitLines(toText);
   const linesChanged = newLines.length > 0 && newLines.join("|") !== row.line_assignments.join("|");
@@ -99,6 +102,23 @@ export default function RowEditorModal({ row, editable, onApply, onClose, lineOp
                 {row.transfer && <button type="button" onClick={() => applyNow([{ type: "SET_TRANSFER", rowUid: row.row_uid, clear: true }])} className="rounded-full border border-slate-300 px-3 py-1" data-testid="clear-transfer">Gỡ chuyển chuyền</button>}
                 <button type="button" disabled={!toLines.length || sameAsCurrent} onClick={() => applyNow([{ type: "SET_TRANSFER", rowUid: row.row_uid, toLines, effectiveDate: effDate || undefined, plannedRemainingQty: remaining === "" ? null : Number(remaining) }])} className="rounded-full bg-brand px-3 py-1 font-semibold text-white disabled:opacity-40" data-testid="apply-transfer">Đặt chuyển chuyền</button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {editable && (
+          <div className="mt-4 space-y-2 rounded-xl border border-slate-200 p-3" data-testid="off-days-editor">
+            <p className="text-xs font-bold uppercase text-slate-400">OFF DAYS (số ngày nghỉ trong khoảng may) {off?.overridden && <span className="ml-1 rounded border border-orange-400 px-1 font-bold text-orange-600" title="Đang ghi đè">!</span>}</p>
+            <p className="text-xs text-slate-500">
+              Tính theo Lịch làm việc: <b>{off?.calculated ?? "—"}</b>
+              {off?.overridden ? <> · Ghi đè: <b>{off.override}</b> ({off.source === "EXCEL_IMPORT" ? "lấy từ Excel" : "nhập tay"}) · Áp dụng: <b>{off.effective}</b></> : " · chưa ghi đè"}
+              {off?.reason ? <span className="block text-slate-400">Lý do: {off.reason}{off.by ? ` — ${off.by}` : ""}</span> : null}
+            </p>
+            <div className="flex flex-wrap items-end gap-2">
+              <input type="number" min={0} step="any" value={offValue} onChange={(e) => setOffValue(e.target.value)} placeholder="Giá trị ghi đè" className="w-32 rounded-lg border border-slate-200 px-2 py-1.5 text-sm" aria-label="OFF DAYS ghi đè" />
+              <input value={offReason} onChange={(e) => setOffReason(e.target.value)} placeholder="Lý do (bắt buộc)" className="min-w-[160px] flex-1 rounded-lg border border-slate-200 px-2 py-1.5 text-sm" aria-label="Lý do ghi đè OFF DAYS" />
+              <button type="button" disabled={offValue === "" || offReason.trim().length < 3} onClick={() => applyNow([{ type: "SET_OFF_DAYS", rowUid: row.row_uid, value: Number(offValue), reason: offReason.trim(), at: new Date().toISOString() }])} className="rounded-full bg-brand px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40" data-testid="set-off-days">Ghi đè</button>
+              {off?.overridden && <button type="button" onClick={() => applyNow([{ type: "RESET_OFF_DAYS", rowUid: row.row_uid }])} className="rounded-full border border-slate-300 px-3 py-1.5 text-xs" data-testid="reset-off-days">Reset to Calculated</button>}
             </div>
           </div>
         )}

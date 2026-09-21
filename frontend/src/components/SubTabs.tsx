@@ -14,13 +14,14 @@ export const PLANNING_TABS: TabDef[] = [
   { to: "/planning/versions", label: "Phiên bản", perm: "planning.view" },
   { to: "/planning/calendar", label: "Lịch làm việc", perm: "calendar.view" },
   { to: "/planning/resources", label: "Năng suất & nguồn lực", perm: "planning.view" },
+  { to: "/planning/so", label: "Số SO", perm: "planning.view" },
   { to: "/planning/actual", label: "Thực tế & Đối soát", perm: "mapping.view" },
   { to: "/planning/columns", label: "Cấu hình cột & công thức", perm: "planning.view" },
 ];
 
 export const ADMIN_TABS: TabDef[] = [
-  { to: "/admin/alerts", label: "Cảnh báo", perm: "sync.view" },
-  { to: "/admin/sync", label: "Sync Log", perm: "sync.view" },
+  { to: "/admin/alerts", label: "Cảnh báo", perm: "monitoring.view" },
+  { to: "/admin/sync", label: "Sync Log", perm: "monitoring.view" },
   { to: "/admin/dashboard", label: "Cấu hình Dashboard", perm: "dashboard.config_view" },
   { to: "/admin/users", label: "Người dùng", perm: "admin.user_manage" },
   { to: "/admin/snapshots", label: "Snapshot", perm: "snapshot.view" },

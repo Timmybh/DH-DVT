@@ -154,6 +154,7 @@ class PlanRow(Base):
     risk: Mapped[str] = mapped_column(String(12), default="OK", index=True)  # OK|ADVANCE|LATE|MATERIAL
     risk_reason: Mapped[str] = mapped_column(String(200), default="")
     grid: Mapped[dict] = mapped_column(JSON, default=dict)  # các cột Excel hiển thị trong lưới Planning (không dùng để tính)
+    so_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # SO (danh tính nghiệp vụ) — cấp ngay từ Unplanned
 
 
 class LaborHeadcount(Base):

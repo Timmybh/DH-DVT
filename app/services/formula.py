@@ -183,7 +183,7 @@ def _round_half_up(x: float, digits: float = 0) -> float:
 
 
 FUNCTIONS: dict[str, tuple[int, int]] = {  # (min, max) số đối số — kiểm tra khi Validate
-    "IF": (3, 3), "IFERROR": (2, 2), "AND": (2, 8), "OR": (2, 8), "MAX": (2, 8), "MIN": (2, 8), "ABS": (1, 1),
+    "IF": (3, 3), "IFERROR": (2, 2), "OFF_DAYS_IN_SPAN": (2, 2), "AND": (2, 8), "OR": (2, 8), "MAX": (2, 8), "MIN": (2, 8), "ABS": (1, 1),
     "ROUND": (1, 2), "CEILING": (1, 1), "FLOOR": (1, 1), "ISBLANK": (1, 1), "MANUAL": (0, 0),
 }
 
@@ -266,6 +266,7 @@ class Context:
     prev: Callable[[str], Any]
     manual: Callable[[], Any] = lambda: None
     depth: int = 0
+    off_days: Callable[[float, float], float] | None = None  # (ngày vào chuyền dạng serial, số ngày làm việc cần) -> số ngày Nghỉ theo Lịch làm việc
 
 
 def evaluate(node: Node, ctx: Context) -> Any:
@@ -317,6 +318,11 @@ def _call(node: Node, ctx: Context) -> Any:
         return ctx.manual()
     if name == "ISBLANK":
         return evaluate(args[0], ctx) in (None, "")
+    if name == "OFF_DAYS_IN_SPAN":
+        b, w = evaluate(args[0], ctx), evaluate(args[1], ctx)
+        if b in (None, "") or w in (None, ""):
+            raise FormulaError("Thiếu ngày vào chuyền hoặc TOTAL_DAY")
+        return 0.0 if ctx.off_days is None else float(ctx.off_days(_num(b), _num(w)))
     vals = [evaluate(a, ctx) for a in args]
     if name == "AND":
         return all(bool(v) for v in vals)

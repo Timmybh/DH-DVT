@@ -156,6 +156,7 @@ def apply_ops(
 
     `returned` (tùy chọn) là danh sách dòng đã trả về Unplanned; được cập nhật tại chỗ bởi UNPLAN / ADD_RETURNED.
     """
+    fx.set_calendar(cal)  # công thức OFF_DAYS tính theo Lịch làm việc
     if returned is None:
         returned = []
     rows = [dict(r, extra=json.loads(json.dumps(r.get("extra") or {}))) for r in base_rows]
@@ -197,6 +198,7 @@ def apply_ops(
                     "transfer": None,
                     "po_number": src["po_number"], "style_cc": src["style_cc"], "model_code": src["model_code"],
                     "description": src["description"], "customer": src["customer"], "sport": src["sport"], "season": src["season"],
+                    "so_id": src.get("so_id"),  # SO đi theo dòng từ Unplanned (Split không đổi SO)
                     "quantity": src["quantity"], "capacity": capacity, "total_day": None,
                     "begin_prod_date": None, "end_prod_date": None, "warehouse_date": None, "chd": src.get("chd"),
                     "note": src.get("note", ""), "extra": {"ref": src.get("ref") or {}, **({"capacity_source": cap_source} if cap_source else {})},
@@ -299,6 +301,7 @@ def apply_ops(
                 lines = _resolve_lines({"all": op.get("all")} if op.get("all") else {}, rows, keep["factory_code"], keep["primary_line"], lines, factory_lines)
                 others = [r for r in group if r is not keep]
                 merged_from = [{"row_uid": r["row_uid"], "line": r["line_raw"], "quantity": r["quantity"], "capacity": r.get("capacity"), "source_key": r.get("source_key", "")} for r in others]
+                pre_qty = {r["row_uid"]: float(r["quantity"] or 0) for r in group}
                 keep["quantity"] = float(sum(r["quantity"] or 0 for r in group))
                 if all(r.get("capacity") for r in group):
                     keep["capacity"] = float(sum(r["capacity"] for r in group))
@@ -307,6 +310,14 @@ def apply_ops(
                     keep["extra"].setdefault("ref", {})["worker"] = float(sum(w or 0 for w in workers))
                 keep["line_assignments"], keep["line_raw"], keep["transfer"] = lines, format_lines(lines), None
                 keep["extra"]["merged_from"] = [*(keep["extra"].get("merged_from") or []), *merged_from]
+                # dồn các dòng thuộc nhiều SO: giữ lineage theo từng SO (không ép mất SO nào)
+                prior = keep["extra"].get("so_allocations")
+                allocs = {a["so_id"]: a for a in (prior or [])}
+                for r0 in ([] if prior else [keep]) + others:
+                    if r0.get("so_id"):
+                        a = allocs.setdefault(r0["so_id"], {"so_id": r0["so_id"], "quantity": 0.0})
+                        a["quantity"] += pre_qty[r0["row_uid"]]
+                keep["extra"]["so_allocations"] = list(allocs.values())
                 drop = {r["row_uid"] for r in others}
                 for u in drop:
                     by_uid.pop(u, None)
@@ -470,6 +481,32 @@ def apply_ops(
                     row[field] = str(value or "")[:400]
                 changed.add(row["row_uid"])
 
+            elif kind == "SET_OFF_DAYS":
+                # Ghi đè OFF DAYS bằng tay: bắt buộc lý do; giữ cả giá trị tính + giá trị ghi đè + giá trị áp dụng
+                row = by_uid.get(op["rowUid"])
+                if row is None:
+                    raise OpError("Dòng không tồn tại")
+                try:
+                    value = float(op.get("value"))
+                except (TypeError, ValueError):
+                    raise OpError("Giá trị OFF DAYS phải là số") from None
+                if not 0 <= value <= 3660:
+                    raise OpError("OFF DAYS phải trong khoảng 0…3660")
+                reason = str(op.get("reason") or "").strip()
+                if len(reason) < 3:
+                    raise OpError("Ghi đè OFF DAYS bắt buộc nêu lý do")
+                row.setdefault("extra", {})["off_days_override"] = {"value": value, "source": "MANUAL", "reason": reason[:300], "by": str(op.get("by") or ""), "at": str(op.get("at") or "")}
+                recalc_row(row, _prev_in_lane_by_position(rows, row))
+                changed.add(row["row_uid"])
+
+            elif kind == "RESET_OFF_DAYS":
+                row = by_uid.get(op["rowUid"])
+                if row is None:
+                    raise OpError("Dòng không tồn tại")
+                (row.setdefault("extra", {})).pop("off_days_override", None)  # chỉ Reset mới bỏ ghi đè (đổi Lịch làm việc KHÔNG tự xóa ghi đè)
+                recalc_row(row, _prev_in_lane_by_position(rows, row))
+                changed.add(row["row_uid"])
+
             elif kind == "RETURN_TO_AUTO_CALC":
                 row = by_uid.get(op["rowUid"])
                 field = op.get("field")
@@ -571,6 +608,7 @@ def _mark_override(row: dict, field: str, previous) -> None:
 # --------------------------------------------------------------------------- Recheck All Plan
 def recheck(rows: list[dict], cal: CalendarResolver, factory_codes: set[str], resource_check=None) -> dict:
     """Tính lại + kiểm tra toàn bộ kế hoạch. Trả {result, issues, counts, trace_id, started_at, completed_at, duration_ms}."""
+    fx.set_calendar(cal)
     t0 = time.perf_counter()
     started = datetime.now(timezone.utc)
     issues: list[dict] = []

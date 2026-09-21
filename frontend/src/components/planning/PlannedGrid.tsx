@@ -3,6 +3,7 @@ import { DraftRow } from "../../lib/draft";
 import { cellText, Col, naturalCompare, PLANNED_COLS, sortValue } from "../../lib/planColumns";
 import { num } from "../../lib/format";
 import { useColumnWidths } from "../../lib/useColumnWidths";
+import { useColumnChooser } from "../../lib/useColumnChooser";
 import { LineMenu } from "./LineActions";
 import type { QuickIssue } from "../../lib/quickCheck";
 import { inWindow, isoWeek, periodTitle, PlanView, rangeOf, shift, startOfDay, weekRange } from "../../lib/weeks";
@@ -48,7 +49,8 @@ function onTimeClass(v: string | undefined): string {
 const QUICK_COL: Record<string, string> = { begin: "begin_prod_date", end_begin: "end_prod_date", capacity: "capacity" };
 
 export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow, onRecalc, highlightUid, issueMap, quickMap, titleExtra, action, fill, light, onMergeLines, onAddLines, onSplitLines }: Props) {
-  const cols = PLANNED_COLS;
+  const chooser = useColumnChooser("dvt_colvis_planned", PLANNED_COLS);
+  const cols = chooser.cols;
   const cw = useColumnWidths("dvt_cols_planned", cols.map((c) => ({ key: c.key, w: c.w })));
   const [sort, setSort] = useState<Sort>(null);
   const [filters, setFilters] = useState<Record<string, string>>({});
@@ -222,6 +224,21 @@ export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow,
   const cellContent = (c: Col<DraftRow>, r: DraftRow) => {
     const text = cellText(c, r);
     if (c.key === "on_time" && text !== "—") return <span className={onTimeClass(text)}>{text}</span>;
+    if (c.key === "so" && r.so_number) {
+      return (
+        <span className="inline-flex items-center gap-1" title={r.so_description}>
+          <span className="font-mono text-[11px]">{r.so_number}</span>
+          <button type="button" onClick={(e) => { e.stopPropagation(); void navigator.clipboard?.writeText(r.so_number ?? ""); }} className="text-slate-400 hover:text-slate-700" aria-label={`Sao chép ${r.so_number}`} title="Sao chép">⧉</button>
+        </span>
+      );
+    }
+    if (c.key === "off_days") {
+      const d = r.calc?.off_days_detail;
+      if (d?.overridden) {
+        const tip = `OFF DAYS đã ghi đè\nCalculated: ${d.calculated ?? "—"}\nApplied: ${d.effective ?? "—"}\nSource: ${d.source}${d.reason ? `\nLý do: ${d.reason}` : ""}${d.by ? `\nBởi: ${d.by}` : ""}`;
+        return <span title={tip} data-testid="off-days-override">{text} <span className="pg-ovr">!</span></span>;
+      }
+    }
     if (c.key === "line") {
       const chipCls = r.line_assignments.length > 1 ? "pg-chip pg-adv" : r.transfer ? "pg-chip pg-viol" : "";
       const title = r.line_assignments.length > 1 ? "Dồn chuyền" : r.transfer ? "Chuyển chuyền" : "";
@@ -285,6 +302,7 @@ export default function PlannedGrid({ rows, editable, drag, onDropAt, onOpenRow,
           {cw.customized && <button onClick={cw.reset} className="rounded-md border border-slate-300 px-2 py-1" title="Đặt lại độ rộng cột mặc định">Đặt lại độ rộng cột</button>}
           <button onClick={() => setAll(true)} className="rounded-md border border-slate-300 px-2 py-1">Mở tất cả</button>
           <button onClick={() => setAll(false)} className="rounded-md border border-slate-300 px-2 py-1">Thu gọn tất cả</button>
+          {chooser.node}
           {action}
         </div>
         </div>

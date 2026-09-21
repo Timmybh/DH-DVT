@@ -61,6 +61,14 @@ class CommitBody(DraftBody):
     kind: str = Field("F", pattern="^(F|V)$")  # F = phương án con của version cơ sở, V = phương án tuần mới
 
 
+def _stamp(ops: list[dict], username: str) -> list[dict]:
+    """Người thực hiện ghi đè OFF DAYS lấy từ phiên đăng nhập (client chỉ gửi giá trị, lý do, thời điểm)."""
+    for op in ops:
+        if op.get("type") == "SET_OFF_DAYS":
+            op["by"] = username
+    return ops
+
+
 def _check_ops(ops: list[dict]) -> None:
     if len(ops) > MAX_OPS:
         raise HTTPException(413, f"Quá nhiều thao tác trong một bản nháp (tối đa {MAX_OPS})")
@@ -69,6 +77,7 @@ def _check_ops(ops: list[dict]) -> None:
 @router.post("/session/{session_id}/recheck")
 def recheck_draft(session_id: str, body: DraftBody, db: Session = Depends(get_db), user: User = Depends(require_perm("planning.recheck"))):
     _check_ops(body.ops)
+    _stamp(body.ops, user.username)
     session = svc.require_session(db, session_id, user)
     return svc.run_recheck(db, user, session, body.base_version_id, body.ops, body.draft_revision)
 
@@ -76,6 +85,7 @@ def recheck_draft(session_id: str, body: DraftBody, db: Session = Depends(get_db
 @router.post("/session/{session_id}/commit")
 def commit(session_id: str, body: CommitBody, db: Session = Depends(get_db), user: User = Depends(require_perm("planning.commit"))):
     _check_ops(body.ops)
+    _stamp(body.ops, user.username)
     session = svc.require_session(db, session_id, user)
     version = svc.commit_draft(db, user, session, body.base_version_id, body.ops, body.draft_revision, body.note, body.kind)
     return svc.version_view(version)
@@ -140,6 +150,9 @@ def version_rows(
     total = query.count()
     rows = query.order_by(PlanningVersionRow.factory_code, PlanningVersionRow.primary_line, PlanningVersionRow.sequence).offset(offset).limit(limit).all()
     dicts = [svc.row_to_dict(r) for r in rows]
+    from app.services import so_service
+
+    so_service.attach_so(db, dicts)
     refs = svc.refs_for_rows(db, dicts)
     return {"total": total, "rows": [{**svc._row_out(d), "ref": refs.get(d["row_uid"], {}), "calc": svc.row_calc(d, refs.get(d["row_uid"]))} for d in dicts]}
 

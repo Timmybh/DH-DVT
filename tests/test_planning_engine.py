@@ -65,7 +65,8 @@ def test_case_a_known_xn_inserts_and_autocalculates_from_previous_sequence():
     assert new["begin_prod_date"] == date(2026, 9, 18)
     assert abs(new["extra"]["serial"]["begin_prod_date"] - (to_serial(date(2026, 9, 18)) + 1 / 9)) < 1e-9
     assert new["total_day"] == 2.0
-    assert abs(new["extra"]["serial"]["end_prod_date"] - (new["extra"]["serial"]["begin_prod_date"] + 2 + 2 / 7)) < 1e-9
+    # END = BEGIN + TOTAL_DAY + OFF_DAYS, OFF_DAYS tính theo Lịch làm việc (Thứ sáu + Thứ bảy làm việc, Chủ nhật nghỉ nhưng nằm sau ngày làm việc cuối) => 0 ngày nghỉ
+    assert abs(new["extra"]["serial"]["end_prod_date"] - (new["extra"]["serial"]["begin_prod_date"] + 2)) < 1e-9
     assert new["end_prod_date"] == date(2026, 9, 20)
     assert changed == {new["row_uid"]}
 

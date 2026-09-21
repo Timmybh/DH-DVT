@@ -4,6 +4,7 @@ import { num } from "../../lib/format";
 import { cellText, Col, sortValue, UNPLANNED_COLS } from "../../lib/planColumns";
 import { DragInfo } from "./PlannedGrid";
 import { useColumnWidths } from "../../lib/useColumnWidths";
+import { useColumnChooser } from "../../lib/useColumnChooser";
 
 export interface UnplannedFilters {
   xn: string; // ALL | XN1 | XN2 | XN3 | UNASSIGNED
@@ -87,7 +88,8 @@ export default function UnplannedPanel({ baseVersionId, factories, editable, exc
     return () => clearTimeout(t);
   }, [filters, baseVersionId, reloadKey]);
 
-  const cols = UNPLANNED_COLS;
+  const chooser = useColumnChooser("dvt_colvis_unplanned", UNPLANNED_COLS);
+  const cols = chooser.cols;
   const cw = useColumnWidths("dvt_cols_unplanned", cols.map((c) => ({ key: c.key, w: c.w })));
   const offsets = useMemo(() => {
     let left = CTRL_W;
@@ -163,6 +165,7 @@ export default function UnplannedPanel({ baseVersionId, factories, editable, exc
         <input value={filters.model} onChange={(e) => set({ model: e.target.value })} placeholder="Model Code" className={`${input} w-24`} />
         <input value={filters.q} onChange={(e) => set({ q: e.target.value })} placeholder="Tìm nhanh..." className={`${input} min-w-[140px] flex-1`} />
         <button onClick={() => set(EMPTY)} className="rounded-md px-2 py-1 text-xs text-slate-500 hover:bg-slate-200">Xóa lọc</button>
+        {chooser.node}
       </div>
 
       <div
@@ -232,6 +235,11 @@ export default function UnplannedPanel({ baseVersionId, factories, editable, exc
                         {r.factory_assignment === "KNOWN" ? <span className="pg-chip pg-known">{r.factory_code}</span> : <span className="pg-chip pg-unk">Chưa xác định XN</span>}
                         {r.returned && <span className="pg-chip pg-viol" title="Đã trả về từ kế hoạch">↩</span>}
                       </>
+                    ) : c.key === "so" && r.so_number ? (
+                      <span className="inline-flex items-center gap-1" title={r.so_description}>
+                        <span className="font-mono text-[11px]">{r.so_number}</span>
+                        <button type="button" onClick={(e) => { e.stopPropagation(); void navigator.clipboard?.writeText(r.so_number ?? ""); }} className="text-slate-400 hover:text-slate-700" aria-label={`Sao chép ${r.so_number}`} title="Sao chép">⧉</button>
+                      </span>
                     ) : (
                       cellText(c, r)
                     )}

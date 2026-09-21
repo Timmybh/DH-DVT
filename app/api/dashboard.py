@@ -127,7 +127,7 @@ def drill_order(
 
 
 @router.get("/drill/qa")
-def drill_qa(category: str = Query("ALL", pattern="^(ALL|DAU_CHUYEN|INLINE|ENDLINE|PREFINAL)$"), month: str | None = None, db: Session = Depends(get_db), _: User = Viewer):
+def drill_qa(category: str = Query("ALL", pattern="^(ALL|INLINE|ENDLINE|PREFINAL)$"), month: str | None = None, db: Session = Depends(get_db), _: User = Viewer):
     year, mon = parse_month(month, svc.today_local())
     return svc.drill_qa(db, svc.scope_factories(db, "TONG")[0], category, year, mon)
 

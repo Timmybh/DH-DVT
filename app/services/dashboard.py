@@ -513,6 +513,8 @@ def drill_order(db: Session, factories: list[Factory], kind: str, status: str, y
 # ---------------------------------------------------------------- QA (Total Defect Count)
 # Nhóm QC (DB hipro) tạm ẩn — thêm lại ("QC", "QC") giữa Đầu chuyền và Inline khi kết nối hipro
 QA_LABELS = [("DAU_CHUYEN", "Đầu chuyền"), ("INLINE", "Inline"), ("ENDLINE", "Endline"), ("PREFINAL", "Prefinal (Final)")]
+# Phạm vi QA hiện hành (spec §35): chỉ Inline, Endline, Prefinal. QC + Đầu chuyền tạm ẩn, không tính, không cảnh báo thiếu dữ liệu — KHÔNG xóa code/nguồn.
+QA_ACTIVE = ("INLINE", "ENDLINE", "PREFINAL")
 
 
 def qa_summary(db: Session, all_factories: list[Factory], selected: list[Factory], is_total: bool, year: int, month: int) -> dict:
@@ -525,19 +527,20 @@ def qa_summary(db: Session, all_factories: list[Factory], selected: list[Factory
     )
     data = {(c, f): int(n or 0) for c, f, n in rows}
     cats = []
-    for key, label in QA_LABELS:
-        connected = key != "QC"
+    for key, label in [(k, l) for k, l in QA_LABELS if k in QA_ACTIVE]:
+        connected = True
         by = [{"code": f.code, "count": data.get((key, f.id), 0) if connected else None} for f in all_factories]
         cats.append({"key": key, "label": label, "connected": connected, "by_factory": by, "total": sum(b["count"] or 0 for b in by) if connected else None})
     latest = db.query(func.max(QaDefectDaily.day)).scalar()
     return {"month": f"{year}-{month:02d}", "categories": cats, "selected": None if is_total else selected[0].code, "latest_day": latest.isoformat() if latest else None,
-            "has_data": latest is not None, "note_qc": "Nhóm QC nằm trên DB hipro — chưa kết nối."}
+            "has_data": latest is not None, "note_qc": ""}
 
 
 def drill_qa(db: Session, all_factories: list[Factory], category: str, year: int, month: int) -> dict:
     first, last = month_bounds(year, month)
     fcode = {f.id: f.code for f in all_factories}
     q = db.query(QaDefectDaily).filter(QaDefectDaily.day >= first, QaDefectDaily.day <= last)
+    q = q.filter(QaDefectDaily.category.in_(QA_ACTIVE))  # nhóm tạm ẩn không tính vào tổng
     if category != "ALL":
         q = q.filter(QaDefectDaily.category == category)
     by_day: dict[date, dict[str, int]] = {}

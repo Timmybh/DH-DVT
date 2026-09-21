@@ -1,4 +1,6 @@
 from datetime import date
+import pytest
+from fastapi import HTTPException
 
 from app.services.calendar import OFF, OVERTIME, WORKING, CalendarResolver, Rule, off_days
 
@@ -161,14 +163,11 @@ def test_day_type_catalog_defaults_validation_and_custom_types():
         ct.update_type(db, "TET", {"color": "red"}, "admin")
     assert ct.update_type(db, "OTHER_OFF", {"is_active": False}, "admin").is_active is False                    # loại mẫu cũng tắt được
     ct.update_type(db, "OTHER_OFF", {"is_active": True}, "admin")
-    ct.delete_type(db, "TET")                                                                                   # và xóa được khi chưa dùng
-    assert "TET" not in {t.code for t in ct.list_types(db)}
+    assert not hasattr(ct, "delete_type")                                                                       # spec §34: loại ngày KHÔNG xóa, chỉ Active/Inactive
     custom = ct.create_type(db, "Nghỉ bảo trì máy", "OFF", "DATE", "#123456", "admin")
     assert custom.code == "NGHI_BAO_TRI_MAY" and not custom.is_system
     db.add(WorkingCalendarRule(scope_type="XN", scope_key="XN1", rule_type="DATE_OFF", day_type=custom.code, rule_date=date(2027, 3, 1)))
     db.commit()
-    with pytest.raises(HTTPException):
-        ct.delete_type(db, custom.code)                                                                         # đang được dùng
     with pytest.raises(HTTPException):
         ct.create_type(db, "Tăng ca", "OVERTIME", "ANY", "#123456", "admin")                                    # trùng tên loại mặc định
     # quy tắc cũ được gán loại ngày tương ứng
@@ -177,10 +176,48 @@ def test_day_type_catalog_defaults_validation_and_custom_types():
     db.commit()
     assert ct.backfill_rule_day_types(db) == 3
     assert sorted(r.day_type for r in db.query(WorkingCalendarRule).filter(WorkingCalendarRule.scope_key != "XN1")) == ["OTHER_OFF", "WEEKLY_OFF"]
-    # nếu loại mẫu tương ứng không tồn tại (người dùng đã xóa/không tạo) thì để trống, không bịa loại ngày
-    db.add(WorkingCalendarRule(scope_type="COMPANY", scope_key="", rule_type="OVERTIME", rule_date=date(2027, 6, 1)))
-    ct.delete_type(db, "OVERTIME") if not db.query(WorkingCalendarRule).filter(WorkingCalendarRule.day_type == "OVERTIME").count() else None
+    # danh mục trống (người dùng chưa tạo loại) thì quy tắc cũ để trống, không bịa loại ngày
+    engine2 = create_engine("sqlite://")
+    Base.metadata.create_all(engine2)
+    db2 = sessionmaker(bind=engine2)()
+    db2.add(WorkingCalendarRule(scope_type="COMPANY", scope_key="", rule_type="OVERTIME", rule_date=date(2027, 6, 1)))
+    db2.commit()
+    assert ct.backfill_rule_day_types(db2) == 0 and db2.query(WorkingCalendarRule).one().day_type == ""
+
+
+def test_rules_are_never_deleted_only_deactivated_and_inactive_rules_do_not_resolve():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from app.db.session import Base
+    from app.models.planning import WorkingCalendarRule
+    from app.services import calendar_types as ct
+    from app.services.planning_service import load_resolver
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    db.add_all([WorkingCalendarRule(scope_type="COMPANY", scope_key="", rule_type="WEEKLY_OFF", weekday=6, day_type="WEEKLY_OFF"),
+                WorkingCalendarRule(scope_type="COMPANY", scope_key="", rule_type="DATE_OFF", rule_date=date(2027, 2, 5), day_type="TET")])
     db.commit()
+    cal = load_resolver(db)
+    assert cal.status(date(2027, 3, 7)) == OFF and cal.status(date(2027, 2, 5)) == OFF
+    sunday = db.query(WorkingCalendarRule).filter(WorkingCalendarRule.weekday == 6).one()
+    r = ct.set_rule_status(db, sunday.id, False, "admin", "Đổi lịch")                                          # Ngưng áp dụng
+    assert r.status == "INACTIVE" and r.status_changed_by == "admin" and r.status_reason == "Đổi lịch"
+    assert load_resolver(db).status(date(2027, 3, 7)) == WORKING and load_resolver(db).status(date(2027, 2, 5)) == OFF   # Inactive không tham gia tính
+    assert db.query(WorkingCalendarRule).count() == 2                                                            # vẫn còn (không xóa)
+    with pytest.raises(HTTPException):
+        ct.set_rule_status(db, sunday.id, False, "admin")                                                        # đã ngưng
+    ct.set_rule_status(db, sunday.id, True, "admin")                                                             # Áp dụng lại
+    assert load_resolver(db).status(date(2027, 3, 7)) == OFF
+    with pytest.raises(HTTPException):
+        ct.set_rule_status(db, 9999, False, "admin")
+    import inspect
+
+    from app.api import calendar_rules
+
+    assert not any(getattr(rt, "methods", None) and "DELETE" in rt.methods for rt in calendar_rules.router.routes)     # không còn endpoint xóa
 
 
 # --------------------------------------------------------------------------- kiểu lặp: hằng tuần / hằng tháng / hằng năm, có giới hạn trong năm

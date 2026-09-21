@@ -132,6 +132,19 @@ V1.update({
     ),
 })
 
+# Phiên bản 2 (yêu cầu nghiệp vụ, spec §31): OFF DAYS tính theo LỊCH LÀM VIỆC thay vì TOTAL_DAY/7 của workbook.
+V2: dict = {
+    "OFF_DAYS": dict(
+        expression='IFERROR(OFF_DAYS_IN_SPAN(BEGIN_PROD_DATE, TOTAL_DAY), "")',
+        description="Số ngày Nghỉ (theo Lịch làm việc Chuyền > Xí nghiệp > Công ty) phát sinh trong khoảng thời gian may: tính từ ngày vào chuyền, cần TOTAL_DAY ngày làm việc. "
+                    "Nghỉ = Nghỉ hàng tuần, Nghỉ Tết, Nghỉ lễ khác, Nghỉ khác, Ngoại lệ = Nghỉ; Tăng ca và Ngoại lệ = Làm việc không tính. Có thể ghi đè (nhập tay hoặc lấy từ Excel) — giữ cả giá trị tính, giá trị ghi đè và giá trị áp dụng.",
+        workbook_formula="(v1 workbook: OFF DAYS = TOTAL DAY / 7 — thay bằng v2 theo yêu cầu nghiệp vụ)",
+        rounding="NONE (số ngày nguyên theo lịch)", calendar="DÙNG Lịch làm việc (Chuyền > Xí nghiệp > Công ty)",
+        result_type="number", source_columns="BEGIN_PROD_DATE, TOTAL_DAY + Lịch làm việc → OFF DAYS (cột 14)",
+    ),
+}
+V2_VERSION = 2
+
 # Bản nháp: công thức chưa được xác minh với workbook thì KHÔNG được publish
 DRAFTS: dict = {}
 

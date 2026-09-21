@@ -16,6 +16,7 @@ from app.models.planning import PlanningEditSession, PlanningVersion, PlanningVe
 from app.services.audit import write_audit
 from app.services import formula_runtime as fx
 from app.services.lanes import build_lanes, previous_map
+from app.services import so_service
 from app.services.resource_service import load_resources
 from app.services.calendar import CalendarResolver, Rule
 from app.services.dashboard import current_batch, today_local
@@ -37,7 +38,7 @@ log = logging.getLogger(__name__)
 ROW_COLUMNS = [
     "row_uid", "sequence", "origin", "source_key", "source_plan_row_id", "factory_code", "primary_line", "line_raw", "line_assignments",
     "transfer", "po_number", "style_cc", "model_code", "description", "customer", "sport", "season", "quantity", "capacity", "total_day",
-    "begin_prod_date", "end_prod_date", "warehouse_date", "chd", "note", "extra",
+    "begin_prod_date", "end_prod_date", "warehouse_date", "chd", "note", "extra", "so_id",
 ]
 
 
@@ -46,9 +47,11 @@ def load_resolver(db: Session) -> CalendarResolver:
     rules = [
         Rule(r.scope_type, r.scope_key, r.rule_type, r.weekday, r.rule_date, end_date=r.rule_end_date, day_type=r.day_type, rule_id=r.id, note=r.note,
              month=r.month, month_day=r.month_day, valid_from=r.valid_from, valid_to=r.valid_to)
-        for r in db.query(WorkingCalendarRule).order_by(WorkingCalendarRule.id).all()  # thứ tự đăng ký: quy tắc sau thắng khi cùng nhóm
+        for r in db.query(WorkingCalendarRule).filter(WorkingCalendarRule.status == "ACTIVE").order_by(WorkingCalendarRule.id).all()  # Inactive không tham gia tính; thứ tự đăng ký: quy tắc sau thắng khi cùng nhóm
     ]
-    return CalendarResolver(rules)
+    cal = CalendarResolver(rules)
+    fx.set_calendar(cal)  # công thức OFF_DAYS (v2) tính theo Lịch làm việc hiện hành
+    return cal
 
 
 def factory_codes(db: Session) -> set[str]:
@@ -217,7 +220,12 @@ def _baseline_extra(pr: PlanRow) -> dict:
         serial["end_prod_date"] = ref["end_serial"]
     if ref.get("wh_serial") is not None:
         serial["warehouse_date"] = ref["wh_serial"]
-    return {"ref": ref, "serial": serial}
+    extra = {"ref": ref, "serial": serial}
+    off = ref.get("off_days")
+    if isinstance(off, (int, float)) and not isinstance(off, bool):
+        # Import Excel: lấy NGUYÊN OFF DAYS của Excel (không làm tròn, không kiểm tra lại quy tắc cũ) và đánh dấu nguồn EXCEL_IMPORT
+        extra["off_days_override"] = {"value": float(off), "source": "EXCEL_IMPORT", "reason": "Giá trị OFF DAYS của file Excel", "by": "import", "at": ""}
+    return extra
 
 
 def _reconcile_with_formulas(rows: list[dict]) -> dict:
@@ -254,6 +262,8 @@ def create_baseline(db: Session, user: User, from_date: date | None, note: str) 
     batch = current_batch(db)
     if batch is None:
         raise HTTPException(409, "Chưa nhập file kế hoạch SX — không có dữ liệu để tạo phiên bản nền")
+    so_service.assign_for_batch(db, batch.id, user.username)  # mọi dòng đều có SO trước khi vào kế hoạch
+    db.flush()
     fmap = {f.id: f.code for f in db.query(Factory).all()}
     q = db.query(PlanRow).filter(PlanRow.batch_id == batch.id, PlanRow.planning_status == "PLANNED")
     if from_date:
@@ -279,7 +289,7 @@ def create_baseline(db: Session, user: User, from_date: date | None, note: str) 
                 "po_number": pr.po_number, "style_cc": pr.style_cc, "model_code": pr.model_code, "description": pr.description,
                 "customer": pr.customer, "sport": pr.sport, "season": pr.season, "quantity": pr.quantity, "capacity": pr.capacity,
                 "total_day": pr.total_day, "begin_prod_date": pr.begin_prod_date, "end_prod_date": pr.end_prod_date,
-                "warehouse_date": pr.warehouse_date, "chd": pr.chd, "note": pr.note, "extra": _baseline_extra(pr),
+                "warehouse_date": pr.warehouse_date, "chd": pr.chd, "note": pr.note, "extra": _baseline_extra(pr), "so_id": pr.so_id,
             }
         )
     # thứ tự ban đầu trong chuyền = thứ tự dòng trong workbook (chuỗi BEGIN/END của workbook nối theo thứ tự này)
@@ -358,7 +368,7 @@ def refs_for_rows(db: Session, rows: list[dict]) -> dict[str, dict]:
 
 def _unplanned_dict(pr: PlanRow, fmap: dict[int, str]) -> dict:
     return {
-        "ref": plan_ref(pr),
+        "ref": plan_ref(pr), "so_id": pr.so_id,
         "id": pr.id, "source_key": source_key(pr.po_number, pr.style_cc, pr.model_code, pr.customer, pr.quantity),
         "factory_code": fmap.get(pr.factory_id, ""), "factory_assignment": pr.factory_assignment, "mapping_status": pr.mapping_status,
         "mapping_note": pr.mapping_note, "fac_raw": pr.fac_raw,
@@ -408,7 +418,7 @@ def _returned_entries(db: Session, base_version_id: int | None, f: dict) -> list
             "factory_assignment": "KNOWN", "mapping_status": "OK", "mapping_note": "", "fac_raw": r["factory_code"],
             "po_number": r["po_number"], "style_cc": r["style_cc"], "model_code": r["model_code"], "description": r["description"],
             "customer": r["customer"], "sport": r["sport"], "season": r["season"], "quantity": r["quantity"], "capacity": r["capacity"],
-            "chd": r.get("chd"), "note": r.get("note", ""), "po_date": None, "ref": refs.get(r["row_uid"], {}), "snapshot": r,
+            "chd": r.get("chd"), "note": r.get("note", ""), "po_date": None, "ref": refs.get(r["row_uid"], {}), "snapshot": r, "so_id": r.get("so_id"),
         })
     return out
 
@@ -438,12 +448,16 @@ def unplanned_page(db: Session, base_version_id: int | None, f: dict, limit: int
             q = q.filter(col.ilike(f"%{f[key]}%"))
     if f.get("q"):
         like = f"%{f['q']}%"
+        from app.models.so import PlanningSO
+
+        so_ids = db.query(PlanningSO.id).filter(PlanningSO.so_number.ilike(like) | PlanningSO.description.ilike(like))  # tìm theo SO Number / SO Description
         q = q.filter(or_(PlanRow.po_number.ilike(like), PlanRow.style_cc.ilike(like), PlanRow.model_code.ilike(like), PlanRow.description.ilike(like),
-                         PlanRow.customer.ilike(like), PlanRow.sport.ilike(like), PlanRow.season.ilike(like)))
+                         PlanRow.customer.ilike(like), PlanRow.sport.ilike(like), PlanRow.season.ilike(like), PlanRow.so_id.in_(so_ids)))
     placed = _placed_keys(db, base_version_id)
     rows = [d for d in (_unplanned_dict(pr, fmap) for pr in q.order_by(PlanRow.customer, PlanRow.po_number, PlanRow.id).all()) if d["source_key"] not in placed]
     rows = _returned_entries(db, base_version_id, f) + rows
     page = rows[offset : offset + limit]
+    so_service.attach_so(db, page)
     for d in page:
         for k in ("chd", "po_date"):
             d[k] = d[k].isoformat() if hasattr(d[k], "isoformat") else (d[k] or None)

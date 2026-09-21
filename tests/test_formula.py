@@ -51,7 +51,7 @@ def test_dependencies_extracted_and_cycle_detected():
 
 def test_every_published_canonical_case_passes():
     canon = json.loads(CANONICAL_PATH.read_text(encoding="utf-8"))
-    fs = fx.builtin_set()
+    fs = fx.workbook_set()  # ca chuẩn lấy từ workbook => đối chiếu với bộ công thức v1 (OFF DAYS = TOTAL DAY / 7); OFF_DAYS v2 theo lịch có test riêng
     total = 0
     for code, cases in canon["cases"].items():
         if code not in fs.formulas:
@@ -120,7 +120,7 @@ def test_first_in_lane_keeps_manual_anchor():
 
 
 def test_display_columns_off_days_and_on_time():
-    fs = fx.active()
+    fs = fx.workbook_set()  # v1 workbook: OFF DAYS = TOTAL DAY / 7
     r = {"quantity": 1110, "capacity": 1200, "total_day": 0.925, "chd": date(2026, 9, 20), "extra": {"ref": {"ehd_etd": "2026-09-30"}}}
     d = fs.display(r)
     assert d["off_days"] == pytest.approx(0.925 / 7) and d["on_time"] == "DELAY"

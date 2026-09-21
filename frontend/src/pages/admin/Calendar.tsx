@@ -7,7 +7,7 @@ type Repeat = "NONE" | "WEEKLY" | "MONTHLY" | "YEARLY";
 type Effect = "OFF" | "WORKING" | "OVERTIME";
 interface Rule {
   id: number; scope_type: string; scope_key: string; rule_type: string; effect: Effect; repeat: Repeat; day_type: string; weekday: number | null; month: number | null; month_day: number | null;
-  rule_date: string | null; rule_end_date: string | null; valid_from: string | null; valid_to: string | null; note: string; created_by: string;
+  rule_date: string | null; rule_end_date: string | null; valid_from: string | null; valid_to: string | null; note: string; created_by: string; status: "ACTIVE" | "INACTIVE"; status_changed_by: string; status_reason: string;
 }
 interface Day { date: string; status: string; scope: string; scope_key: string; day_type: string; day_type_name: string; color: string; inherited: boolean; overrides: boolean; note: string }
 type Mode = "DATE" | "RANGE" | "WEEKLY" | "MONTHLY" | "YEARLY";
@@ -53,6 +53,7 @@ export default function Calendar() {
   const [days, setDays] = useState<Day[]>([]);
   const [forms, setForms] = useState<Record<string, Form>>({});
   const [sel, setSel] = useState("");
+  const [showInactive, setShowInactive] = useState(false);
   const [newType, setNewType] = useState({ name: "", effect: "OFF", recurrence: "DATE", color: "#94a3b8" });
 
   const loadTypes = useCallback(async () => setTypes((await api.get<DayType[]>("/planning/calendar/types")).data), []);
@@ -79,7 +80,7 @@ export default function Calendar() {
 
   const isOwn = (r: Rule) => r.scope_type === scope.type && r.scope_key === scopeKey;
   const chain = ["COMPANY", ...(scope.type !== "COMPANY" ? [`XN:${scope.xn}`] : []), ...(scope.type === "LINE" && line ? [`LINE:${scope.xn}:${line}`] : [])];
-  const relevant = rules.filter((r) => chain.includes(r.scope_type === "COMPANY" ? "COMPANY" : `${r.scope_type}:${r.scope_key}`) && inYear(r, year));
+  const relevant = rules.filter((r) => chain.includes(r.scope_type === "COMPANY" ? "COMPANY" : `${r.scope_type}:${r.scope_key}`) && inYear(r, year) && (showInactive || r.status === "ACTIVE"));
   const selType = activeTypes.find((t) => t.code === sel) ?? activeTypes[0];
   const orderRules = (a: Rule, b: Rule) => (a.repeat === "NONE" ? 0 : 1) - (b.repeat === "NONE" ? 0 : 1) || (a.rule_date ?? "").localeCompare(b.rule_date ?? "") || a.id - b.id;
 
@@ -112,10 +113,12 @@ export default function Calendar() {
       return `Đã đăng ký "${t.name}" cho ${scopeName}.`;
     });
   };
-  const remove = (r: Rule) => {
-    if (!window.confirm(`Xóa đăng ký "${describe(r)}"?${scope.type !== "COMPANY" ? " (Xí nghiệp/chuyền sẽ kế thừa lại lịch cấp trên.)" : ""}`)) return;
-    void run(async () => { await api.delete(`/planning/calendar/${r.id}`); return "Đã xóa đăng ký."; });
+  // Lịch KHÔNG xóa: "Ngưng áp dụng" (Inactive không tham gia tính, vẫn giữ lịch sử) / "Áp dụng lại"
+  const deactivate = (r: Rule) => {
+    if (!window.confirm(`Ngưng áp dụng "${describe(r)}"?${scope.type !== "COMPANY" ? " (Xí nghiệp/chuyền sẽ kế thừa lại lịch cấp trên.)" : ""} Đăng ký vẫn được lưu và có thể áp dụng lại.`)) return;
+    void run(async () => { await api.post(`/planning/calendar/${r.id}/deactivate`, { reason: "" }); return "Đã ngưng áp dụng đăng ký."; });
   };
+  const reactivate = (r: Rule) => void run(async () => { await api.post(`/planning/calendar/${r.id}/activate`, { reason: "" }); return "Đã áp dụng lại đăng ký."; });
   // ghi đè một đăng ký kế thừa: tạo đăng ký NGƯỢC hiệu lực (nghỉ -> làm việc; làm việc/tăng ca -> nghỉ) cho phạm vi đang chỉnh, cùng ngày / cùng kiểu lặp
   const override = (r: Rule) => {
     const want: "WORKING" | "OFF" = r.effect === "OFF" ? "WORKING" : "OFF";
@@ -137,10 +140,6 @@ export default function Calendar() {
   };
   const addType = async () => {
     try { await api.post("/planning/calendar/types", newType); setNewType({ name: "", effect: "OFF", recurrence: "DATE", color: "#94a3b8" }); await loadTypes(); } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); }
-  };
-  const delType = async (code: string) => {
-    if (!window.confirm("Xóa loại ngày này?")) return;
-    try { await api.delete(`/planning/calendar/types/${code}`); await loadTypes(); } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); }
   };
   const templates = async () => {
     try {
@@ -210,7 +209,8 @@ export default function Calendar() {
               <span className="h-3 w-3 rounded-full" style={{ background: selType.color }} />
               <h2 className="text-base font-bold">{selType.name}</h2>
               <span className="pg-chip bg-slate-500/20 text-slate-500">{selType.effect === "CHOICE" ? "Làm việc hoặc Nghỉ" : EFFECT_LABEL[selType.effect]}</span>
-              <span className="ml-auto text-xs text-slate-400">{selList.length} đăng ký trong {year} · {scopeName}</span>
+              <label className="ml-auto flex items-center gap-1 text-xs text-slate-500"><input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} data-testid="show-inactive" /> hiện cả đã ngưng</label>
+              <span className="text-xs text-slate-400">{selList.length} đăng ký trong {year} · {scopeName}</span>
             </div>
 
             <ul className="mt-3 space-y-1 text-sm" data-testid="registered-list">
@@ -218,12 +218,14 @@ export default function Calendar() {
                 const mine = isOwn(r);
                 return (
                   <li key={r.id} className={`flex flex-wrap items-center gap-2 rounded-lg px-3 py-1.5 ${mine ? "bg-slate-500/5" : "opacity-60"}`} data-testid={`rule-${r.id}`}>
-                    <span className="font-medium">{describe(r)}</span>
+                    <span className={`font-medium ${r.status === "INACTIVE" ? "line-through" : ""}`}>{describe(r)}</span>
+                    {r.status === "INACTIVE" && <span className="pg-chip bg-slate-500/20 text-slate-500" title={r.status_reason || `Ngưng bởi ${r.status_changed_by}`}>ngưng áp dụng</span>}
                     {r.repeat !== "NONE" && <span className="pg-chip bg-indigo-500/15 text-indigo-500">lặp</span>}
                     {r.note && <span className="text-xs text-slate-400">{r.note}</span>}
                     <span className="ml-auto flex items-center gap-2 text-xs">
                       {!mine && <span className="text-slate-400">kế thừa · {SCOPE_LABEL[r.scope_type]}</span>}
-                      {manage && mine && <button onClick={() => remove(r)} className="text-red-500 hover:underline">Xóa</button>}
+                      {manage && mine && r.status === "ACTIVE" && <button onClick={() => deactivate(r)} className="text-red-500 hover:underline" data-testid={`deactivate-${r.id}`}>Ngưng áp dụng</button>}
+                      {manage && mine && r.status === "INACTIVE" && <button onClick={() => reactivate(r)} className="text-brand hover:underline" data-testid={`activate-${r.id}`}>Áp dụng lại</button>}
                       {manage && !mine && <button onClick={() => override(r)} className="text-brand hover:underline" data-testid={`override-${r.id}`}>Ghi đè</button>}
                     </span>
                   </li>
@@ -301,7 +303,7 @@ export default function Calendar() {
       {/* danh mục loại ngày */}
       <details className="rounded-2xl border border-slate-200 bg-white p-4" open={types.length === 0} data-testid="day-types">
         <summary className="cursor-pointer text-sm font-bold">Danh mục loại ngày (cấp công ty) — {types.length} loại</summary>
-        <p className="mb-3 mt-2 text-[11px] text-slate-400">Công ty đặt tên; xí nghiệp / chuyền dùng lại đúng các tên này. Đổi tên / màu áp dụng toàn hệ thống; loại đang được dùng thì không xóa được. Cột "kiểu thường dùng" chỉ gợi ý kiểu đăng ký mặc định — loại nào cũng đăng ký được theo ngày lẫn kiểu lặp.</p>
+        <p className="mb-3 mt-2 text-[11px] text-slate-400">Công ty đặt tên; xí nghiệp / chuyền dùng lại đúng các tên này. Đổi tên / màu áp dụng toàn hệ thống; loại không xóa — chỉ tắt (đang dùng = bỏ chọn). Cột "kiểu thường dùng" chỉ gợi ý kiểu đăng ký mặc định — loại nào cũng đăng ký được theo ngày lẫn kiểu lặp.</p>
         <div className="space-y-1.5">
           {types.map((t) => (
             <div key={t.code} className={`flex flex-wrap items-center gap-2 text-sm ${t.is_active ? "" : "opacity-50"}`}>
@@ -310,7 +312,6 @@ export default function Calendar() {
               <span className="pg-chip bg-slate-500/20 text-slate-500">{t.effect === "CHOICE" ? "Làm việc hoặc Nghỉ" : EFFECT_LABEL[t.effect]}</span>
               <span className="text-xs text-slate-400">{REC_LABEL[t.recurrence]}</span>
               {manage && <label className="flex items-center gap-1 text-xs text-slate-500"><input type="checkbox" checked={t.is_active} onChange={(e) => saveType(t.code, { is_active: e.target.checked })} /> đang dùng</label>}
-              {manage && <button onClick={() => delType(t.code)} className="text-xs text-red-500 hover:underline">Xóa</button>}
             </div>
           ))}
         </div>

@@ -30,6 +30,7 @@ from app.services.sync_core import add_items
 log = logging.getLogger(__name__)
 
 QA_CATEGORIES = ("DAU_CHUYEN", "INLINE", "ENDLINE", "PREFINAL")
+QA_ACTIVE = ("INLINE", "ENDLINE", "PREFINAL")  # spec §35: Đầu chuyền + QC tạm ẩn — không đồng bộ, không tính (code truy vấn vẫn giữ)
 LATE_CLOSE_DAYS = 3  # những ngày đầu tháng còn đồng bộ thêm tháng trước để bắt các phiếu kiểm nhập muộn
 _XN = re.compile(r"(?i)(?:XN|X[ÍI] ?NGHI[ỆE]P(?: MAY)?)\s*0?(\d)")
 
@@ -122,6 +123,8 @@ def sync_ops(db: Session, run: SyncRun, conn: Connection, fmap: dict[int, int]) 
     # ---- QA
     total_rows = 0
     for cat, sql in _qa_queries(since).items():
+        if cat not in QA_ACTIVE:
+            continue
         try:
             agg: dict[tuple[int, date], int] = defaultdict(int)
             for r in conn.execute(text(sql), {"since": since}):

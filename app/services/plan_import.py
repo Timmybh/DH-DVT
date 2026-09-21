@@ -343,6 +343,9 @@ def _sync(db: Session, run: SyncRun, path: Path, filename: str, username: str) -
             {"name": "LAO ĐỘNG", "read": len(parsed.labor), "matched": labor_matched, "unmatched": len(unmatched_labor)},
         ],
     }
+    from app.services import so_service
+
+    so_service.assign_for_batch(db, batch.id, username, "IMPORT")  # SO có ngay từ Unplanned; cùng business item thì dùng lại SO, không cấp lại
     db.commit()
 
 

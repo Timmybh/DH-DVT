@@ -68,14 +68,18 @@ def test_qa_summary_totals_per_category_and_factory():
         QaDefectDaily(factory_id=f1.id, category="INLINE", day=date(2026, 9, 4), defect_count=3),
         QaDefectDaily(factory_id=f2.id, category="ENDLINE", day=date(2026, 9, 4), defect_count=5),
         QaDefectDaily(factory_id=f2.id, category="ENDLINE", day=date(2026, 8, 31), defect_count=99),  # tháng khác
+        QaDefectDaily(factory_id=f1.id, category="DAU_CHUYEN", day=date(2026, 9, 3), defect_count=50),  # nhóm tạm ẩn: không tính
     ])
     db.commit()
     qa = qa_summary(db, fs, [f2], False, 2026, 9)
     cats = {c["key"]: c for c in qa["categories"]}
-    assert [c["key"] for c in qa["categories"]] == ["DAU_CHUYEN", "INLINE", "ENDLINE", "PREFINAL"]  # QC tạm ẩn
+    assert [c["key"] for c in qa["categories"]] == ["INLINE", "ENDLINE", "PREFINAL"]  # spec §35: QC + Đầu chuyền tạm ẩn, không tính
     assert {b["code"]: b["count"] for b in cats["INLINE"]["by_factory"]} == {"XN1": 10, "XN2": 0, "XN3": 0}
     assert cats["ENDLINE"]["total"] == 5
-    assert "QC" not in cats
+    assert "QC" not in cats and "DAU_CHUYEN" not in cats and qa["note_qc"] == ""            # không cảnh báo thiếu dữ liệu nhóm tạm ẩn
+    from app.services.dashboard import drill_qa
+
+    assert sum(r["total"] for r in drill_qa(db, fs, "ALL", 2026, 9)["rows"]) == 15                                  # tổng ALL không cộng Đầu chuyền
     assert qa["selected"] == "XN2"
     assert qa_summary(db, fs, fs, True, 2026, 9)["selected"] is None
 

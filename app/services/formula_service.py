@@ -119,6 +119,22 @@ def seed_columns_and_formulas(db: Session) -> None:
                 defn.status, defn.published_by, defn.published_at = "PUBLISHED", "system (đối chiếu workbook)", utcnow()
             elif group == "V1":
                 log.warning("Công thức %s v1 KHÔNG đạt ca chuẩn — để ở trạng thái DRAFT", code)
+    # phiên bản 2 (yêu cầu nghiệp vụ): Publish trực tiếp, thay v1 của cùng cột (v1 chuyển RETIRED, vẫn giữ để truy vết)
+    for code, spec in defs.V2.items():
+        if (code, defs.V2_VERSION) in have:
+            continue
+        node, deps = compile_expression(spec["expression"], set(fx.BUILTIN_COLUMNS))
+        db.add(FormulaDefinition(
+            column_code=code, version=defs.V2_VERSION, status="PUBLISHED", created_by="system", published_by="system (yêu cầu nghiệp vụ §31)", published_at=utcnow(),
+            expression=spec["expression"], result_type=spec["result_type"], rounding_policy=spec["rounding"], calendar_policy=spec["calendar"], description=spec["description"],
+            workbook_formula=spec["workbook_formula"], source_document="Master Review & Implementation Spec §31", source_sheet="", source_columns=spec["source_columns"],
+            dependencies=deps.as_json(), canonical_cases=[], tolerance=canon.get("tolerance", 1e-4),
+            verification={"note": "Theo yêu cầu nghiệp vụ: tính theo Lịch làm việc; ca chuẩn workbook (v1) không áp dụng. Kiểm thử bằng test backend."},
+        ))
+        db.flush()
+        v1 = db.query(FormulaDefinition).filter(FormulaDefinition.column_code == code, FormulaDefinition.version == 1).first()
+        if v1 is not None and v1.status == "PUBLISHED":
+            v1.status = "RETIRED"
     db.commit()
 
 

@@ -7,7 +7,7 @@ Dòng là dict như PlanningVersionRow. Ngày lưu ở cột ``date`` (làm trò
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 from app.services import formula_defs as defs
@@ -33,6 +33,39 @@ class ColumnMeta:
     @property
     def ref_key(self) -> str | None:
         return self.source[4:] if self.source.startswith("ref:") else None
+
+
+# Lịch làm việc dùng cho công thức OFF_DAYS (nạp từ DB bởi planning_service.load_resolver; engine thuần đặt qua apply_ops/recheck)
+_calendar = None
+MAX_SPAN_DAYS = 3660
+
+
+def set_calendar(cal) -> None:
+    global _calendar
+    _calendar = cal
+
+
+def calendar_off_days(row: dict, begin_serial: float, working_days: float) -> float:
+    """Số ngày NGHỈ gặp phải khi làm đủ `working_days` ngày làm việc, bắt đầu từ ngày vào chuyền (tính cả ngày bắt đầu).
+    Ngày làm việc cuối có thể là ngày lẻ (0,5 ngày vẫn chiếm trọn một ngày lịch). Ngày Nghỉ sau ngày làm việc cuối không tính."""
+    cal = _calendar
+    if cal is None or working_days <= 0:
+        return 0.0
+    cur = from_serial(begin_serial)
+    if cur is None:
+        raise FormulaError("Ngày vào chuyền không hợp lệ")
+    xn, line = row.get("factory_code") or None, row.get("primary_line") or None
+    remaining, off, guard = float(working_days), 0, 0
+    while remaining > 1e-9:
+        if guard >= MAX_SPAN_DAYS:
+            raise FormulaError("Lịch làm việc đang Nghỉ liên tục quá dài — không tính được OFF DAYS")
+        if cal.is_working_day(cur, xn, line):
+            remaining -= 1
+        else:
+            off += 1
+        cur += timedelta(days=1)
+        guard += 1
+    return float(off)
 
 
 BUILTIN_COLUMNS: dict[str, ColumnMeta] = {c[0]: ColumnMeta(c[0], c[1], c[2], c[3], c[4], c[5], c[6]) for c in defs.COLUMNS}
@@ -115,11 +148,16 @@ class FormulaSet:
             get=lambda c: self.effective(row, prev, c, stack),
             prev=lambda c: self._prev_value(prev, c),
             manual=lambda: self.stored(row, code),
+            off_days=lambda b, w: calendar_off_days(row, b, w),
         )
         return evaluate(f.node, ctx)
 
     def effective(self, row: dict, prev: dict | None, code: str, _stack: tuple[str, ...] = ()) -> Any:
         """EffectiveValue: OVERRIDE thắng; nếu không thì công thức (nếu có); nếu không thì giá trị nhập."""
+        if code == "OFF_DAYS":  # OFF DAYS ghi đè (nhập tay / lấy từ Excel) nằm ở extra.off_days_override
+            ov = (row.get("extra") or {}).get("off_days_override") or {}
+            if ov.get("value") is not None:
+                return float(ov["value"])
         if self.is_overridden(row, code) or code not in self.formulas:
             return self.stored(row, code)
         try:
@@ -164,6 +202,14 @@ class FormulaSet:
                     v = self.calculated(row, None, code)
                 except FormulaError:
                     v = None
+                if code == "OFF_DAYS":  # giữ riêng: giá trị tính / ghi đè / nguồn / áp dụng
+                    ov = (row.get("extra") or {}).get("off_days_override") or {}
+                    has = ov.get("value") is not None
+                    v = None if v == "" else v
+                    out["off_days"] = float(ov["value"]) if has else v
+                    out["off_days_detail"] = {"calculated": v, "override": float(ov["value"]) if has else None, "source": ov.get("source") if has else None, "reason": ov.get("reason", "") if has else "",
+                                              "by": ov.get("by", "") if has else "", "at": ov.get("at", "") if has else "", "effective": out["off_days"], "overridden": has}
+                    continue
                 v = None if v == "" else v
                 if v is not None and self.columns[code].value_type == "date":
                     v = defs.serial_to_iso(float(v))
@@ -189,6 +235,13 @@ def build_set(defs_by_code: dict[str, tuple[int, str]], columns: dict[str, Colum
 
 
 def builtin_set() -> FormulaSet:
+    base = {code: (defs.BUILTIN_VERSION, spec["expression"]) for code, spec in defs.V1.items()}
+    base.update({code: (defs.V2_VERSION, spec["expression"]) for code, spec in defs.V2.items()})  # phiên bản 2 thay phiên bản 1 của cùng cột
+    return build_set(base)
+
+
+def workbook_set() -> FormulaSet:
+    """Bộ công thức v1 (khớp workbook: OFF DAYS = TOTAL DAY / 7) — dùng đối chiếu / kiểm thử."""
     return build_set({code: (defs.BUILTIN_VERSION, spec["expression"]) for code, spec in defs.V1.items()})
 
 

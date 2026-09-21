@@ -43,7 +43,14 @@ def _upgrade_schema() -> None:
             "ALTER TABLE working_calendar_rules ADD COLUMN IF NOT EXISTS month_day INTEGER",
             "ALTER TABLE working_calendar_rules ADD COLUMN IF NOT EXISTS valid_from DATE",
             "ALTER TABLE working_calendar_rules ADD COLUMN IF NOT EXISTS valid_to DATE",
+            "ALTER TABLE working_calendar_rules ADD COLUMN IF NOT EXISTS status VARCHAR(10) NOT NULL DEFAULT 'ACTIVE'",
+            "ALTER TABLE working_calendar_rules ADD COLUMN IF NOT EXISTS status_changed_by VARCHAR(100) NOT NULL DEFAULT ''",
+            "ALTER TABLE working_calendar_rules ADD COLUMN IF NOT EXISTS status_changed_at TIMESTAMP WITH TIME ZONE",
+            "ALTER TABLE working_calendar_rules ADD COLUMN IF NOT EXISTS status_reason VARCHAR(200) NOT NULL DEFAULT ''",
+            "ALTER TABLE plan_rows ADD COLUMN IF NOT EXISTS so_id INTEGER",
+            "ALTER TABLE planning_version_rows ADD COLUMN IF NOT EXISTS so_id INTEGER",
             "ALTER TABLE actual_mappings ALTER COLUMN status TYPE VARCHAR(16)",
+            "ALTER TABLE actual_mappings ADD COLUMN IF NOT EXISTS mapped_so_id INTEGER",
             "ALTER TABLE actual_mappings ALTER COLUMN method TYPE VARCHAR(24)",
         ):
             try:
@@ -98,4 +105,10 @@ def run_seed() -> None:
 
         dashboard_meta.seed_dashboard_meta(db)
         formula_service.refresh_active(db)
+        from app.services import planning_service
+
+        planning_service.load_resolver(db)  # nạp Lịch làm việc cho công thức OFF_DAYS
+        from app.services import so_service
+
+        so_service.bulk_issue_current(db, "system")  # cấp SO TẠM cho dữ liệu hiện có chưa có SO (UAT); chạy lại an toàn
         recover_stale_runs(db)
