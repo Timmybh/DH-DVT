@@ -25,7 +25,7 @@ def options(_: User = View):
     """Danh sách giá trị hợp lệ để UI dựng ô chọn (không hard-code phía frontend)."""
     return {
         "display_types": list(meta.DISPLAY_TYPES), "scopes": list(meta.SCOPES), "drilldowns": list(meta.DRILLDOWNS), "refresh_modes": list(meta.REFRESH_MODES),
-        "sections": list(meta.SECTIONS), "layout_modes": list(meta.LAYOUT_MODES), "layout_scopes": list(meta.LAYOUT_SCOPES), "grid_columns": meta.GRID_COLUMNS,
+        "sections": list(meta.SECTIONS), "layout_modes": list(meta.LAYOUT_MODES), "layout_scopes": list(meta.LAYOUT_SCOPES), "grid_columns": meta.GRID_COLUMNS, "section_presets": meta.SECTION_PRESETS,
     }
 
 
@@ -195,6 +195,15 @@ class LayoutItemBody(BaseModel):
     is_visible: bool = True
     collapsed: bool = False
     config_override_json: dict[str, Any] = {}
+    section_ref: str | None = None
+    column_no: int = 0
+
+
+class SectionBody(BaseModel):
+    ref: str
+    title: str = Field('', max_length=120)
+    preset: str = '100'
+    is_visible: bool = True
 
 
 class LayoutBody(BaseModel):
@@ -205,12 +214,15 @@ class LayoutBody(BaseModel):
     is_default: bool | None = None
     description: str | None = Field(None, max_length=300)
     items: list[LayoutItemBody] | None = None
+    sections: list[SectionBody] | None = None
 
 
 def _payload(body: LayoutBody) -> dict:
     d = body.model_dump(exclude_none=True)
     if body.items is not None:
         d["items"] = [i.model_dump() for i in body.items]
+    if body.sections is not None:
+        d["sections"] = [x.model_dump() for x in body.sections]
     return d
 
 

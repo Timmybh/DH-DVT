@@ -15,6 +15,7 @@ from app.models.dashboard_cfg import (
     DashboardIndicatorGroup,
     DashboardLayout,
     DashboardLayoutItem,
+    DashboardLayoutSection,
     DashboardRuleRegistry,
 )
 from app.models.data import SyncRun
@@ -29,7 +30,7 @@ def db(monkeypatch):
     Base.metadata.create_all(
         engine,
         tables=[Factory.__table__, SyncRun.__table__, DashboardIndicatorGroup.__table__, DashboardIndicator.__table__, DashboardRuleRegistry.__table__,
-                DashboardLayout.__table__, DashboardLayoutItem.__table__],
+                DashboardLayout.__table__, DashboardLayoutItem.__table__, DashboardLayoutSection.__table__],
     )
     s = sessionmaker(bind=engine)()
     s.add_all([Factory(code=f"XN{n}", name=f"Xí nghiệp {n}", sql_xn_id=n, display_order=n) for n in (1, 2, 3)])
@@ -237,3 +238,61 @@ def test_group_crud_and_inactive_group_hides_indicators(db):
     assert m.build_runtime(db, ADMIN, "TONG")["items"] == []
     with pytest.raises(HTTPException):
         m.save_group(db, ADMIN, {"group_code": "G3", "group_name": "x", "layout_mode": "MASONRY"})
+
+
+def sec_payload(*sections):
+    """sections: (ref, preset, [(indicator, column)])"""
+    return ([{"ref": r, "title": r, "preset": p} for r, p, _ in sections],
+            [{"indicator_code": code, "section_ref": r, "column_no": col} for r, _p, ws in sections for code, col in ws])
+
+
+def test_layout_designer_sections_columns_and_duplicate_widget(db):
+    m.save_indicator(db, ADMIN, ind("A"))
+    m.save_indicator(db, ADMIN, ind("B"))
+    secs, items = sec_payload(("s1", "66_34", [("A", 0), ("A", 0), ("B", 1)]), ("s2", "100", [("B", 0)]))     # cùng chỉ số A hai lần = Duplicate widget
+    l = m.create_layout(db, ADMIN, {"layout_code": "D", "layout_name": "D", "sections": secs, "items": items})
+    v = m.layout_view(db, l, True)
+    assert [x["preset"] for x in v["sections"]] == ["66_34", "100"] and v["sections"][0]["spans"] == [8, 4]
+    a1, a2, b1, b2 = v["items"]
+    assert (a1["grid_x"], a1["width"]) == (0, 8) and (b1["grid_x"], b1["width"]) == (8, 4) and a1["column_no"] == 0 and b1["column_no"] == 1
+    assert a2["grid_y"] > a1["grid_y"] and b2["width"] == 12                                                  # widget xếp chồng trong cột; Section 100% chiếm cả hàng
+    m.publish_layout(db, ADMIN, l.id)                                                                          # không kiểm chồng lấn trong chế độ Section
+
+
+def test_layout_designer_validation_and_column_clamp(db):
+    m.save_indicator(db, ADMIN, ind("A"))
+    m.save_indicator(db, ADMIN, ind("B"))
+    secs, items = sec_payload(("s1", "100", [("A", 3)]))                                                        # cột vượt preset -> kẹp về cột cuối
+    l = m.create_layout(db, ADMIN, {"layout_code": "V", "layout_name": "V", "sections": secs, "items": items})
+    assert m.layout_view(db, l, True)["items"][0]["column_no"] == 0
+    with pytest.raises(HTTPException):
+        m.update_layout(db, ADMIN, l.id, {"sections": [{"ref": "x", "preset": "70_30"}], "items": []})           # preset lạ
+    with pytest.raises(HTTPException):
+        m.update_layout(db, ADMIN, l.id, {"sections": [{"ref": "x", "preset": "100"}], "items": [{"indicator_code": "A", "section_ref": "zzz"}]})
+    with pytest.raises(HTTPException):
+        m.update_layout(db, ADMIN, l.id, {"sections": [{"ref": "x", "preset": "100"}, {"ref": "x", "preset": "100"}], "items": []})   # ref trùng
+
+
+def test_layout_designer_clone_keeps_sections_and_runtime_returns_them(db):
+    m.save_indicator(db, ADMIN, ind("A"))
+    m.save_indicator(db, ADMIN, ind("B"))
+    secs, items = sec_payload(("s1", "50_50", [("A", 0), ("B", 1)]))
+    l = m.publish_layout(db, ADMIN, m.create_layout(db, ADMIN, {"layout_code": "C", "layout_name": "C", "sections": secs, "items": items}).id)
+    draft = m.clone_layout(db, ADMIN, l.id)
+    dv = m.layout_view(db, draft, True)
+    assert [x["preset"] for x in dv["sections"]] == ["50_50"] and [i["column_no"] for i in dv["items"]] == [0, 1] and all(i["section_id"] == dv["sections"][0]["id"] for i in dv["items"])
+    out = m.build_runtime(db, ADMIN, "TONG", None, "MONTH", None)
+    assert out["sections"][0]["spans"] == [6, 6] and {i["column_no"] for i in out["items"]} == {0, 1} and all("item_id" in i for i in out["items"])
+
+
+def test_migrate_legacy_grid_to_sections(db):
+    db.add(DashboardLayout(layout_code="OLD", layout_name="OLD", scope_type="COMPANY", version=1, status="PUBLISHED"))
+    db.flush()
+    lid = db.query(DashboardLayout).one().id
+    for n, (code, x, y, w, h) in enumerate([("A", 0, 0, 8, 5), ("B", 0, 5, 8, 3), ("A", 8, 0, 4, 8), ("B", 0, 30, 5, 3), ("A", 0, 40, 8, 3)], start=1):     # 66/34 + ô lệch preset + cột chính 8/12 đứng riêng
+        db.add(DashboardLayoutItem(layout_id=lid, indicator_code=code, grid_x=x, grid_y=y, width=w, height=h, order_no=n))
+    db.commit()
+    assert m.migrate_layouts_to_sections(db) == 1 and m.migrate_layouts_to_sections(db) == 0                    # idempotent
+    v = m.layout_view(db, db.query(DashboardLayout).one(), True)
+    assert [s["preset"] for s in v["sections"]] == ["66_34", "100", "66_34"]
+    assert sorted((i["column_no"], i["indicator_code"]) for i in v["items"] if i["section_id"] == v["sections"][0]["id"]) == [(0, "A"), (0, "B"), (1, "A")]

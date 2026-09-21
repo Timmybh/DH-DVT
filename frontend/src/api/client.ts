@@ -470,6 +470,9 @@ export interface DashIndicator {
 export interface RuntimeItem {
   indicator: DashIndicator;
   position: { section: string; x: number; y: number; w: number; h: number; order: number; collapsed: boolean };
+  item_id?: number;
+  section_id?: number | null;
+  column_no?: number;
   data: RuntimeData;
 }
 
@@ -484,6 +487,7 @@ export interface RuntimeResponse {
     sync: { revenue: SyncBrief | null; plan: SyncBrief | null };
   };
   items: RuntimeItem[];
+  sections?: { id: number; order_no: number; title: string; preset: string; is_visible: boolean; spans: number[] }[];
   message?: string;
 }
 
@@ -526,6 +530,9 @@ export interface DashLayoutItem {
   is_visible: boolean;
   collapsed: boolean;
   config_override_json: Record<string, unknown>;
+  section_id?: number | null;
+  column_no?: number;
+  section_ref?: string;
 }
 
 export interface DashLayout {
@@ -543,6 +550,7 @@ export interface DashLayout {
   published_by: string;
   published_at: string | null;
   items?: DashLayoutItem[];
+  sections?: { id: number; order_no: number; title: string; preset: string; is_visible: boolean; spans: number[] }[];
 }
 
 export interface DashOptions {
@@ -554,4 +562,5 @@ export interface DashOptions {
   layout_modes: string[];
   layout_scopes: string[];
   grid_columns: number;
+  section_presets?: Record<string, number[]>;
 }

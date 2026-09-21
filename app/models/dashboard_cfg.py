@@ -111,6 +111,21 @@ class DashboardLayoutItem(Base):
     order_no: Mapped[int] = mapped_column(Integer, default=0)
     is_visible: Mapped[bool] = mapped_column(Boolean, default=True)
     collapsed: Mapped[bool] = mapped_column(Boolean, default=False)
+    section_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # Layout Designer: Section chứa widget (None = bố cục lưới cũ)
+    column_no: Mapped[int] = mapped_column(Integer, default=0)  # cột trong Section (0-based)
     config_override_json: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class DashboardLayoutSection(Base):
+    """Layout Designer (spec §8): Section là một hàng của trang; preset quyết định số cột và tỉ lệ (100 | 50_50 | 66_34 | 34_66 | 33_33_33 | 25_25_25_25)."""
+
+    __tablename__ = "dashboard_layout_sections"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    layout_id: Mapped[int] = mapped_column(ForeignKey("dashboard_layouts.id", ondelete="CASCADE"), index=True)
+    order_no: Mapped[int] = mapped_column(Integer, default=0)
+    title: Mapped[str] = mapped_column(String(120), default="")
+    preset: Mapped[str] = mapped_column(String(16), default="100")
+    is_visible: Mapped[bool] = mapped_column(Boolean, default=True)

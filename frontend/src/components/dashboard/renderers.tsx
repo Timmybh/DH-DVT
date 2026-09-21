@@ -75,9 +75,14 @@ function KpiCard({ item }: { item: RuntimeItem }) {
 }
 
 function TextWidget({ item }: { item: RuntimeItem }) {
+  const heading = Boolean(item.data.payload?.heading);
+  const text = String(item.data.payload?.text ?? "");
+  if (item.indicator.indicator_code === "TEXT_HEADING" || heading) {
+    return heading ? <h2 className="text-lg font-bold text-slate-900" data-testid="text-heading">{text || " "}</h2> : <p className="whitespace-pre-wrap text-sm text-slate-700">{text}</p>;
+  }
   return (
     <Section title={item.indicator.indicator_name}>
-      <p className="whitespace-pre-wrap text-sm text-slate-700">{String(item.data.payload?.text ?? "")}</p>
+      <p className="whitespace-pre-wrap text-sm text-slate-700">{text}</p>
     </Section>
   );
 }

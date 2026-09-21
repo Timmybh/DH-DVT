@@ -90,6 +90,11 @@ def build_warnings(ctx: DashboardContext) -> dict:
     return _signals(ctx, "WARN")
 
 
+def build_static_text(ctx: DashboardContext) -> dict:
+    """Widget Văn bản / Tiêu đề (Layout Designer): nội dung do người thiết kế nhập ở cấu hình widget, không truy vấn dữ liệu."""
+    return {"text": str(ctx.indicator_config.get("text", "")), "heading": bool(ctx.indicator_config.get("heading", False))}
+
+
 @dataclass(frozen=True)
 class RuleInfo:
     code: str
@@ -116,6 +121,7 @@ _INFOS = [
     RuleInfo("HR_HEADCOUNT", "Nhân sự — lao động theo XN/tổ", build_hr_headcount, "app.dashboard_rules", "build_hr_headcount",
              "Lao động có mặt theo xí nghiệp/tổ (từ file Excel kế hoạch SX).", source="Excel"),
     RuleInfo("GOOD_NEWS", "Tin tốt", build_good_news, "app.dashboard_rules", "build_good_news", "Các tín hiệu tích cực (khu 'Tin tốt')."),
+    RuleInfo("STATIC_TEXT", "Văn bản / Tiêu đề", build_static_text, "app.dashboard_rules", "build_static_text", "Đoạn văn bản hoặc tiêu đề tĩnh do người thiết kế bố cục nhập.", source="Manual"),
     RuleInfo("WARNING_SIGNALS", "Cảnh báo / cần chú ý", build_warnings, "app.dashboard_rules", "build_warnings", "Các tín hiệu cảnh báo và mức nghiêm trọng."),
 ]
 

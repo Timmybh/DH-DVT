@@ -4,7 +4,7 @@ import { api, DashGroup, DashIndicator, DashOptions, DashRule, errorMessage, Run
 import { DashActions, renderIndicator } from "../../components/dashboard/renderers";
 import { useAuth } from "../../context/AuthContext";
 import { dateTimeVi } from "../../lib/format";
-import LayoutBuilder from "./LayoutBuilder";
+import LayoutDesigner from "./LayoutDesigner";
 
 const SECTIONS = [
   { key: "groups", label: "Nhóm chỉ số" },
@@ -434,7 +434,7 @@ export default function DashboardConfig() {
       {current.key === "groups" && <GroupsTab canManage={can("dashboard.config_manage")} />}
       {current.key === "indicators" && <IndicatorsTab canManage={can("dashboard.config_manage")} canTest={can("dashboard.rule_test")} />}
       {current.key === "rules" && <RulesTab canManage={can("dashboard.config_manage")} canTest={can("dashboard.rule_test")} />}
-      {current.key === "layouts" && <LayoutBuilder canEdit={can("dashboard.layout_manage")} canPublish={can("dashboard.publish")} />}
+      {current.key === "layouts" && <LayoutDesigner canEdit={can("dashboard.layout_manage")} canPublish={can("dashboard.publish")} />}
     </div>
   );
 }

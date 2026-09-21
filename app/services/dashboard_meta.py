@@ -17,6 +17,7 @@ from app.models.dashboard_cfg import (
     DashboardIndicatorGroup,
     DashboardLayout,
     DashboardLayoutItem,
+    DashboardLayoutSection,
     DashboardRuleRegistry,
 )
 from app.services import dashboard as svc
@@ -33,6 +34,8 @@ SECTIONS = ("MAIN", "RIGHT_SIDEBAR", "BOTTOM", "FULL_WIDTH")
 LAYOUT_MODES = ("GRID", "STACK", "CUSTOM")
 GRID_COLUMNS = 12
 LAYOUT_SCOPES = ("COMPANY", "FACTORY")
+# Section presets của Layout Designer: số cột theo tỉ lệ trên lưới 12 (không resize pixel tự do)
+SECTION_PRESETS: dict[str, list[int]] = {"100": [12], "50_50": [6, 6], "66_34": [8, 4], "34_66": [4, 8], "33_33_33": [4, 4, 4], "25_25_25_25": [3, 3, 3, 3]}
 
 _cache: dict[tuple, tuple[float, dict]] = {}
 
@@ -48,6 +51,7 @@ GROUPS = [
     ("QA", "Chất lượng", "Tổng số lỗi theo nhóm kiểm tra", 3),
     ("HR", "Nhân sự", "Lao động theo xí nghiệp/tổ", 4),
     ("SIGNALS", "Tín hiệu", "Tin tốt và cảnh báo", 5),
+    ("GENERAL", "Chung", "Widget tĩnh (văn bản, tiêu đề)", 6),
 ]
 
 # code, name, group, display_type, rule, source, scope, drilldown_type, drilldown_target, refresh, config
@@ -61,6 +65,7 @@ INDICATORS = [
      "SYNC", {"component": "PO_RISK_PIPELINE"}),
     ("HR_HEADCOUNT", "Nhân sự", "HR", "CUSTOM_COMPONENT", "HR_HEADCOUNT", "Excel kế hoạch SX", "BOTH", "DRAWER", "HR_DETAIL", "SYNC", {"component": "HR_HEADCOUNT"}),
     ("GOOD_NEWS", "Tin tốt", "SIGNALS", "SIGNAL_LIST", "GOOD_NEWS", "Tổng hợp", "BOTH", "DRAWER", "SIGNAL_DRILL", "ON_LOAD", {"zone": "GOOD"}),
+    ("TEXT_HEADING", "Văn bản / Tiêu đề", "GENERAL", "TEXT", "STATIC_TEXT", "Nhập tay", "BOTH", "NONE", "", "ON_LOAD", {"text": "", "heading": True}),
     ("WARNING_SIGNALS", "Cảnh báo / cần chú ý", "SIGNALS", "SIGNAL_LIST", "WARNING_SIGNALS", "Tổng hợp", "BOTH", "DRAWER", "SIGNAL_DRILL", "ON_LOAD", {"zone": "WARN"}),
 ]
 
@@ -139,7 +144,8 @@ def rule_view(r: DashboardRuleRegistry) -> dict:
 
 def item_view(it: DashboardLayoutItem) -> dict:
     return {"id": it.id, "indicator_code": it.indicator_code, "section": it.section, "grid_x": it.grid_x, "grid_y": it.grid_y, "width": it.width,
-            "height": it.height, "order_no": it.order_no, "is_visible": it.is_visible, "collapsed": it.collapsed, "config_override_json": it.config_override_json or {}}
+            "height": it.height, "order_no": it.order_no, "is_visible": it.is_visible, "collapsed": it.collapsed, "config_override_json": it.config_override_json or {},
+            "section_id": it.section_id, "column_no": it.column_no}
 
 
 def layout_view(db: Session, l: DashboardLayout, with_items: bool = False) -> dict:
@@ -149,7 +155,16 @@ def layout_view(db: Session, l: DashboardLayout, with_items: bool = False) -> di
            "retired_at": l.retired_at.isoformat() if l.retired_at else None}
     if with_items:
         out["items"] = [item_view(it) for it in db.query(DashboardLayoutItem).filter(DashboardLayoutItem.layout_id == l.id).order_by(DashboardLayoutItem.order_no, DashboardLayoutItem.id)]
+        out["sections"] = [section_view(x) for x in _sections(db, l.id)]
     return out
+
+
+def section_view(x: DashboardLayoutSection) -> dict:
+    return {"id": x.id, "order_no": x.order_no, "title": x.title, "preset": x.preset, "is_visible": x.is_visible, "spans": SECTION_PRESETS.get(x.preset, [12])}
+
+
+def _sections(db: Session, layout_id: int) -> list[DashboardLayoutSection]:
+    return db.query(DashboardLayoutSection).filter(DashboardLayoutSection.layout_id == layout_id).order_by(DashboardLayoutSection.order_no, DashboardLayoutSection.id).all()
 
 
 # ------------------------------------------------------------------ nhóm / chỉ số
@@ -243,16 +258,22 @@ def save_group(db: Session, user: User, d: dict, code: str | None = None) -> Das
 
 
 # ------------------------------------------------------------------ bố cục
-def _validate_items(db: Session, items: list[dict]) -> None:
+def _validate_items(db: Session, items: list[dict], sections_mode: bool = False) -> None:
     seen = set()
     inds = {i.indicator_code: i for i in db.query(DashboardIndicator)}
     for it in items:
         code = it.get("indicator_code")
         if code not in inds:
             raise _bad(f"Chỉ số '{code}' không tồn tại")
-        if code in seen:
+        if code in seen and not sections_mode:  # Layout Designer cho Duplicate widget (cùng chỉ số, khác cấu hình)
             raise _bad(f"Chỉ số '{code}' xuất hiện hai lần trong cùng bố cục")
         seen.add(code)
+        if sections_mode:
+            if it.get("is_visible", True) and not inds[code].is_active:
+                raise _bad(f"Chỉ số '{code}' đang bị vô hiệu hóa — không thể hiển thị trong bố cục mới")
+            if not isinstance(it.get("config_override_json", {}), dict):
+                raise _bad("config_override_json phải là đối tượng JSON")
+            continue
         if it.get("section", "MAIN") not in SECTIONS:
             raise _bad(f"section '{it.get('section')}' không hợp lệ")
         x, w, y, h = int(it.get("grid_x", 0)), int(it.get("width", 1)), int(it.get("grid_y", 0)), int(it.get("height", 1))
@@ -275,8 +296,47 @@ def find_overlaps(items: list[dict]) -> list[tuple[str, str]]:
     return out
 
 
+def _validate_sections(sections: list[dict], items: list[dict]) -> None:
+    refs = set()
+    for s_ in sections:
+        if s_.get("preset", "100") not in SECTION_PRESETS:
+            raise _bad(f"preset '{s_.get('preset')}' không hợp lệ (chọn: {', '.join(SECTION_PRESETS)})")
+        ref = str(s_.get("ref", ""))
+        if not ref or ref in refs:
+            raise _bad("Mỗi Section cần một ref duy nhất")
+        refs.add(ref)
+    for it in items:
+        if str(it.get("section_ref", "")) not in refs:
+            raise _bad(f"Widget '{it.get('indicator_code')}' chưa thuộc Section nào")
+
+
+def _replace_sections_items(db: Session, layout: DashboardLayout, sections: list[dict], items: list[dict]) -> None:
+    """Ghi Section + widget. Vị trí lưới cũ (grid_x/width/grid_y/height) được suy ra từ preset để mọi nơi vẫn đọc được."""
+    db.query(DashboardLayoutItem).filter(DashboardLayoutItem.layout_id == layout.id).delete()
+    db.query(DashboardLayoutSection).filter(DashboardLayoutSection.layout_id == layout.id).delete()
+    by_ref: dict[str, tuple[DashboardLayoutSection, int]] = {}
+    for n, s_ in enumerate(sections, start=1):
+        row = DashboardLayoutSection(layout_id=layout.id, order_no=n, title=s_.get("title", "") or "", preset=s_.get("preset", "100"), is_visible=bool(s_.get("is_visible", True)))
+        db.add(row)
+        by_ref[str(s_["ref"])] = (row, n)
+    db.flush()
+    rank: dict[tuple[str, int], int] = {}
+    for n, it in enumerate(items, start=1):
+        row, sec_idx = by_ref[str(it["section_ref"])]
+        spans = SECTION_PRESETS[row.preset]
+        col = max(0, min(int(it.get("column_no", 0)), len(spans) - 1))
+        r = rank.get((str(it["section_ref"]), col), 0)
+        rank[(str(it["section_ref"]), col)] = r + 1
+        db.add(DashboardLayoutItem(
+            layout_id=layout.id, indicator_code=it["indicator_code"], section="MAIN", grid_x=sum(spans[:col]), grid_y=sec_idx * 50 + r * 5, width=spans[col], height=5,
+            order_no=n, is_visible=bool(it.get("is_visible", True)), collapsed=bool(it.get("collapsed", False)), config_override_json=it.get("config_override_json") or {},
+            section_id=row.id, column_no=col,
+        ))
+
+
 def _replace_items(db: Session, layout: DashboardLayout, items: list[dict]) -> None:
     db.query(DashboardLayoutItem).filter(DashboardLayoutItem.layout_id == layout.id).delete()
+    db.query(DashboardLayoutSection).filter(DashboardLayoutSection.layout_id == layout.id).delete()
     for n, it in enumerate(items, start=1):
         db.add(DashboardLayoutItem(
             layout_id=layout.id, indicator_code=it["indicator_code"], section=it.get("section", "MAIN"), grid_x=int(it.get("grid_x", 0)), grid_y=int(it.get("grid_y", 0)),
@@ -297,11 +357,19 @@ def create_layout(db: Session, user: User, d: dict) -> DashboardLayout:
     db.add(layout)
     db.flush()
     items = d.get("items")
-    if items is None:  # bố cục mới: thêm các chỉ số default_enabled theo thứ tự
-        items = [{"indicator_code": i.indicator_code, "grid_x": 0, "grid_y": n * 3, "width": 12, "height": 3} for n, i in
-                 enumerate(db.query(DashboardIndicator).filter(DashboardIndicator.is_active.is_(True), DashboardIndicator.default_enabled.is_(True)).order_by(DashboardIndicator.display_order))]
-    _validate_items(db, items)
-    _replace_items(db, layout, items)
+    if d.get("sections") is not None:
+        _validate_items(db, items or [], True)
+        _validate_sections(d["sections"], items or [])
+        _replace_sections_items(db, layout, d["sections"], items or [])
+    else:
+        if items is None:  # bố cục mới: mỗi chỉ số default_enabled một Section 100%
+            inds = list(db.query(DashboardIndicator).filter(DashboardIndicator.is_active.is_(True), DashboardIndicator.default_enabled.is_(True)).order_by(DashboardIndicator.display_order))
+            secs = [{"ref": str(n), "title": i.indicator_name, "preset": "100"} for n, i in enumerate(inds)]
+            its = [{"indicator_code": i.indicator_code, "section_ref": str(n), "column_no": 0} for n, i in enumerate(inds)]
+            _replace_sections_items(db, layout, secs, its)
+        else:
+            _validate_items(db, items)
+            _replace_items(db, layout, items)
     db.commit()
     write_audit("DASHBOARD_LAYOUT_CREATE", user=user, object_type="DashboardLayout", object_id=f"{layout.layout_code}.v{layout.version}", detail=layout.layout_name)
     return layout
@@ -318,9 +386,13 @@ def clone_layout(db: Session, user: User, layout_id: int) -> DashboardLayout:
     src = get_layout(db, layout_id)
     if db.query(DashboardLayout).filter(DashboardLayout.layout_code == src.layout_code, DashboardLayout.status == "DRAFT").first():
         raise HTTPException(409, "Bố cục này đã có bản nháp — hãy sửa bản nháp đó")
-    items = [item_view(i) for i in db.query(DashboardLayoutItem).filter(DashboardLayoutItem.layout_id == src.id)]
-    return create_layout(db, user, {"layout_code": src.layout_code, "layout_name": src.layout_name, "scope_type": src.scope_type, "scope_value": src.scope_value,
-                                    "is_default": src.is_default, "description": src.description, "items": items})
+    rows = db.query(DashboardLayoutItem).filter(DashboardLayoutItem.layout_id == src.id).order_by(DashboardLayoutItem.order_no, DashboardLayoutItem.id).all()
+    base = {"layout_code": src.layout_code, "layout_name": src.layout_name, "scope_type": src.scope_type, "scope_value": src.scope_value, "is_default": src.is_default, "description": src.description}
+    secs = _sections(db, src.id)
+    if secs:
+        items = [{**item_view(i), "section_ref": str(i.section_id)} for i in rows]
+        return create_layout(db, user, {**base, "sections": [{"ref": str(x.id), "title": x.title, "preset": x.preset, "is_visible": x.is_visible} for x in secs], "items": items})
+    return create_layout(db, user, {**base, "items": [item_view(i) for i in rows]})
 
 
 def update_layout(db: Session, user: User, layout_id: int, d: dict) -> DashboardLayout:
@@ -336,7 +408,11 @@ def update_layout(db: Session, user: User, layout_id: int, d: dict) -> Dashboard
         l.scope_type = d["scope_type"]
     if "scope_value" in d:
         l.scope_value = d["scope_value"] or ""
-    if "items" in d:
+    if d.get("sections") is not None:
+        _validate_items(db, d.get("items") or [], True)
+        _validate_sections(d["sections"], d.get("items") or [])
+        _replace_sections_items(db, l, d["sections"], d.get("items") or [])
+    elif "items" in d:
         _validate_items(db, d["items"])
         _replace_items(db, l, d["items"])
     db.commit()
@@ -349,10 +425,11 @@ def publish_layout(db: Session, user: User, layout_id: int) -> DashboardLayout:
     if l.status != "DRAFT":
         raise HTTPException(409, f"Chỉ Publish được bản DRAFT (hiện là {l.status})")
     items = [item_view(i) for i in db.query(DashboardLayoutItem).filter(DashboardLayoutItem.layout_id == l.id)]
-    _validate_items(db, items)
+    sectioned = bool(_sections(db, l.id))
+    _validate_items(db, items, sectioned)
     if not [i for i in items if i["is_visible"]]:
         raise _bad("Bố cục phải có ít nhất một chỉ số hiển thị")
-    overlaps = find_overlaps(items)
+    overlaps = [] if sectioned else find_overlaps(items)
     if overlaps:
         raise _bad("Các ô bị chồng lấn: " + ", ".join(f"{a} ↔ {b}" for a, b in overlaps[:5]))
     q = db.query(DashboardLayout).filter(DashboardLayout.status == "PUBLISHED", DashboardLayout.id != l.id)
@@ -459,10 +536,73 @@ def build_runtime(db: Session, user: User | None, scope: str = "TONG", month: st
         items_out.append({
             "indicator": {**indicator_view(ind), "group_name": g.group_name if g else ind.group_code, "config_json": _merge_cfg(ind.config_json, it.config_override_json)},
             "position": {"section": it.section, "x": it.grid_x, "y": it.grid_y, "w": it.width, "h": it.height, "order": it.order_no, "collapsed": it.collapsed},
+            "item_id": it.id, "section_id": it.section_id, "column_no": it.column_no,
             "data": data,
         })
     first_rev = next((i["data"] for i in items_out if i["indicator"]["rule_code"] == "REVENUE_EXECUTIVE_SUMMARY" and i["data"].get("payload")), None)
     header["month"] = (first_rev or {}).get("payload", {}).get("month") or month or f"{today.year}-{today.month:02d}"
     header["has_demo"] = bool(first_rev and first_rev["payload"].get("has_demo"))
+    secs = [section_view(x) for x in _sections(db, layout.id) if x.is_visible]
     return {"layout": {"id": layout.id, "layout_code": layout.layout_code, "version": layout.version, "status": layout.status, "layout_name": layout.layout_name,
-                       "grid_columns": GRID_COLUMNS}, "header": header, "items": items_out}
+                       "grid_columns": GRID_COLUMNS}, "header": header, "items": items_out, "sections": secs}
+
+
+# ------------------------------------------------------------------ chuyển bố cục lưới cũ sang Section
+def _band_split(rows: list[DashboardLayoutItem]) -> list[list[DashboardLayoutItem]]:
+    """Tách các ô thành từng 'dải' ngang: ranh giới y mà không ô nào cắt qua."""
+    rows = sorted(rows, key=lambda r: (r.grid_y, r.grid_x))
+    bands: list[list[DashboardLayoutItem]] = []
+    end = None
+    for r in rows:
+        if not bands or (end is not None and r.grid_y >= end):
+            bands.append([])
+            end = None
+        bands[-1].append(r)
+        end = max(end or 0, r.grid_y + r.height)
+    return bands
+
+
+def migrate_layouts_to_sections(db: Session) -> int:
+    """Idempotent: bố cục còn ở dạng lưới tự do (chưa có Section) được nhóm thành Section theo dải và cột; dải không khớp preset nào thì mỗi ô một Section 100%."""
+    preset_by_spans = {tuple(v): k for k, v in SECTION_PRESETS.items()}
+    converted = 0
+    for l in db.query(DashboardLayout).all():
+        if _sections(db, l.id):
+            continue
+        rows = db.query(DashboardLayoutItem).filter(DashboardLayoutItem.layout_id == l.id).order_by(DashboardLayoutItem.order_no, DashboardLayoutItem.id).all()
+        if not rows:
+            continue
+        secs, items, n = [], [], 0
+        ind_name = {i.indicator_code: i.indicator_name for i in db.query(DashboardIndicator)}
+        for band in _band_split(rows):
+            cols: dict[tuple[int, int], list[DashboardLayoutItem]] = {}
+            for r in band:
+                cols.setdefault((r.grid_x, r.width), []).append(r)
+            keys = sorted(cols)
+            contiguous = all(keys[i][0] + keys[i][1] == keys[i + 1][0] for i in range(len(keys) - 1)) and keys[0][0] == 0 and keys[-1][0] + keys[-1][1] == GRID_COLUMNS
+            preset = preset_by_spans.get(tuple(w for _x, w in keys)) if contiguous else None
+            lone = {(0, 8): ("66_34", 0), (8, 4): ("66_34", 1), (0, 6): ("50_50", 0), (6, 6): ("50_50", 1), (0, 4): ("34_66", 0), (4, 8): ("34_66", 1)}
+            if not preset and len(keys) == 1 and keys[0] in lone:  # một cột lệch (VD cột chính 8/12 của bố cục cũ): giữ đúng vị trí, cột còn lại để trống
+                preset, only_col = lone[keys[0]]
+                secs.append({"ref": str(n), "title": "", "preset": preset})
+                for r in sorted(band, key=lambda r: (r.grid_y, r.order_no)):
+                    items.append({"indicator_code": r.indicator_code, "section_ref": str(n), "column_no": only_col, "is_visible": r.is_visible, "collapsed": r.collapsed, "config_override_json": r.config_override_json or {}})
+                n += 1
+                continue
+            if preset:
+                secs.append({"ref": str(n), "title": "", "preset": preset})
+                for ci, key in enumerate(keys):
+                    for r in sorted(cols[key], key=lambda r: (r.grid_y, r.order_no)):
+                        items.append({"indicator_code": r.indicator_code, "section_ref": str(n), "column_no": ci, "is_visible": r.is_visible, "collapsed": r.collapsed, "config_override_json": r.config_override_json or {}})
+                n += 1
+            else:
+                for r in sorted(band, key=lambda r: (r.grid_y, r.grid_x)):
+                    secs.append({"ref": str(n), "title": ind_name.get(r.indicator_code, ""), "preset": "100"})
+                    items.append({"indicator_code": r.indicator_code, "section_ref": str(n), "column_no": 0, "is_visible": r.is_visible, "collapsed": r.collapsed, "config_override_json": r.config_override_json or {}})
+                    n += 1
+        _replace_sections_items(db, l, secs, items)
+        converted += 1
+    if converted:
+        db.commit()
+        clear_cache()
+    return converted

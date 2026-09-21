@@ -50,6 +50,8 @@ def _upgrade_schema() -> None:
             "ALTER TABLE plan_rows ADD COLUMN IF NOT EXISTS so_id INTEGER",
             "ALTER TABLE planning_version_rows ADD COLUMN IF NOT EXISTS so_id INTEGER",
             "ALTER TABLE actual_mappings ALTER COLUMN status TYPE VARCHAR(16)",
+            "ALTER TABLE dashboard_layout_items ADD COLUMN IF NOT EXISTS section_id INTEGER",
+            "ALTER TABLE dashboard_layout_items ADD COLUMN IF NOT EXISTS column_no INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE machine_style_outputs ADD COLUMN IF NOT EXISTS required_quantity INTEGER",
             "ALTER TABLE machine_style_outputs ADD COLUMN IF NOT EXISTS source VARCHAR(10) NOT NULL DEFAULT 'MANUAL'",
             "ALTER TABLE machine_style_outputs ALTER COLUMN output_per_day DROP NOT NULL",
@@ -122,6 +124,7 @@ def run_seed() -> None:
         from app.services import dashboard_meta
 
         dashboard_meta.seed_dashboard_meta(db)
+        dashboard_meta.migrate_layouts_to_sections(db)
         formula_service.refresh_active(db)
         from app.services import planning_service
 
