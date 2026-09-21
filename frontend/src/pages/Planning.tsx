@@ -361,7 +361,7 @@ export default function Planning() {
     setPending(null);
   }
 
-  // Danh sách chuyền của xí nghiệp: chuyền đang có trong kế hoạch + chuyền có lao động trên eGMF
+  // Danh sách chuyền của xí nghiệp: chuyền đang có trong kế hoạch + chuyền có lao động trên ERP
   useEffect(() => {
     if (!editing) return;
     api.get<{ rows: CapDef[] }>("/planning/resources/capacity", { params: { limit: 2000 } }).then((r) => setCapDefs(r.data.rows)).catch(() => undefined);

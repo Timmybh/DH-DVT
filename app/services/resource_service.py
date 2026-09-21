@@ -14,7 +14,7 @@ from app.db.session import utcnow
 from app.models.core import User
 from app.models.data import PlanRow
 from app.models.planning import PlanningVersionRow
-from app.models.resources import CapacityDefinition, LaborDaily, MachineCapacity, MachineRequirement, MachineType
+from app.models.resources import CapacityDefinition, LaborDaily, MachineCapacity, MachineMaintenance, MachineRequirement, MachineSharedPool, MachineSharing, MachineStyleOutput, MachineType
 from app.services.audit import write_audit
 from app.services.formula import EXCEL_EPOCH
 from app.services.lanes import row_lines
@@ -161,11 +161,12 @@ def machine_cap_view(m: MachineCapacity) -> dict:
     return {"id": m.id, "factory_code": m.factory_code, "line": m.line, "machine_type": m.machine_type, "quantity": m.quantity, "nominal_output_per_day": m.nominal_output_per_day,
             "efficiency": m.efficiency, "changeover_minutes": m.changeover_minutes, "planned_downtime_pct": m.planned_downtime_pct, "maintenance_status": m.maintenance_status,
             "is_bottleneck": m.is_bottleneck, "effective_from": m.effective_from.isoformat() if m.effective_from else None,
-            "effective_to": m.effective_to.isoformat() if m.effective_to else None, "notes": m.notes, "status": m.status}
+            "effective_to": m.effective_to.isoformat() if m.effective_to else None, "notes": m.notes, "status": m.status,
+            "maintenance_quantity": m.maintenance_quantity, "down_quantity": m.down_quantity, "available_quantity": max(0, m.quantity - m.maintenance_quantity - m.down_quantity)}
 
 
 MACHINE_FIELDS = ("factory_code", "line", "machine_type", "quantity", "nominal_output_per_day", "efficiency", "changeover_minutes", "planned_downtime_pct", "maintenance_status",
-                  "is_bottleneck", "effective_from", "effective_to", "notes", "status")
+                  "is_bottleneck", "effective_from", "effective_to", "notes", "status", "maintenance_quantity", "down_quantity")
 
 
 def save_machine_capacity(db: Session, user: User, d: dict, mid: int | None = None) -> MachineCapacity:
@@ -175,6 +176,10 @@ def save_machine_capacity(db: Session, user: User, d: dict, mid: int | None = No
         raise HTTPException(422, "Tình trạng bảo trì phải là OK, MAINTENANCE hoặc DOWN")
     if d.get("quantity") is not None and int(d["quantity"]) < 0:
         raise HTTPException(422, "Số lượng máy không được âm")
+    if any(d.get(k) is not None and int(d[k]) < 0 for k in ("maintenance_quantity", "down_quantity")):
+        raise HTTPException(422, "Số máy bảo trì/hỏng không được âm")
+    if d.get("quantity") is not None and int(d.get("maintenance_quantity") or 0) + int(d.get("down_quantity") or 0) > int(d["quantity"]):
+        raise HTTPException(422, "Số máy bảo trì + hỏng vượt số máy được phân bổ")
     if mid is None:
         if not d.get("factory_code") or not d.get("line") or not d.get("machine_type"):
             raise HTTPException(422, "Cần xí nghiệp, chuyền và nhóm máy")
@@ -196,10 +201,13 @@ def save_machine_capacity(db: Session, user: User, d: dict, mid: int | None = No
 
 
 # ------------------------------------------------------------------ nguồn lực dùng cho Recheck
+MACHINE_REQUIREMENT_ENABLED = False  # Yêu cầu máy theo mã hàng (style) tạm bỏ: chưa dùng để kiểm tra thiếu máy, chưa tính vào lịch nguồn lực rảnh
+
+
 class Resources:
     """Ảnh chụp nguồn lực cho một lần Recheck (đọc DB một lần)."""
 
-    def __init__(self, cap_defs=None, labor=None, requirements=None, machines=None, machine_output=None, machine_status=None, as_of: date | None = None):
+    def __init__(self, cap_defs=None, labor=None, requirements=None, machines=None, machine_output=None, machine_status=None, as_of: date | None = None, machine_adjust=None):
         self.as_of = as_of or date.today()  # nhân lực chỉ so với các dòng chưa kết thúc tại thời điểm này (số liệu lao động là hiện tại)
         self.cap_defs = cap_defs or []
         self.labor = labor or {}  # (xn, line) -> present
@@ -207,6 +215,16 @@ class Resources:
         self.machines = machines or {}  # (xn, line, type) -> qty
         self.machine_output = machine_output or {}  # (xn, line, type) -> pcs/ngày hiệu dụng
         self.machine_status = machine_status or {}  # (xn, line, type) -> OK|MAINTENANCE|DOWN
+        self.machine_adjust = machine_adjust or []  # [{key:(xn,line,type), start, end, delta, kind, ref}] — bảo trì theo lịch (âm), mượn máy (âm bên cho, dương bên nhận)
+
+    def machine_qty(self, key: tuple[str, str, str], day: date | None = None) -> int:
+        """Số máy sẵn sàng của (xn, chuyền, loại) tại `day` = đã phân bổ (trừ bảo trì/hỏng cố định) ± mượn máy ± bảo trì theo lịch."""
+        d = day or self.as_of
+        base = self.machines.get(key, 0)
+        for a in self.machine_adjust:
+            if a["key"] == key and a["start"] <= d <= a["end"]:
+                base += a["delta"]
+        return max(0, base)
 
     def factory_lines(self) -> dict[str, set[str]]:
         """Các chuyền đã biết theo xí nghiệp (lao động, máy, định nghĩa năng suất) — bổ sung cho chuyền có trong kế hoạch."""
@@ -237,17 +255,17 @@ def latest_labor(db: Session) -> dict[tuple[str, str], dict]:
 
 def load_resources(db: Session) -> Resources:
     reqs: dict[str, list[tuple[str, int]]] = defaultdict(list)
-    for r in db.query(MachineRequirement):
+    for r in (db.query(MachineRequirement) if MACHINE_REQUIREMENT_ENABLED else []):
         reqs[r.style_cc].append((r.machine_type, r.quantity))
     machines, output, status = {}, {}, {}
     for m in db.query(MachineCapacity).filter(MachineCapacity.status == "ACTIVE"):
         k = (m.factory_code, m.line, m.machine_type)
-        machines[k] = machines.get(k, 0) + m.quantity
+        machines[k] = machines.get(k, 0) + max(0, m.quantity - m.maintenance_quantity - m.down_quantity)
         status[k] = m.maintenance_status
         if m.nominal_output_per_day:
             output[k] = m.nominal_output_per_day * (m.efficiency or 1.0)
     labor = {k: v["present"] for k, v in latest_labor(db).items()}
-    return Resources(load_capacity_defs(db), labor, dict(reqs), machines, output, status)
+    return Resources(load_capacity_defs(db), labor, dict(reqs), machines, output, status, machine_adjust=load_machine_adjust(db))
 
 
 def check_row_resources(res: Resources, row: dict) -> list[tuple[str, str, str, str]]:
@@ -274,6 +292,7 @@ def check_row_resources(res: Resources, row: dict) -> list[tuple[str, str, str, 
     if worker and present is not None and still_running and worker > present:
         out.append(("WARNING", "worker", f"Cần {worker:.0f} lao động nhưng chuyền {where} chỉ có {present} người có mặt (lần đồng bộ gần nhất)", "LABOR_SHORTAGE"))
     cap_per_line = (cap / len(lines)) if cap and lines else None
+    day = _floor_day(row, "begin_prod_date", "begin_prod_date") or res.as_of
     for mtype, need in res.requirements.get(style, []):
         for line in lines:
             k = (xn, line, mtype)
@@ -281,8 +300,8 @@ def check_row_resources(res: Resources, row: dict) -> list[tuple[str, str, str, 
                 continue
             if res.machine_status.get(k) == "DOWN":
                 out.append(("WARNING", "line", f"Nhóm máy {mtype} của chuyền {xn}/{line} đang ngừng (DOWN)", "MACHINE_UNAVAILABLE"))
-            elif res.machines[k] < need:
-                out.append(("WARNING", "line", f"Mã {style} cần {need} máy {mtype} nhưng chuyền {xn}/{line} chỉ có {res.machines[k]}", "MACHINE_SHORTAGE"))
+            elif res.machine_qty(k, day) < need:
+                out.append(("WARNING", "line", f"Mã {style} cần {need} máy {mtype} nhưng chuyền {xn}/{line} chỉ có {res.machine_qty(k, day)} sẵn sàng" + (f" ngày {day:%d/%m/%Y} (đã trừ bảo trì, cộng/trừ máy mượn)" if any(a["key"] == k for a in res.machine_adjust) else ""), "MACHINE_SHORTAGE"))
             elif k in res.machine_output and cap_per_line and res.machine_output[k] < cap_per_line:
                 out.append(("WARNING", "capacity", f"Máy {mtype} của chuyền {xn}/{line} chỉ đạt {res.machine_output[k]:,.0f} pcs/ngày, thấp hơn phần CAPACITY của chuyền {cap_per_line:,.0f} (nút thắt máy)", "MACHINE_BOTTLENECK"))
     return out
@@ -350,7 +369,7 @@ def release_for_version(db: Session, version_id: int, week_start: date) -> dict:
     get_version(db, version_id)
     rows = load_rows(db, version_id)
     reqs: dict[str, list[tuple[str, int]]] = defaultdict(list)
-    for r in db.query(MachineRequirement):
+    for r in (db.query(MachineRequirement) if MACHINE_REQUIREMENT_ENABLED else []):
         reqs[r.style_cc].append((r.machine_type, r.quantity))
     # bổ sung ref (worker) cho dòng chưa lưu ref theo phiên bản
     from app.services.planning_service import refs_for_rows
@@ -360,3 +379,236 @@ def release_for_version(db: Session, version_id: int, week_start: date) -> dict:
         if not (r.get("extra") or {}).get("ref") and refs.get(r["row_uid"]):
             r.setdefault("extra", {})["ref"] = refs[r["row_uid"]]
     return release_schedule(rows, week_start, dict(reqs))
+
+
+# ------------------------------------------------------------------ Cấp 1: Danh mục loại máy
+TYPE_FIELDS = ("name", "model", "machine_group", "process", "nominal_output_per_day", "default_efficiency", "changeover_minutes", "is_bottleneck_capable", "effective_from", "effective_to", "note")
+
+
+def type_view(t: MachineType) -> dict:
+    return {"code": t.code, "name": t.name, "source": t.source, "model": t.model, "machine_group": t.machine_group, "process": t.process, "nominal_output_per_day": t.nominal_output_per_day,
+            "default_efficiency": t.default_efficiency, "changeover_minutes": t.changeover_minutes, "is_bottleneck_capable": t.is_bottleneck_capable,
+            "effective_from": t.effective_from.isoformat() if t.effective_from else None, "effective_to": t.effective_to.isoformat() if t.effective_to else None,
+            "status": t.status, "note": t.note, "updated_by": t.updated_by}
+
+
+def save_machine_type(db: Session, user: User, d: dict, code: str | None = None) -> MachineType:
+    if d.get("default_efficiency") is not None and not 0 < float(d["default_efficiency"]) <= 1:
+        raise HTTPException(422, "OEE mặc định phải trong khoảng (0, 1]")
+    if d.get("effective_from") and d.get("effective_to") and d["effective_from"] > d["effective_to"]:
+        raise HTTPException(422, "Hiệu lực từ phải trước hoặc bằng đến")
+    if code is None:
+        code = (d.get("code") or "").strip().upper()
+        if not code:
+            raise HTTPException(422, "Cần mã loại máy")
+        if db.get(MachineType, code):
+            raise HTTPException(409, "Mã loại máy đã tồn tại")
+        t = MachineType(code=code, source="MANUAL")
+        db.add(t)
+        action = "MACHINE_TYPE_CREATE"
+    else:
+        t = db.get(MachineType, code)
+        if t is None:
+            raise HTTPException(404, "Không tìm thấy loại máy")
+        action = "MACHINE_TYPE_UPDATE"
+    for k in TYPE_FIELDS:
+        if k in d:
+            setattr(t, k, d[k] if d[k] is not None or k in ("nominal_output_per_day", "default_efficiency", "changeover_minutes", "effective_from", "effective_to") else "")
+    t.updated_by, t.updated_at = user.username, utcnow()
+    db.commit()
+    write_audit(action, user=user, object_type="MachineType", object_id=t.code, detail=t.name)
+    return t
+
+
+def set_type_status(db: Session, user: User, code: str, active: bool) -> MachineType:
+    t = db.get(MachineType, code)
+    if t is None:
+        raise HTTPException(404, "Không tìm thấy loại máy")
+    t.status, t.updated_by, t.updated_at = ("ACTIVE" if active else "INACTIVE"), user.username, utcnow()
+    db.commit()
+    write_audit("MACHINE_TYPE_STATUS", user=user, object_type="MachineType", object_id=code, detail=t.status)
+    return t
+
+
+# ------------------------------------------------------------------ Cấp 3: đăng ký mượn máy + lịch bảo trì
+def _dates(d: dict) -> None:
+    if not d.get("date_from") or not d.get("date_to"):
+        raise HTTPException(422, "Cần khoảng ngày (từ – đến)")
+    if d["date_from"] > d["date_to"]:
+        raise HTTPException(422, "Từ ngày phải trước hoặc bằng đến ngày")
+
+
+def _known_type(db: Session, code: str) -> None:
+    if not db.get(MachineType, code):
+        raise HTTPException(422, f"Loại máy {code} chưa có trong danh mục")
+
+
+def sharing_view(r: MachineSharing) -> dict:
+    return {"id": r.id, "machine_type": r.machine_type, "from_factory": r.from_factory, "from_line": r.from_line, "to_factory": r.to_factory, "to_line": r.to_line, "quantity": r.quantity,
+            "date_from": r.date_from.isoformat(), "date_to": r.date_to.isoformat(), "reason": r.reason, "status": r.status, "created_by": r.created_by, "status_reason": r.status_reason}
+
+
+def maint_view(r: MachineMaintenance) -> dict:
+    return {"id": r.id, "factory_code": r.factory_code, "line": r.line, "machine_type": r.machine_type, "quantity": r.quantity, "date_from": r.date_from.isoformat(), "date_to": r.date_to.isoformat(),
+            "kind": r.kind, "reason": r.reason, "status": r.status, "created_by": r.created_by, "status_reason": r.status_reason}
+
+
+def _available(db: Session, xn: str, line: str, mtype: str, day: date) -> int:
+    """Máy sẵn sàng của một chuyền tại `day` (dùng để không cho mượn vượt số có)."""
+    res = Resources(machines={(xn, line, mtype): sum(max(0, c.quantity - c.maintenance_quantity - c.down_quantity) for c in db.query(MachineCapacity).filter(
+        MachineCapacity.status == "ACTIVE", MachineCapacity.factory_code == xn, MachineCapacity.line == line, MachineCapacity.machine_type == mtype))},
+        machine_adjust=load_machine_adjust(db))
+    return res.machine_qty((xn, line, mtype), day)
+
+
+def save_sharing(db: Session, user: User, d: dict, sid: int | None = None) -> MachineSharing:
+    _dates(d)
+    if int(d.get("quantity") or 0) < 1:
+        raise HTTPException(422, "Số lượng máy phải ≥ 1")
+    if not d.get("machine_type") or not d.get("from_factory") or not d.get("to_factory"):
+        raise HTTPException(422, "Cần loại máy, xí nghiệp cho mượn và xí nghiệp nhận")
+    if d["from_factory"] == d["to_factory"] and (d.get("from_line") or "") == (d.get("to_line") or ""):
+        raise HTTPException(422, "Bên cho mượn và bên nhận phải khác nhau")
+    _known_type(db, d["machine_type"])
+    if d.get("from_line"):
+        avail = min(_available(db, d["from_factory"], d["from_line"], d["machine_type"], day) for day in (d["date_from"], d["date_to"]))
+        if sid is None and int(d["quantity"]) > avail:
+            raise HTTPException(422, f"Chuyền {d['from_factory']}/{d['from_line']} chỉ còn {avail} máy {d['machine_type']} sẵn sàng trong khoảng này")
+    fields = ("machine_type", "from_factory", "from_line", "to_factory", "to_line", "quantity", "date_from", "date_to", "reason")
+    if sid is None:
+        row = MachineSharing(created_by=user.username, **{k: d.get(k, "" if k in ("from_line", "to_line", "reason") else None) for k in fields})
+        db.add(row)
+        action = "MACHINE_SHARING_CREATE"
+    else:
+        row = db.get(MachineSharing, sid)
+        if row is None:
+            raise HTTPException(404, "Không tìm thấy đăng ký mượn máy")
+        for k in fields:
+            if k in d:
+                setattr(row, k, d[k])
+        action = "MACHINE_SHARING_UPDATE"
+    db.commit()
+    write_audit(action, user=user, object_type="MachineSharing", object_id=str(row.id), detail=f"{row.machine_type} x{row.quantity} {row.from_factory}->{row.to_factory}")
+    return row
+
+
+def save_maintenance(db: Session, user: User, d: dict, mid: int | None = None) -> MachineMaintenance:
+    _dates(d)
+    if int(d.get("quantity") or 0) < 1:
+        raise HTTPException(422, "Số lượng máy phải ≥ 1")
+    if not d.get("factory_code") or not d.get("line") or not d.get("machine_type"):
+        raise HTTPException(422, "Cần xí nghiệp, chuyền và loại máy")
+    if d.get("kind", "PLANNED") not in ("PLANNED", "BREAKDOWN", "OTHER"):
+        raise HTTPException(422, "Loại bảo trì phải là PLANNED, BREAKDOWN hoặc OTHER")
+    _known_type(db, d["machine_type"])
+    fields = ("factory_code", "line", "machine_type", "quantity", "date_from", "date_to", "kind", "reason")
+    if mid is None:
+        row = MachineMaintenance(created_by=user.username, **{k: d[k] for k in fields if k in d})
+        db.add(row)
+        action = "MACHINE_MAINT_CREATE"
+    else:
+        row = db.get(MachineMaintenance, mid)
+        if row is None:
+            raise HTTPException(404, "Không tìm thấy lịch bảo trì")
+        for k in fields:
+            if k in d:
+                setattr(row, k, d[k])
+        action = "MACHINE_MAINT_UPDATE"
+    db.commit()
+    write_audit(action, user=user, object_type="MachineMaintenance", object_id=str(row.id), detail=f"{row.factory_code}/{row.line} {row.machine_type} x{row.quantity}")
+    return row
+
+
+def set_row_status(db: Session, user: User, model, rid: int, active: bool, reason: str = "") -> Any:
+    """Ngưng áp dụng / áp dụng lại (không xóa) cho đăng ký mượn máy và lịch bảo trì."""
+    row = db.get(model, rid)
+    if row is None:
+        raise HTTPException(404, "Không tìm thấy bản ghi")
+    want = "ACTIVE" if active else "INACTIVE"
+    if row.status == want:
+        raise HTTPException(409, "Bản ghi đã ở trạng thái này")
+    row.status, row.status_changed_by, row.status_reason = want, user.username, (reason or "").strip()[:200]
+    db.commit()
+    write_audit("MACHINE_STATUS", user=user, object_type=model.__name__, object_id=str(rid), detail=f"{want} {row.status_reason}".strip())
+    return row
+
+
+def load_machine_adjust(db: Session) -> list[dict]:
+    """Điều chỉnh số máy theo ngày: bảo trì (âm) và mượn máy (âm bên cho, dương bên nhận) — chỉ bản ghi ACTIVE."""
+    out: list[dict] = []
+    for r in db.query(MachineSharedPool).filter(MachineSharedPool.status == "ACTIVE"):  # máy dùng chung: mỗi chuyền trong danh sách được dùng tối đa số máy của nhóm
+        for ln in r.lines or []:
+            out.append({"key": (r.factory_code, str(ln), r.machine_type), "start": r.effective_from or date.min, "end": r.effective_to or date.max, "delta": r.quantity, "kind": "SHARED", "ref": r.id})
+    for r in db.query(MachineMaintenance).filter(MachineMaintenance.status == "ACTIVE"):
+        out.append({"key": (r.factory_code, r.line, r.machine_type), "start": r.date_from, "end": r.date_to, "delta": -r.quantity, "kind": "MAINTENANCE", "ref": r.id})
+    for r in db.query(MachineSharing).filter(MachineSharing.status == "ACTIVE"):
+        if r.from_line:
+            out.append({"key": (r.from_factory, r.from_line, r.machine_type), "start": r.date_from, "end": r.date_to, "delta": -r.quantity, "kind": "LEND", "ref": r.id})
+        if r.to_line:
+            out.append({"key": (r.to_factory, r.to_line, r.machine_type), "start": r.date_from, "end": r.date_to, "delta": r.quantity, "kind": "BORROW", "ref": r.id})
+    return out
+
+
+# ------------------------------------------------------------------ Năng suất loại máy theo mã hàng
+def style_output_view(r: MachineStyleOutput) -> dict:
+    return {"id": r.id, "machine_type": r.machine_type, "style_cc": r.style_cc, "output_per_day": r.output_per_day, "required_quantity": r.required_quantity, "source": r.source, "effective_from": r.effective_from.isoformat() if r.effective_from else None,
+            "effective_to": r.effective_to.isoformat() if r.effective_to else None, "status": r.status, "note": r.note, "updated_by": r.updated_by or r.created_by}
+
+
+def save_style_output(db: Session, user: User, d: dict, rid: int | None = None) -> MachineStyleOutput:
+    if d.get("effective_from") and d.get("effective_to") and d["effective_from"] > d["effective_to"]:
+        raise HTTPException(422, "Hiệu lực từ phải trước hoặc bằng đến")
+    if d.get("output_per_day") is not None and not float(d["output_per_day"]) > 0:
+        raise HTTPException(422, "Công suất phải > 0")
+    if d.get("required_quantity") is not None and int(d["required_quantity"]) < 1:
+        raise HTTPException(422, "Số máy cần phải ≥ 1")
+    if rid is None:
+        code, style = (d.get("machine_type") or "").strip(), (d.get("style_cc") or "").strip().upper()
+        if not code or not style or (d.get("output_per_day") is None and d.get("required_quantity") is None):
+            raise HTTPException(422, "Cần loại máy, mã hàng và công suất hoặc số máy cần")
+        _known_type(db, code)
+        if db.query(MachineStyleOutput).filter(MachineStyleOutput.machine_type == code, MachineStyleOutput.style_cc == style, MachineStyleOutput.status == "ACTIVE").first():
+            raise HTTPException(409, f"Mã hàng {style} đã có công suất cho loại máy {code} — sửa dòng đó")
+        row = MachineStyleOutput(machine_type=code, style_cc=style, output_per_day=(float(d["output_per_day"]) if d.get("output_per_day") is not None else None), required_quantity=d.get("required_quantity"), source=d.get("source", "MANUAL"), effective_from=d.get("effective_from"), effective_to=d.get("effective_to"),
+                                 note=d.get("note") or "", created_by=user.username)
+        db.add(row)
+        action = "MACHINE_STYLE_OUTPUT_CREATE"
+    else:
+        row = db.get(MachineStyleOutput, rid)
+        if row is None:
+            raise HTTPException(404, "Không tìm thấy dòng công suất")
+        for k in ("output_per_day", "required_quantity", "effective_from", "effective_to", "note"):
+            if k in d:
+                setattr(row, k, d[k])
+        row.updated_by, row.updated_at = user.username, utcnow()
+        action = "MACHINE_STYLE_OUTPUT_UPDATE"
+    db.commit()
+    write_audit(action, user=user, object_type="MachineStyleOutput", object_id=str(row.id), detail=f"{row.machine_type}/{row.style_cc} công suất {row.output_per_day} · cần {row.required_quantity} máy")
+    return row
+
+
+# ------------------------------------------------------------------ Đăng ký dùng chung nhiều chuyền
+def pool_view(r: MachineSharedPool) -> dict:
+    return {"id": r.id, "factory_code": r.factory_code, "machine_type": r.machine_type, "quantity": r.quantity, "lines": list(r.lines or []), "effective_from": r.effective_from.isoformat() if r.effective_from else None,
+            "effective_to": r.effective_to.isoformat() if r.effective_to else None, "note": r.note, "status": r.status, "created_by": r.created_by, "status_reason": r.status_reason}
+
+
+def save_pool(db: Session, user: User, d: dict) -> MachineSharedPool:
+    lines = [str(x).strip() for x in d.get("lines") or [] if str(x).strip()]
+    if len(set(lines)) != len(lines):
+        raise HTTPException(422, "Chuyền bị trùng trong danh sách")
+    if len(lines) < 2:
+        raise HTTPException(422, "Dùng chung cần từ 2 chuyền trở lên")
+    if not d.get("factory_code") or not d.get("machine_type"):
+        raise HTTPException(422, "Cần xí nghiệp và loại máy")
+    if int(d.get("quantity") or 0) < 1:
+        raise HTTPException(422, "Số lượng máy phải ≥ 1")
+    if d.get("effective_from") and d.get("effective_to") and d["effective_from"] > d["effective_to"]:
+        raise HTTPException(422, "Từ ngày phải trước hoặc bằng đến ngày")
+    _known_type(db, d["machine_type"])
+    row = MachineSharedPool(factory_code=d["factory_code"], machine_type=d["machine_type"], quantity=int(d["quantity"]), lines=lines, effective_from=d.get("effective_from"),
+                            effective_to=d.get("effective_to"), note=d.get("note") or "", created_by=user.username)
+    db.add(row)
+    db.commit()
+    write_audit("MACHINE_SHARED_POOL_CREATE", user=user, object_type="MachineSharedPool", object_id=str(row.id), detail=f"{row.factory_code} {row.machine_type} x{row.quantity} chuyền {','.join(lines)}")
+    return row

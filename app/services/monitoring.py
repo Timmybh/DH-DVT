@@ -64,9 +64,9 @@ def snapshot(db: Session) -> dict:
                      "last_success_age_hours": age, "duration_ms": last.duration_ms if last else None})
         if src == "EGMF_REVENUE":
             if ok is None:
-                alert("WARNING", "SYNC_NEVER", "Chưa có lần đồng bộ eGMF thành công nào")
+                alert("WARNING", "SYNC_NEVER", "Chưa có lần đồng bộ ERP thành công nào")
             elif age is not None and age > settings.sync_stale_hours:
-                alert("ERROR", "SYNC_STALE", f"Lần đồng bộ eGMF thành công gần nhất cách đây {age:.0f} giờ (> {settings.sync_stale_hours} giờ)")
+                alert("ERROR", "SYNC_STALE", f"Lần đồng bộ ERP thành công gần nhất cách đây {age:.0f} giờ (> {settings.sync_stale_hours} giờ)")
             if last is not None and last.status == "FAILED":
                 alert("ERROR", "SYNC_FAILED", f"Lần đồng bộ gần nhất {last.run_code} thất bại")
     failed_24h = db.query(func.count(SyncRun.id)).filter(SyncRun.status == "FAILED", SyncRun.started_at >= utcnow() - timedelta(hours=24)).scalar() or 0

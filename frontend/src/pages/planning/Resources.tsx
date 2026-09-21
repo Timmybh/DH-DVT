@@ -4,6 +4,7 @@ import { api, errorMessage, PlanVersion } from "../../api/client";
 import { useAuth } from "../../context/AuthContext";
 import { dateVi, num } from "../../lib/format";
 import { isoWeek, weekRange } from "../../lib/weeks";
+import { GradesPanel, LaborStandardsPanel, MachineSharingMaintenancePanel, MachineTypesPanel } from "./ResourceMaster";
 
 const SECTIONS = [
   { key: "capacity", label: "Năng suất (Capacity)" },
@@ -11,6 +12,7 @@ const SECTIONS = [
   { key: "labor", label: "Lao động" },
   { key: "release", label: "Lịch nguồn lực rảnh" },
 ];
+const SHOW_STYLE_REQUIREMENTS = false;
 const input = "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm";
 const chip = "pg-chip";
 
@@ -174,14 +176,15 @@ function CapacityTab({ canManage }: { canManage: boolean }) {
 }
 
 // ---------------------------------------------------------------- Máy móc
-interface Mach { id: number; factory_code: string; line: string; machine_type: string; quantity: number; nominal_output_per_day: number | null; efficiency: number | null; changeover_minutes: number | null; planned_downtime_pct: number | null; maintenance_status: string; is_bottleneck: boolean; notes: string }
+interface Mach { id: number; factory_code: string; line: string; machine_type: string; quantity: number; nominal_output_per_day: number | null; efficiency: number | null; changeover_minutes: number | null; planned_downtime_pct: number | null; maintenance_status: string; is_bottleneck: boolean; notes: string; maintenance_quantity: number; down_quantity: number; available_quantity: number }
 interface Req { id: number; style_cc: string; machine_type: string; machine_name: string; quantity: number; source: string }
 
-function MachinesTab({ canManage }: { canManage: boolean }) {
+function MachineAllocationTab({ canManage }: { canManage: boolean }) {
   const [caps, setCaps] = useState<Mach[]>([]);
   const [reqs, setReqs] = useState<Req[]>([]);
   const [types, setTypes] = useState<{ code: string; name: string }[]>([]);
-  const [factory, setFactory] = useState("");
+  const [factory, setFactory] = useState("XN1");
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [edit, setEdit] = useState<Partial<Mach> | null>(null);
   const [newReq, setNewReq] = useState({ style_cc: "", machine_type: "", quantity: 1 });
   const [rq, setRq] = useState("");
@@ -225,6 +228,11 @@ function MachinesTab({ canManage }: { canManage: boolean }) {
     await api.delete(`/planning/resources/machine-requirements/${id}`).catch((e) => setMsg({ ok: false, text: errorMessage(e) }));
     await load();
   };
+  const lineGroups = useMemo(() => {
+    const m = new Map<string, Mach[]>();
+    caps.forEach((c) => m.set(c.line, [...(m.get(c.line) ?? []), c]));
+    return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true })).map(([line, items]) => ({ line, items }));
+  }, [caps]);
   const typeName = (code: string) => types.find((t) => t.code === code)?.name ?? "";
 
   return (
@@ -232,30 +240,48 @@ function MachinesTab({ canManage }: { canManage: boolean }) {
       {msg && <p className={`rounded-lg border px-3 py-2 text-sm ${msg.ok ? "border-green-300/50 text-green-700" : "border-red-300/50 text-red-700"}`} role="status">{msg.text}</p>}
       <section className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-sm font-bold text-slate-900">Máy theo chuyền (Machine Capacity)</h2>
-          <select value={factory} onChange={(e) => setFactory(e.target.value)} className="rounded-lg border border-slate-200 px-2 py-1 text-sm" aria-label="Xí nghiệp"><option value="">Mọi XN</option>{["XN1", "XN2", "XN3"].map((f) => <option key={f}>{f}</option>)}</select>
+          <h2 className="text-sm font-bold text-slate-900">Phân bổ máy theo chuyền</h2>
+          <div className="flex gap-1" role="tablist" aria-label="Xí nghiệp">
+            {["XN1", "XN2", "XN3"].map((f) => <button key={f} role="tab" aria-selected={factory === f} onClick={() => setFactory(f)} className={`rounded-full border px-4 py-1.5 text-xs font-semibold ${factory === f ? "border-brand bg-indigo-500/20 text-brand" : "border-slate-200 text-slate-500"}`} data-testid={`alloc-xn-${f}`}>{f}</button>)}
+          </div>
+          <span className="text-xs text-slate-500" data-testid="alloc-summary">{lineGroups.length} chuyền · {num(caps.reduce((t, m) => t + m.quantity, 0))} máy phân bổ · {num(caps.reduce((t, m) => t + m.available_quantity, 0))} sẵn sàng</span>
           <span className="flex-1" />
-          {canManage && <button onClick={() => setEdit({ factory_code: "XN1", line: "", machine_type: "", quantity: 1, maintenance_status: "OK", is_bottleneck: false })} className="rounded-full bg-brand px-4 py-1.5 text-xs font-semibold text-white">+ Thêm</button>}
+          <button onClick={() => setCollapsed(collapsed.size ? new Set() : new Set(lineGroups.map((g) => g.line)))} className="rounded-full border border-slate-300 px-3 py-1 text-xs">{collapsed.size ? "Mở tất cả" : "Thu gọn tất cả"}</button>
+          {canManage && <button onClick={() => setEdit({ factory_code: factory, line: "", machine_type: "", quantity: 1, maintenance_status: "OK", is_bottleneck: false })} className="rounded-full bg-brand px-4 py-1.5 text-xs font-semibold text-white" data-testid="alloc-add">+ Thêm máy</button>}
         </div>
         <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
-          <table className="w-full min-w-[860px] text-left text-sm">
-            <thead><tr className="border-b border-slate-100 text-xs uppercase text-slate-400"><th className="px-4 py-2.5">XN</th><th>Chuyền</th><th>Nhóm máy</th><th className="text-right">Số máy</th><th className="text-right">Công suất/ngày</th><th className="text-right">OEE</th><th>Bảo trì</th><th>Nút thắt</th><th /></tr></thead>
+          <table className="w-full min-w-[760px] text-left text-sm" data-testid="alloc-list">
+            <thead><tr className="border-b border-slate-100 text-xs uppercase text-slate-400"><th className="px-4 py-2.5">Chuyền / loại máy</th><th className="text-right">Số lượng</th><th className="text-right">Sẵn sàng</th><th className="text-right">Công suất/ngày</th><th className="text-right">OEE</th><th>Bảo trì</th><th /></tr></thead>
             <tbody>
-              {caps.map((m) => (
-                <tr key={m.id} className="border-b border-slate-50" data-testid={`mach-${m.id}`}>
-                  <td className="px-4 py-1.5">{m.factory_code}</td><td>{m.line}</td><td>{m.machine_type}<span className="ml-1 text-xs text-slate-400">{typeName(m.machine_type)}</span></td>
-                  <td className="text-right font-semibold">{m.quantity}</td><td className="text-right">{m.nominal_output_per_day ? num(m.nominal_output_per_day) : "—"}</td><td className="text-right">{m.efficiency ?? "—"}</td>
-                  <td><span className={`${chip} ${m.maintenance_status === "OK" ? "pg-ok" : m.maintenance_status === "DOWN" ? "pg-late" : "pg-adv"}`}>{m.maintenance_status}</span></td>
-                  <td>{m.is_bottleneck ? <span className={`${chip} pg-late`}>Nút thắt</span> : "—"}</td>
-                  <td className="pr-4 text-right text-xs">{canManage && <button onClick={() => setEdit(m)} className="text-brand hover:underline">Sửa</button>}</td>
-                </tr>
-              ))}
-              {caps.length === 0 && <tr><td colSpan={9} className="py-6 text-center text-slate-400">Chưa khai báo máy theo chuyền. Kiểm tra thiếu máy chỉ chạy khi cả yêu cầu máy của mã hàng và máy của chuyền đều được khai báo.</td></tr>}
+              {lineGroups.map((g) => {
+                const isOpen = !collapsed.has(g.line);
+                return [
+                  <tr key={`l-${g.line}`} className="cursor-pointer border-b border-slate-100 bg-slate-500/5 hover:bg-slate-500/10" onClick={() => setCollapsed((cur) => { const n = new Set(cur); if (n.has(g.line)) n.delete(g.line); else n.add(g.line); return n; })} data-testid={`alloc-line-${g.line}`}>
+                    <td className="px-4 py-1.5 font-semibold"><span className="mr-1 text-slate-400">{isOpen ? "▾" : "▸"}</span>Chuyền {g.line}<span className="ml-2 text-xs font-normal text-slate-400">{g.items.length} loại máy</span></td>
+                    <td className="text-right font-semibold">{g.items.reduce((t, m) => t + m.quantity, 0)}</td><td className="text-right">{g.items.reduce((t, m) => t + m.available_quantity, 0)}</td><td /><td /><td />
+                    <td className="pr-4 text-right text-xs" onClick={(e) => e.stopPropagation()}>{canManage && <button onClick={() => setEdit({ factory_code: factory, line: g.line, machine_type: "", quantity: 1, maintenance_status: "OK", is_bottleneck: false })} className="text-brand hover:underline">+ Máy</button>}</td>
+                  </tr>,
+                  ...(isOpen ? g.items.map((m) => (
+                    <tr key={m.id} className="border-b border-slate-50 text-[13px]" data-testid={`mach-${m.id}`}>
+                      <td className="py-1 pl-10">{m.machine_type}<span className="ml-1 text-xs text-slate-400">{typeName(m.machine_type)}</span>{m.is_bottleneck && <span className={`${chip} pg-late ml-2`}>Nút thắt</span>}</td>
+                      <td className="text-right font-semibold">{m.quantity}</td><td className="text-right" title={`Bảo trì ${m.maintenance_quantity} · hỏng ${m.down_quantity}`}>{m.available_quantity}</td>
+                      <td className="text-right">{m.nominal_output_per_day ? num(m.nominal_output_per_day) : "—"}</td><td className="text-right">{m.efficiency ?? "—"}</td>
+                      <td><span className={`${chip} ${m.maintenance_status === "OK" ? "pg-ok" : m.maintenance_status === "DOWN" ? "pg-late" : "pg-adv"}`}>{m.maintenance_status}</span></td>
+                      <td className="pr-4 text-right text-xs">{canManage && <button onClick={() => setEdit(m)} className="text-brand hover:underline">Sửa</button>}</td>
+                    </tr>
+                  )) : []),
+                ];
+              })}
+              {caps.length === 0 && <tr><td colSpan={7} className="py-6 text-center text-slate-400">{factory} chưa khai báo máy. Bấm "+ Thêm máy" để khai báo loại máy và số lượng cho từng chuyền.</td></tr>}
             </tbody>
           </table>
         </div>
       </section>
 
+      <datalist id="machine-types">{types.map((t) => <option key={t.code} value={t.code}>{t.name}</option>)}</datalist>
+
+      {/* Yêu cầu máy theo mã hàng (style): tạm ẩn, chưa dùng trong kiểm tra — bật lại cùng MACHINE_REQUIREMENT_ENABLED ở backend */}
+      {SHOW_STYLE_REQUIREMENTS && (
       <section className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-sm font-bold text-slate-900">Yêu cầu máy theo mã hàng</h2>
@@ -265,7 +291,7 @@ function MachinesTab({ canManage }: { canManage: boolean }) {
           <div className="flex flex-wrap items-end gap-2 text-xs">
             <input value={newReq.style_cc} onChange={(e) => setNewReq({ ...newReq, style_cc: e.target.value })} placeholder="Style/CC" className="w-32 rounded-lg border border-slate-200 px-2 py-1.5" aria-label="Style/CC" />
             <input value={newReq.machine_type} list="machine-types" onChange={(e) => setNewReq({ ...newReq, machine_type: e.target.value })} placeholder="Nhóm máy" className="w-32 rounded-lg border border-slate-200 px-2 py-1.5" aria-label="Nhóm máy" />
-            <datalist id="machine-types">{types.map((t) => <option key={t.code} value={t.code}>{t.name}</option>)}</datalist>
+            
             <input type="number" min={1} value={newReq.quantity} onChange={(e) => setNewReq({ ...newReq, quantity: Number(e.target.value) })} className="w-20 rounded-lg border border-slate-200 px-2 py-1.5" aria-label="Số lượng" />
             <button onClick={addReq} disabled={!newReq.style_cc || !newReq.machine_type} className="rounded-full bg-brand px-4 py-1.5 font-semibold text-white disabled:opacity-40">Lưu yêu cầu</button>
           </div>
@@ -281,11 +307,12 @@ function MachinesTab({ canManage }: { canManage: boolean }) {
                   <td className="pr-4 text-right text-xs">{canManage && <button onClick={() => delReq(r.id)} className="text-red-500 hover:underline">Xóa</button>}</td>
                 </tr>
               ))}
-              {reqs.length === 0 && <tr><td colSpan={5} className="py-6 text-center text-slate-400">Chưa có yêu cầu máy nào (đồng bộ từ Quy trình công nghệ eGMF hoặc nhập tay).</td></tr>}
+              {reqs.length === 0 && <tr><td colSpan={5} className="py-6 text-center text-slate-400">Chưa có yêu cầu máy nào — nhập tay ở ô phía trên.</td></tr>}
             </tbody>
           </table>
         </div>
       </section>
+      )}
 
       {edit && (
         <Modal title={edit.id ? "Sửa máy theo chuyền" : "Thêm máy theo chuyền"} onClose={() => setEdit(null)}>
@@ -293,7 +320,9 @@ function MachinesTab({ canManage }: { canManage: boolean }) {
             <label className="block text-xs text-slate-500">Xí nghiệp<select className={input} value={edit.factory_code} onChange={(e) => setEdit({ ...edit, factory_code: e.target.value })}>{["XN1", "XN2", "XN3"].map((f) => <option key={f}>{f}</option>)}</select></label>
             <label className="block text-xs text-slate-500">Chuyền<input className={input} value={edit.line ?? ""} onChange={(e) => setEdit({ ...edit, line: e.target.value })} /></label>
             <label className="block text-xs text-slate-500">Nhóm máy<input list="machine-types" className={input} value={edit.machine_type ?? ""} onChange={(e) => setEdit({ ...edit, machine_type: e.target.value.toUpperCase() })} /></label>
-            <label className="block text-xs text-slate-500">Số máy<input type="number" className={input} value={edit.quantity ?? 0} onChange={(e) => setEdit({ ...edit, quantity: Number(e.target.value) })} /></label>
+            <label className="block text-xs text-slate-500">Số máy phân bổ<input type="number" className={input} value={edit.quantity ?? 0} onChange={(e) => setEdit({ ...edit, quantity: Number(e.target.value) })} /></label>
+            <label className="block text-xs text-slate-500">Đang bảo trì kéo dài<input type="number" min={0} className={input} value={edit.maintenance_quantity ?? 0} onChange={(e) => setEdit({ ...edit, maintenance_quantity: Number(e.target.value) })} /></label>
+            <label className="block text-xs text-slate-500">Đang hỏng<input type="number" min={0} className={input} value={edit.down_quantity ?? 0} onChange={(e) => setEdit({ ...edit, down_quantity: Number(e.target.value) })} /></label>
             <label className="block text-xs text-slate-500">Công suất danh định (pcs/ngày)<input type="number" className={input} value={edit.nominal_output_per_day ?? ""} onChange={(e) => setEdit({ ...edit, nominal_output_per_day: e.target.value === "" ? null : Number(e.target.value) })} /></label>
             <label className="block text-xs text-slate-500">Hiệu suất OEE (0–1)<input type="number" step="0.05" className={input} value={edit.efficiency ?? ""} onChange={(e) => setEdit({ ...edit, efficiency: e.target.value === "" ? null : Number(e.target.value) })} /></label>
             <label className="block text-xs text-slate-500">Bảo trì<select className={input} value={edit.maintenance_status} onChange={(e) => setEdit({ ...edit, maintenance_status: e.target.value })}>{["OK", "MAINTENANCE", "DOWN"].map((s) => <option key={s}>{s}</option>)}</select></label>
@@ -310,7 +339,7 @@ function MachinesTab({ canManage }: { canManage: boolean }) {
 }
 
 // ---------------------------------------------------------------- Lao động
-function LaborTab() {
+function LaborPresentTab() {
   const [rows, setRows] = useState<{ factory_code: string; line: string; day: string; present: number; total: number }[]>([]);
   const [err, setErr] = useState("");
   useEffect(() => {
@@ -324,9 +353,9 @@ function LaborTab() {
   }, [rows]);
   return (
     <div className="space-y-4">
-      <p className="text-xs text-slate-500">Lao động có mặt theo chuyền ở lần đồng bộ gần nhất (eGMF). Recheck cảnh báo LABOR_SHORTAGE khi WORKER của dòng kế hoạch lớn hơn số người có mặt của chuyền.</p>
+      <p className="text-xs text-slate-500">Lao động có mặt theo chuyền ở lần đồng bộ gần nhất (ERP). Recheck cảnh báo LABOR_SHORTAGE khi WORKER của dòng kế hoạch lớn hơn số người có mặt của chuyền.</p>
       {err && <p className="text-sm text-red-600">{err}</p>}
-      {byF.length === 0 && <p className="text-sm text-slate-400">Chưa có dữ liệu lao động — đồng bộ eGMF ở Quản trị → Sync Log.</p>}
+      {byF.length === 0 && <p className="text-sm text-slate-400">Chưa có dữ liệu lao động — đồng bộ ERP ở Quản trị → Sync Log.</p>}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         {byF.map(([xn, lines]) => (
           <section key={xn} className="rounded-2xl border border-slate-200 bg-white p-4">
@@ -428,6 +457,40 @@ function FragmentRows({ f, open, onToggle, cell }: { f: RelData["factories"][num
   );
 }
 
+function SubTabs<T extends string>({ items, value, onChange }: { items: { key: T; label: string }[]; value: T; onChange: (k: T) => void }) {
+  return (
+    <div className="flex flex-wrap gap-1" role="tablist">
+      {items.map((i) => <button key={i.key} role="tab" aria-selected={value === i.key} onClick={() => onChange(i.key)} className={`rounded-full border px-4 py-1.5 text-xs font-semibold ${value === i.key ? "border-brand bg-indigo-500/20 text-brand" : "border-slate-200 text-slate-500"}`} data-testid={`sub-${i.key}`}>{i.label}</button>)}
+    </div>
+  );
+}
+
+// Máy móc: 3 cấp — (1) loại máy, (2) phân bổ theo XN/chuyền (+ yêu cầu theo mã hàng), (3) đăng ký mượn máy và lịch bảo trì từng XN
+function MachinesTab({ canManage }: { canManage: boolean }) {
+  const [sub, setSub] = useState<"alloc" | "types" | "share">("alloc");
+  return (
+    <div className="space-y-4">
+      <SubTabs value={sub} onChange={setSub} items={[{ key: "alloc", label: "Phân bổ theo XN/chuyền" }, { key: "types", label: "Loại máy" }, { key: "share", label: "Mượn, dùng chung & bảo trì" }]} />
+      {sub === "types" && <MachineTypesPanel canManage={canManage} />}
+      {sub === "alloc" && <MachineAllocationTab canManage={canManage} />}
+      {sub === "share" && <MachineSharingMaintenancePanel canManage={canManage} />}
+    </div>
+  );
+}
+
+// Lao động: (1) danh mục bậc, (2) số lao động theo XN/chuyền và từng bậc, (+) có mặt từ ERP
+function LaborTab({ canManage }: { canManage: boolean }) {
+  const [sub, setSub] = useState<"std" | "grades" | "present">("std");
+  return (
+    <div className="space-y-4">
+      <SubTabs value={sub} onChange={setSub} items={[{ key: "std", label: "Cơ cấu theo XN/chuyền" }, { key: "grades", label: "Bậc lao động" }, { key: "present", label: "Có mặt (ERP)" }]} />
+      {sub === "grades" && <GradesPanel canManage={canManage} />}
+      {sub === "std" && <LaborStandardsPanel canManage={canManage} />}
+      {sub === "present" && <LaborPresentTab />}
+    </div>
+  );
+}
+
 export default function Resources() {
   const { section } = useParams();
   const { can } = useAuth();
@@ -446,7 +509,7 @@ export default function Resources() {
       </nav>
       {current.key === "capacity" && <CapacityTab canManage={can("resource.manage")} />}
       {current.key === "machines" && <MachinesTab canManage={can("resource.manage")} />}
-      {current.key === "labor" && <LaborTab />}
+      {current.key === "labor" && <LaborTab canManage={can("resource.manage")} />}
       {current.key === "release" && <ReleaseTab />}
     </div>
   );

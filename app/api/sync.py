@@ -98,7 +98,7 @@ def retry_run(run_id: int, db: Session = Depends(get_db), user: User = Depends(r
     if old is None:
         raise HTTPException(404, "Không tìm thấy phiên đồng bộ")
     if old.source != "EGMF_REVENUE":
-        raise HTTPException(400, "Chỉ retry được phiên đồng bộ eGMF; với file Excel hãy nhập lại file")
+        raise HTTPException(400, "Chỉ retry được phiên đồng bộ ERP; với file Excel hãy nhập lại file")
     try:
         return _run_out(run_revenue_sync(db, trigger="RETRY", username=user.username, retry_of=old.id))
     except SyncBusy as exc:

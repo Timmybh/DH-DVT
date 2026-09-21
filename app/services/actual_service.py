@@ -155,6 +155,17 @@ def match_by_style(actual: dict, style_rows: list[dict], horizon_start: date | N
     best = ranked[0]
     gap = _window_gap(best, ref)
     tied = [r for r in ranked if _window_gap(r, ref) == gap]
+    if on_line_ok:
+        # Khớp đủ khóa nghiệp vụ: cùng xí nghiệp + chuyền + Style/CC (ERP đã có XN/chuyền/mã hàng) -> liên kết luôn dòng kế hoạch gần ngày nhất;
+        # nhiều dòng cùng khóa thì lấy dòng gần ngày nhất (hòa thì dòng đứng trước), ghi chú để người dùng rà lại khi cần.
+        notes = []
+        if gap:
+            notes.append(f"chọn dòng gần nhất, lệch {gap} ngày")
+        if len(tied) > 1:
+            notes.append(f"{len(tied)} dòng cùng khóa, lấy dòng đứng trước")
+        out.update(status="MATCHED", row_uid=best["row_uid"], confidence=CONF_STYLE_WINDOW - (0.1 if notes else 0), candidates=[r["row_uid"] for r in ranked[:5]] if notes else [])
+        out["reason"] = "Khớp XN + chuyền + Style/CC" + ("; " + "; ".join(notes) if notes else "")
+        return out
     if gap > WINDOW_TOLERANCE_DAYS:
         out.update(status="REVIEW", confidence=0.3, candidates=[r["row_uid"] for r in ranked[:5]], reason=f"Không có dòng kế hoạch trong ±{WINDOW_TOLERANCE_DAYS} ngày quanh {ref:%d/%m/%Y}")
         return out

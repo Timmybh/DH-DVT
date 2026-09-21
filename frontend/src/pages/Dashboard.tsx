@@ -103,7 +103,7 @@ export default function Dashboard() {
 
       {runtime?.header.has_demo && (
         <div className="rounded-xl border-2 border-dashed border-orange-300 bg-orange-50 p-3 text-sm font-medium text-orange-800">
-          DỮ LIỆU DOANH THU MẪU — chưa đồng bộ được từ eGMF. Số liệu doanh thu bên dưới chỉ để minh họa; sẽ tự thay bằng số thật khi đồng bộ thành công.
+          DỮ LIỆU DOANH THU MẪU — chưa đồng bộ được từ ERP. Số liệu doanh thu bên dưới chỉ để minh họa; sẽ tự thay bằng số thật khi đồng bộ thành công.
         </div>
       )}
       {error && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}

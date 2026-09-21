@@ -50,6 +50,24 @@ def _upgrade_schema() -> None:
             "ALTER TABLE plan_rows ADD COLUMN IF NOT EXISTS so_id INTEGER",
             "ALTER TABLE planning_version_rows ADD COLUMN IF NOT EXISTS so_id INTEGER",
             "ALTER TABLE actual_mappings ALTER COLUMN status TYPE VARCHAR(16)",
+            "ALTER TABLE machine_style_outputs ADD COLUMN IF NOT EXISTS required_quantity INTEGER",
+            "ALTER TABLE machine_style_outputs ADD COLUMN IF NOT EXISTS source VARCHAR(10) NOT NULL DEFAULT 'MANUAL'",
+            "ALTER TABLE machine_style_outputs ALTER COLUMN output_per_day DROP NOT NULL",
+            "ALTER TABLE machine_types ADD COLUMN IF NOT EXISTS model VARCHAR(60) NOT NULL DEFAULT ''",
+            "ALTER TABLE machine_types ADD COLUMN IF NOT EXISTS machine_group VARCHAR(60) NOT NULL DEFAULT ''",
+            "ALTER TABLE machine_types ADD COLUMN IF NOT EXISTS process VARCHAR(60) NOT NULL DEFAULT ''",
+            "ALTER TABLE machine_types ADD COLUMN IF NOT EXISTS nominal_output_per_day DOUBLE PRECISION",
+            "ALTER TABLE machine_types ADD COLUMN IF NOT EXISTS default_efficiency DOUBLE PRECISION",
+            "ALTER TABLE machine_types ADD COLUMN IF NOT EXISTS changeover_minutes DOUBLE PRECISION",
+            "ALTER TABLE machine_types ADD COLUMN IF NOT EXISTS is_bottleneck_capable BOOLEAN NOT NULL DEFAULT FALSE",
+            "ALTER TABLE machine_types ADD COLUMN IF NOT EXISTS effective_from DATE",
+            "ALTER TABLE machine_types ADD COLUMN IF NOT EXISTS effective_to DATE",
+            "ALTER TABLE machine_types ADD COLUMN IF NOT EXISTS status VARCHAR(10) NOT NULL DEFAULT 'ACTIVE'",
+            "ALTER TABLE machine_types ADD COLUMN IF NOT EXISTS note VARCHAR(300) NOT NULL DEFAULT ''",
+            "ALTER TABLE machine_types ADD COLUMN IF NOT EXISTS updated_by VARCHAR(100) NOT NULL DEFAULT ''",
+            "ALTER TABLE machine_types ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE",
+            "ALTER TABLE machine_capacities ADD COLUMN IF NOT EXISTS maintenance_quantity INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE machine_capacities ADD COLUMN IF NOT EXISTS down_quantity INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE actual_mappings ADD COLUMN IF NOT EXISTS mapped_so_id INTEGER",
             "ALTER TABLE actual_mappings ALTER COLUMN method TYPE VARCHAR(24)",
         ):
@@ -108,6 +126,9 @@ def run_seed() -> None:
         from app.services import planning_service
 
         planning_service.load_resolver(db)  # nạp Lịch làm việc cho công thức OFF_DAYS
+        from app.services import labor_grade_service
+
+        labor_grade_service.seed_grades(db)  # PG01..PG10 mặc định (spec §4), chỉ khi bảng trống
         from app.services import so_service
 
         so_service.bulk_issue_current(db, "system")  # cấp SO TẠM cho dữ liệu hiện có chưa có SO (UAT); chạy lại an toàn

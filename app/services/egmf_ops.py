@@ -30,6 +30,7 @@ from app.services.sync_core import add_items
 log = logging.getLogger(__name__)
 
 QA_CATEGORIES = ("DAU_CHUYEN", "INLINE", "ENDLINE", "PREFINAL")
+MACHINE_SYNC_ENABLED = False  # Máy móc khai báo thủ công (Loại máy, Phân bổ, Yêu cầu máy, Dùng chung, Bảo trì); chỉ bật lại khi ERP có dữ liệu chuẩn
 QA_ACTIVE = ("INLINE", "ENDLINE", "PREFINAL")  # spec §35: Đầu chuyền + QC tạm ẩn — không đồng bộ, không tính (code truy vấn vẫn giữ)
 LATE_CLOSE_DAYS = 3  # những ngày đầu tháng còn đồng bộ thêm tháng trước để bắt các phiếu kiểm nhập muộn
 _XN = re.compile(r"(?i)(?:XN|X[ÍI] ?NGHI[ỆE]P(?: MAY)?)\s*0?(\d)")
@@ -215,8 +216,8 @@ def sync_ops(db: Session, run: SyncRun, conn: Connection, fmap: dict[int, int]) 
             if ma is None or r.d is None:
                 continue
             labor.append(dict(factory_code=f"XN{ma}", line=str(r.line).strip()[:20], day=r.d, total=int(r.total or 0), present=int(r.present or 0), sync_run_id=run.id))
-        types = [dict(code=str(r.code).strip()[:20], name=(r.name or "")[:100], source="EGMF") for r in conn.execute(text(MACHINE_TYPE_SQL)) if r.code]
-        reqs = [dict(style_cc=str(r.style).strip()[:60], machine_type=str(r.machine).strip().upper()[:20], machine_name=str(r.machine)[:100], quantity=int(r.qty), source="QTCN")
+        types = [] if not MACHINE_SYNC_ENABLED else [dict(code=str(r.code).strip()[:20], name=(r.name or "")[:100], source="EGMF") for r in conn.execute(text(MACHINE_TYPE_SQL)) if r.code]
+        reqs = [] if not MACHINE_SYNC_ENABLED else [dict(style_cc=str(r.style).strip()[:60], machine_type=str(r.machine).strip().upper()[:20], machine_name=str(r.machine)[:100], quantity=int(r.qty), source="QTCN")
                 for r in conn.execute(text(QTCN_SQL))]
         with db.begin_nested():
             labor_snapshot.take_snapshot(db, run.id, labor)  # ảnh chụp riêng cho Dashboard
@@ -230,7 +231,8 @@ def sync_ops(db: Session, run: SyncRun, conn: Connection, fmap: dict[int, int]) 
                 stmt = pg_insert(MachineRequirement).values(part)
                 db.execute(stmt.on_conflict_do_update(constraint="uq_machine_req", set_={"quantity": stmt.excluded.quantity, "machine_name": stmt.excluded.machine_name}, where=(MachineRequirement.source == "QTCN")))
         objects.append({"name": "Lao động theo chuyền (LCD_Truc_Quan_ChuyenMay_LaoDong)", "read": len(labor), "matched": len(labor), "unmatched": 0})
-        objects.append({"name": "Loại máy + yêu cầu máy theo mã hàng (QTCN)", "read": len(types) + len(reqs), "matched": len(types) + len(reqs), "unmatched": 0})
+        if MACHINE_SYNC_ENABLED:
+            objects.append({"name": "Loại máy + yêu cầu máy theo mã hàng (QTCN)", "read": len(types) + len(reqs), "matched": len(types) + len(reqs), "unmatched": 0})
         total_rows += len(labor) + len(types) + len(reqs)
     except Exception as exc:  # noqa: BLE001
         log.exception("Đồng bộ nguồn lực lỗi")
@@ -238,7 +240,7 @@ def sync_ops(db: Session, run: SyncRun, conn: Connection, fmap: dict[int, int]) 
         objects.append({"name": "Nguồn lực (lao động / máy)", "read": 0, "matched": 0, "unmatched": 1})
 
     if unmatched_names:
-        add_items(db, run.id, "UNMATCHED", "QA / Tiến độ eGMF", [(k, f"Không gán được xí nghiệp — {v:,} bản ghi/lỗi bị bỏ qua (phòng ban hoặc tên lạ)", {"count": v}) for k, v in unmatched_names.items()])
+        add_items(db, run.id, "UNMATCHED", "QA / Tiến độ ERP", [(k, f"Không gán được xí nghiệp — {v:,} bản ghi/lỗi bị bỏ qua (phòng ban hoặc tên lạ)", {"count": v}) for k, v in unmatched_names.items()])
     if errors:
-        add_items(db, run.id, "ERROR", "QA / Tiến độ eGMF", errors)
+        add_items(db, run.id, "ERROR", "QA / Tiến độ ERP", errors)
     return {"objects": objects, "rows": total_rows, "unmatched": len(unmatched_names), "errors": len(errors)}

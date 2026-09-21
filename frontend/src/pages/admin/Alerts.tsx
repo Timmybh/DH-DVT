@@ -64,7 +64,7 @@ export default function Alerts() {
       <section className="space-y-3">
         <h2 className="text-xs font-bold uppercase text-slate-400">Đồng bộ dữ liệu</h2>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <SyncCard title={SOURCE_LABEL.EGMF_REVENUE ?? "eGMF"} run={sync?.revenue} />
+          <SyncCard title={SOURCE_LABEL.EGMF_REVENUE ?? "ERP"} run={sync?.revenue} />
           <SyncCard title={SOURCE_LABEL.PLAN_EXCEL ?? "File Excel kế hoạch SX"} run={sync?.plan} />
         </div>
       </section>

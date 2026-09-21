@@ -265,7 +265,7 @@ def hr_overview(db: Session, factories: list[Factory], is_total: bool) -> dict:
             "company_roster": snap["total"],
             "company_attendance_pct": snap["attendance_pct"],
             "company_delta": snap.get("delta_present"),
-            "as_of_text": f"Ảnh chụp lao động eGMF ngày {snap['as_of'][8:]}/{snap['as_of'][5:7]}/{snap['as_of'][:4]}",
+            "as_of_text": f"Ảnh chụp lao động ERP ngày {snap['as_of'][8:]}/{snap['as_of'][5:7]}/{snap['as_of'][:4]}",
             "as_of": snap["as_of"],
             "trend": snap["trend"],
             "by_factory": [

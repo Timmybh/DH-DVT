@@ -169,9 +169,12 @@ def test_style_fallback_when_plan_has_forecast_po_only():
     # chuyền khác -> review, gợi ý sẵn dòng gần nhất
     r = svc.match_actual(sact(line="9"), [], rows, date(2026, 9, 1))
     assert r["status"] == "REVIEW" and r["row_uid"] == "w2" and "khác chuyền" in r["reason"]
-    # cách xa mọi cửa sổ (> 14 ngày) -> review, không tự gán
+    # đủ khóa XN + chuyền + Style thì liên kết luôn dòng gần ngày nhất, dù cách xa cửa sổ (ghi chú độ lệch)
     far = svc.match_actual(sact(last=date(2026, 10, 30)), [], rows, date(2026, 9, 1))
-    assert far["status"] == "REVIEW" and far["row_uid"] is None
+    assert far["status"] == "MATCHED" and far["row_uid"] == "w3" and "lệch" in far["reason"]
+    # nhiều dòng cùng khóa và cùng khoảng cách: lấy dòng đứng trước, ghi chú để rà lại
+    tie = svc.match_actual(sact(), [], [fplan("a", seq=1), fplan("b", seq=2)], date(2026, 9, 1))
+    assert tie["status"] == "MATCHED" and tie["row_uid"] == "a" and "2 dòng cùng khóa" in tie["reason"]
     # khác xí nghiệp
     assert svc.match_actual(sact(xn="XN3"), [], rows, date(2026, 9, 1))["status"] == "REVIEW"
     # PO thật có trong kế hoạch vẫn ưu tiên khớp theo PO

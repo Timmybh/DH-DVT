@@ -30,7 +30,7 @@ export default function OrderKpiSection({ data, onDrill }: Props) {
       subtitle={`PO hoàn thành trong tháng ${m}/${y} · đúng hạn = hoàn thành ≤ ngày xuất hàng trên ERP${data.as_of ? ` · dữ liệu đến ${new Date(data.as_of).toLocaleDateString("vi-VN")}` : ""}`}
     >
       {!data.has_data ? (
-        <p className="text-sm text-slate-500">Chưa có dữ liệu tiến độ từ eGMF — bấm "Đồng bộ ngay" ở Quản trị → Sync Log.</p>
+        <p className="text-sm text-slate-500">Chưa có dữ liệu tiến độ từ ERP — bấm "Đồng bộ ngay" ở Quản trị → Sync Log.</p>
       ) : (
         <div className="space-y-3">
           <div className="grid grid-cols-[minmax(120px,1.2fr)_1fr_1fr] items-center gap-3 text-[11px] font-semibold uppercase text-slate-400">

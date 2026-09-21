@@ -27,7 +27,7 @@ export default function QaSection({ data, onDrill }: Props) {
       subtitle={`Tổng số lỗi (Total Defect Count) tháng ${m}/${y}${data.latest_day ? ` · dữ liệu đến ${new Date(data.latest_day).toLocaleDateString("vi-VN")}` : ""} · bấm tiêu đề cột để xem theo ngày`}
     >
       {!data.has_data ? (
-        <p className="text-sm text-slate-500">Chưa có dữ liệu QA từ eGMF — bấm "Đồng bộ ngay" ở Quản trị → Sync Log.</p>
+        <p className="text-sm text-slate-500">Chưa có dữ liệu QA từ ERP — bấm "Đồng bộ ngay" ở Quản trị → Sync Log.</p>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[560px] table-fixed border-separate border-spacing-y-2 text-sm" data-testid="qa-matrix">

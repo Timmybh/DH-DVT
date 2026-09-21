@@ -21,7 +21,7 @@ export const dateTimeVi = (iso: string | null | undefined): string => {
 export const duration = (ms: number): string => (ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`);
 
 export const SOURCE_LABEL: Record<string, string> = {
-  EGMF_REVENUE: "eGMF — Doanh thu XN",
+  EGMF_REVENUE: "ERP — Doanh thu XN",
   PLAN_EXCEL: "File Excel kế hoạch SX",
 };
 

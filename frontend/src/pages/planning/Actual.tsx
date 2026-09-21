@@ -78,7 +78,7 @@ function PlanVsActual() {
   return (
     <div className="space-y-3">
       <p className="text-xs text-slate-500">
-        So từng dòng kế hoạch của phiên bản tham chiếu{data?.version ? <> (<b>{data.version.code}</b> · {data.version.status})</> : ""} với thực tế eGMF đã mapping. May xong và nhập kho thành phẩm là hai mốc tách biệt;
+        So từng dòng kế hoạch của phiên bản tham chiếu{data?.version ? <> (<b>{data.version.code}</b> · {data.version.status})</> : ""} với thực tế ERP đã mapping. May xong và nhập kho thành phẩm là hai mốc tách biệt;
         tiến độ tính theo số lượng thực tế, không chỉ ngày kế hoạch. Thực tế của nhiều PO cùng mã hàng được cộng vào dòng kế hoạch tương ứng.
       </p>
       <div className="flex flex-wrap items-center gap-2">
@@ -196,7 +196,7 @@ function Exceptions({ canManage }: { canManage: boolean }) {
   return (
     <div className="space-y-3">
       <p className="text-xs text-slate-500">
-        Thực tế eGMF được khớp với phiên bản kế hoạch tham chiếu{summary?.version ? <> (<b>{summary.version.code}</b>)</> : ""} theo khóa nghiệp vụ (PO + Style/CC + Khách hàng; không dùng ID nội bộ eGMF, không dùng số lượng).
+        Thực tế ERP được khớp với phiên bản kế hoạch tham chiếu{summary?.version ? <> (<b>{summary.version.code}</b>)</> : ""} theo khóa nghiệp vụ (PO + Style/CC + Khách hàng; không dùng ID nội bộ ERP, không dùng số lượng).
         Kế hoạch hiện có phần lớn là dòng dự báo không có PO thật nên hệ thống còn khớp theo Style/CC + xí nghiệp + chuyền + cửa sổ thời gian; khi gán tay có thể chọn bất kỳ dòng nào (kèm lý do, có lịch sử). Mapping gán tay hoặc bỏ qua được giữ nguyên qua các lần đồng bộ.
       </p>
       <div className="flex flex-wrap items-center gap-2">
@@ -218,7 +218,7 @@ function Exceptions({ canManage }: { canManage: boolean }) {
       {msg && <p className={`rounded-lg border px-3 py-2 text-sm ${msg.ok ? "border-green-300/50 text-green-700" : "border-red-300/50 text-red-700"}`} role="status">{msg.text}</p>}
       <div className="overflow-x-auto rounded-2xl border border-slate-200">
         <table className="w-full text-sm" data-testid="mapping-table">
-          <thead><tr><th className={th}>PO (eGMF)</th><th className={th}>Mã hàng</th><th className={th}>XN</th><th className={th}>Chuyền</th><th className={`${th} text-right`}>SL</th><th className={`${th} text-right`}>May xong</th><th className={`${th} text-right`}>Nhập kho</th><th className={th}>Thấy lần cuối</th><th className={th}>Trạng thái</th><th className={th}>Cách khớp</th><th className={th}>Lý do</th>{canManage && <th className={th} />}</tr></thead>
+          <thead><tr><th className={th}>PO (ERP)</th><th className={th}>Mã hàng</th><th className={th}>XN</th><th className={th}>Chuyền</th><th className={`${th} text-right`}>SL</th><th className={`${th} text-right`}>May xong</th><th className={`${th} text-right`}>Nhập kho</th><th className={th}>Thấy lần cuối</th><th className={th}>Trạng thái</th><th className={th}>Cách khớp</th><th className={th}>Lý do</th>{canManage && <th className={th} />}</tr></thead>
           <tbody>
             {data.rows.map((m) => (
               <tr key={m.id} className="border-t border-slate-100 align-top">

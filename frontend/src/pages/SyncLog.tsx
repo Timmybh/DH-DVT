@@ -87,10 +87,10 @@ export default function SyncLog() {
       {can("sync.run") && (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="text-sm font-bold text-slate-800">Đồng bộ eGMF (doanh thu XN)</h2>
-            <p className="mt-1 text-xs text-slate-500">Đọc doanh thu ngày/tháng/năm từ SQL Server eGMF vào Postgres. Mỗi lần chạy tạo một Sync Run mới.</p>
+            <h2 className="text-sm font-bold text-slate-800">Đồng bộ dữ liệu ERP về</h2>
+            <p className="mt-1 text-xs text-slate-500">Kéo dữ liệu từ ERP (SQL Server) về Postgres: doanh thu XN, tiến độ PO, chất lượng, lao động (máy móc khai báo thủ công, không đồng bộ). Mỗi lần chạy tạo một Sync Run mới.</p>
             <button onClick={runEgmf} disabled={busy !== ""} className="mt-4 w-full rounded-lg bg-brand py-2.5 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60">
-              {busy === "egmf" ? "Đang đồng bộ..." : "Đồng bộ eGMF ngay"}
+              {busy === "egmf" ? "Đang đồng bộ..." : "Đồng bộ dữ liệu ERP ngay"}
             </button>
           </div>
 
@@ -104,7 +104,7 @@ export default function SyncLog() {
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="text-sm font-bold text-slate-800">Lịch đồng bộ eGMF hằng ngày</h2>
+            <h2 className="text-sm font-bold text-slate-800">Lịch đồng bộ dữ liệu ERP hằng ngày</h2>
             {cfg && (
               <div className="mt-3 space-y-3">
                 <label className="flex items-center gap-2 text-sm text-slate-600">
