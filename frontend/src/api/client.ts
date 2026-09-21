@@ -181,6 +181,7 @@ export interface Signal {
   severity: "INFO" | "WARNING" | "CRITICAL";
   title: string;
   detail: string;
+  tag?: string;
   drill: Drill | null;
 }
 

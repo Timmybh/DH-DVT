@@ -246,3 +246,18 @@ class MachineSharedPool(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     status_changed_by: Mapped[str] = mapped_column(String(100), default="")
     status_reason: Mapped[str] = mapped_column(String(200), default="")
+
+
+class StyleSam(Base):
+    """SAM (Standard Allowed Minute — phút chuẩn/sản phẩm) theo mã hàng. Giá trị ban đầu là ƯỚC LƯỢNG (không chuẩn) để có sẵn bảng; sẽ được huấn luyện/hiệu chỉnh sau."""
+
+    __tablename__ = "style_sam"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    style_cc: Mapped[str] = mapped_column(String(60), unique=True, index=True)
+    sam_minutes: Mapped[float | None] = mapped_column(Float, nullable=True)
+    source: Mapped[str] = mapped_column(String(10), default="ESTIMATE")  # ESTIMATE (từ WORKER/CAPACITY kế hoạch) | DEFAULT (trung vị) | ERP (LCD_Truc_QUan_ChuyenMay_MaHang_Sam) | MANUAL | TRAINED
+    samples: Mapped[int] = mapped_column(Integer, default=0)  # số dòng kế hoạch dùng để ước lượng
+    note: Mapped[str] = mapped_column(String(300), default="")
+    updated_by: Mapped[str] = mapped_column(String(100), default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

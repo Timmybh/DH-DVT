@@ -11,6 +11,13 @@ interface Props {
 
 const FACTORY_COLOR = new Proxy({} as Record<string, string>, { get: (_t, code: string) => factoryColor(code) }); // màu theo xí nghiệp từ bảng màu trung tâm
 
+/** Số vắng = biên chế − có mặt (chỉ khi có biên chế), hiển thị đỏ canh phải cạnh số có mặt. */
+function Absent({ roster, present }: { roster?: number | null; present: number }) {
+  if (!roster) return null;
+  const n = Math.max(0, roster - present);
+  return <span className="pb-1 text-right text-sm font-bold tabular-nums text-red-500" title="Số vắng = biên chế − có mặt" data-testid="hr-absent">{num(n)}</span>;
+}
+
 /** Tình hình nhân sự: mỗi xí nghiệp một card (lao động có mặt, số tổ/chuyền, tỷ trọng trong tổng). */
 export default function HrSection({ data, onDrill }: Props) {
   useTheme();
@@ -41,7 +48,10 @@ export default function HrSection({ data, onDrill }: Props) {
             aria-label={`${f.name}: ${f.total} lao động`}
           >
             <p className="text-xs font-semibold uppercase text-slate-400">{f.name}</p>
-            <p className="mt-1 text-4xl font-bold tabular-nums text-slate-900">{num(f.total)}</p>
+            <div className="mt-1 flex items-end justify-between gap-2">
+              <p className="text-4xl font-bold tabular-nums text-slate-900">{num(f.total)}</p>
+              <Absent roster={f.roster} present={f.total} />
+            </div>
             <p className="text-[11px] text-slate-400">lao động có mặt{f.roster ? ` / ${num(f.roster)} biên chế` : ""}{f.attendance_pct != null ? ` · ${f.attendance_pct}%` : ""}{f.delta ? ` · ${f.delta > 0 ? "+" : ""}${f.delta} so với lần trước` : ""}</p>
             <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
               <span>{num(f.teams ?? 0)} tổ/chuyền</span>
@@ -60,7 +70,10 @@ export default function HrSection({ data, onDrill }: Props) {
           aria-label={`Tổng công ty: ${companyTotal} lao động`}
         >
           <p className="text-xs font-semibold uppercase text-slate-400">Tổng công ty</p>
-          <p className="mt-1 text-4xl font-bold tabular-nums text-slate-900">{num(companyTotal)}</p>
+          <div className="mt-1 flex items-end justify-between gap-2">
+            <p className="text-4xl font-bold tabular-nums text-slate-900">{num(companyTotal)}</p>
+            <Absent roster={data.company_roster} present={companyTotal} />
+          </div>
           <p className="text-[11px] text-slate-400">lao động có mặt{data.company_roster ? ` / ${num(data.company_roster)} biên chế` : ""}{data.company_attendance_pct != null ? ` · ${data.company_attendance_pct}%` : ""}{data.company_delta ? ` · ${data.company_delta > 0 ? "+" : ""}${data.company_delta} so với lần trước` : ""}</p>
           <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
             <span>{num(data.company_teams ?? data.teams ?? 0)} tổ/chuyền</span>

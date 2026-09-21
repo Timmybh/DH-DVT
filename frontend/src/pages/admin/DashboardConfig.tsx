@@ -5,12 +5,14 @@ import { DashActions, renderIndicator } from "../../components/dashboard/rendere
 import { useAuth } from "../../context/AuthContext";
 import { dateTimeVi } from "../../lib/format";
 import LayoutDesigner from "./LayoutDesigner";
+import SignalRulesTab from "./SignalRulesTab";
 
 const SECTIONS = [
   { key: "groups", label: "Nhóm chỉ số" },
   { key: "indicators", label: "Chỉ số theo dõi" },
   { key: "rules", label: "Rule Registry" },
   { key: "layouts", label: "Bố cục Dashboard" },
+  { key: "signals", label: "Tin tốt / Tin xấu" },
 ];
 
 const NOOP: DashActions = { month: "", drillRevenue: () => undefined, drillOrder: () => undefined, drillQa: () => undefined, drillPo: () => undefined, drillHr: () => undefined, drillSignal: () => undefined };
@@ -148,6 +150,10 @@ function GroupsTab({ canManage }: { canManage: boolean }) {
 }
 
 // ---------------------------------------------------------------- Chỉ số
+// Khai báo NGOÀI component: nếu định nghĩa trong IndicatorEditor thì mỗi lần gõ phím React dựng lại toàn bộ ô nhập và mất focus
+const F = ({ label, children }: { label: string; children: React.ReactNode }) => <label className="block text-xs text-slate-500">{label}{children}</label>;
+const H = ({ t }: { t: string }) => <h4 className="mt-4 border-b border-slate-100 pb-1 text-xs font-bold uppercase text-slate-400">{t}</h4>;
+
 function IndicatorEditor({ initial, groups, rules, opts, onClose, onSaved }: { initial: Partial<DashIndicator>; groups: DashGroup[]; rules: DashRule[]; opts: DashOptions; onClose: () => void; onSaved: () => void }) {
   const [d, setD] = useState<Partial<DashIndicator>>(initial);
   const [cfg, setCfg] = useState(JSON.stringify(initial.config_json ?? {}, null, 2));
@@ -171,8 +177,6 @@ function IndicatorEditor({ initial, groups, rules, opts, onClose, onSaved }: { i
       setErr(errorMessage(e));
     }
   };
-  const F = ({ label, children }: { label: string; children: React.ReactNode }) => <label className="block text-xs text-slate-500">{label}{children}</label>;
-  const H = ({ t }: { t: string }) => <h4 className="mt-4 border-b border-slate-100 pb-1 text-xs font-bold uppercase text-slate-400">{t}</h4>;
 
   return (
     <Modal title={isNew ? "Thêm chỉ số" : `Sửa chỉ số ${d.indicator_code}`} onClose={onClose} wide>
@@ -434,6 +438,7 @@ export default function DashboardConfig() {
       {current.key === "groups" && <GroupsTab canManage={can("dashboard.config_manage")} />}
       {current.key === "indicators" && <IndicatorsTab canManage={can("dashboard.config_manage")} canTest={can("dashboard.rule_test")} />}
       {current.key === "rules" && <RulesTab canManage={can("dashboard.config_manage")} canTest={can("dashboard.rule_test")} />}
+      {current.key === "signals" && <SignalRulesTab canManage={can("dashboard.config_manage")} />}
       {current.key === "layouts" && <LayoutDesigner canEdit={can("dashboard.layout_manage")} canPublish={can("dashboard.publish")} />}
     </div>
   );

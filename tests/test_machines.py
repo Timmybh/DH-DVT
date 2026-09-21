@@ -107,3 +107,24 @@ def test_shared_pool_across_lines(db):
     assert res.machine_qty(("XN1", "1", "KS")) == 3 and res.machine_qty(("XN1", "3", "KS")) == 2 and res.machine_qty(("XN1", "4", "KS")) == 0
     rs.set_row_status(db, ADMIN, MachineSharedPool, p.id, False, "thôi")
     assert res.machine_qty(("XN1", "3", "KS")) == 2 and rs.load_machine_adjust(db) == []
+
+
+def test_style_sam_refresh_estimates_and_defaults(db):
+    from app.models.data import PlanRow, PoProgress
+    from app.models.planning import PlanningVersionRow
+    from app.models.resources import MachineStyleOutput, StyleSam
+
+    for m in (StyleSam, MachineStyleOutput, PlanRow, PoProgress, PlanningVersionRow):
+        m.__table__.create(db.get_bind(), checkfirst=True)
+    db.add_all([PlanRow(batch_id=1, planning_status="PLANNED", style_cc="s1", worker=40, capacity=1000), PlanRow(batch_id=1, planning_status="PLANNED", style_cc="S1", worker=30, capacity=1000), PlanRow(batch_id=1, planning_status="UNPLANNED", style_cc="S2")])
+    db.commit()
+    r = rs.refresh_style_sam(db, ADMIN)
+    rows = {x.style_cc: x for x in db.query(StyleSam)}
+    assert set(rows) == {"S1", "S2"} and r["added"] == 2 and rows["S1"].source == "ESTIMATE" and rows["S1"].samples == 2
+    assert round(rows["S1"].sam_minutes, 2) == round(35 * 480 * 0.85 / 1000, 2)                 # trung vị của 40 và 30 người
+    assert rows["S2"].source == "DEFAULT" and rows["S2"].sam_minutes == rows["S1"].sam_minutes
+    rs.save_style_sam(db, ADMIN, "s1", {"sam_minutes": 12.5})
+    assert rs.refresh_style_sam(db, ADMIN)["added"] == 0                                          # chạy lại không ghi đè
+    assert db.query(StyleSam).filter_by(style_cc="S1").one().source == "MANUAL"
+    with pytest.raises(HTTPException):
+        rs.save_style_sam(db, ADMIN, "S1", {"sam_minutes": 0})

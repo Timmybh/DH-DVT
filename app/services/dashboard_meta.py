@@ -52,6 +52,7 @@ GROUPS = [
     ("HR", "Nhân sự", "Lao động theo xí nghiệp/tổ", 4),
     ("SIGNALS", "Tín hiệu", "Tin tốt và cảnh báo", 5),
     ("GENERAL", "Chung", "Widget tĩnh (văn bản, tiêu đề)", 6),
+    ("PRODUCTION", "Sản xuất trong ngày", "Sản lượng, hiệu suất, RFT hôm nay theo xí nghiệp", 7),
 ]
 
 # code, name, group, display_type, rule, source, scope, drilldown_type, drilldown_target, refresh, config
@@ -65,6 +66,9 @@ INDICATORS = [
      "SYNC", {"component": "PO_RISK_PIPELINE"}),
     ("HR_HEADCOUNT", "Nhân sự", "HR", "CUSTOM_COMPONENT", "HR_HEADCOUNT", "Excel kế hoạch SX", "BOTH", "DRAWER", "HR_DETAIL", "SYNC", {"component": "HR_HEADCOUNT"}),
     ("GOOD_NEWS", "Tin tốt", "SIGNALS", "SIGNAL_LIST", "GOOD_NEWS", "Tổng hợp", "BOTH", "DRAWER", "SIGNAL_DRILL", "ON_LOAD", {"zone": "GOOD"}),
+    ("OUTPUT_TODAY", "Sản lượng hôm nay", "PRODUCTION", "GAUGE", "OUTPUT_TODAY", "eGMF/PostgreSQL", "BOTH", "NONE", "", "CACHED", {"cache_seconds": 60}),
+    ("EFFICIENCY_TODAY", "Hiệu suất hôm nay", "PRODUCTION", "GAUGE", "EFFICIENCY_TODAY", "Tạm cố định", "BOTH", "NONE", "", "CACHED", {"cache_seconds": 60}),
+    ("RFT_TODAY", "RFT hôm nay", "PRODUCTION", "GAUGE", "RFT_TODAY", "hiPro (tạm cố định)", "BOTH", "NONE", "", "CACHED", {"cache_seconds": 60}),
     ("TEXT_HEADING", "Văn bản / Tiêu đề", "GENERAL", "TEXT", "STATIC_TEXT", "Nhập tay", "BOTH", "NONE", "", "ON_LOAD", {"text": "", "heading": True}),
     ("WARNING_SIGNALS", "Cảnh báo / cần chú ý", "SIGNALS", "SIGNAL_LIST", "WARNING_SIGNALS", "Tổng hợp", "BOTH", "DRAWER", "SIGNAL_DRILL", "ON_LOAD", {"zone": "WARN"}),
 ]

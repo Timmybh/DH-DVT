@@ -296,3 +296,33 @@ def test_migrate_legacy_grid_to_sections(db):
     v = m.layout_view(db, db.query(DashboardLayout).one(), True)
     assert [s["preset"] for s in v["sections"]] == ["66_34", "100", "66_34"]
     assert sorted((i["column_no"], i["indicator_code"]) for i in v["items"] if i["section_id"] == v["sections"][0]["id"]) == [(0, "A"), (0, "B"), (1, "A")]
+
+
+def test_signal_rules_levels_templates_and_evaluation(db):
+    from app.models.dashboard_cfg import SignalRule, SignalRuleLevel
+    from app.services import signal_rules as sr
+
+    for t in (SignalRule.__table__, SignalRuleLevel.__table__):
+        t.create(db.get_bind(), checkfirst=True)
+    facs = db.query(Factory).order_by(Factory.display_order).all()
+    levels = [dict(name="Cực cao", zone="GOOD", severity="INFO", tag="Tin nóng", op=">=", value_from=95, template="{xn} hôm nay hiệu suất cao ngút trời ({value}%)"),
+              dict(name="Thấp", zone="WARN", severity="CRITICAL", tag="Báo động", op="<", value_from=90, template="{factory} hiệu suất tụt ({value}%)")]
+    r = sr.save_rule(db, ADMIN, {"code": "eff", "name": "Hiệu suất", "metric_code": "EFFICIENCY_TODAY", "levels": levels})
+    assert r.code == "EFF"
+    vals = {"EFFICIENCY_TODAY": {"XN1": 92.0, "XN2": 95.0, "XN3": 88.5}}
+    out = {s["id"]: s for s in sr.evaluate(db, facs, values=vals)}
+    assert set(out) == {"rule.EFF.XN2", "rule.EFF.XN3"}                                            # XN1 92% nằm giữa hai cấp -> không có tin
+    assert out["rule.EFF.XN2"]["zone"] == "GOOD" and out["rule.EFF.XN2"]["title"] == "Tin nóng: XN2 hôm nay hiệu suất cao ngút trời (95%)"
+    assert out["rule.EFF.XN3"]["severity"] == "CRITICAL" and out["rule.EFF.XN3"]["title"] == "Báo động: Xí nghiệp 3 hiệu suất tụt (88.5%)"
+    # cấp độ đầu tiên khớp thắng
+    sr.save_rule(db, ADMIN, {"levels": [levels[0], {**levels[0], "op": ">=", "value_from": 90, "tag": "Tin tốt", "template": "{xn} tốt"}]}, r.id)
+    assert next(s for s in sr.evaluate(db, facs, values=vals) if s["id"].endswith("XN2"))["tag"] == "Tin nóng"
+    # kiểm tra đầu vào
+    for bad in ({"metric_code": "NOPE"}, {"levels": [{**levels[0], "template": "{sai_bien}"}]}, {"levels": [{**levels[0], "op": "!="}]}, {"levels": [{**levels[0], "zone": "GOOD", "severity": "CRITICAL"}]},
+                {"levels": [{**levels[0], "op": "BETWEEN", "value_to": 10}]}, {"levels": []}):
+        with pytest.raises(HTTPException):
+            sr.save_rule(db, ADMIN, {"code": "X", "name": "X", "metric_code": "RFT_TODAY", "levels": levels, **bad})
+    with pytest.raises(HTTPException):
+        sr.save_rule(db, ADMIN, {"code": "EFF", "name": "dup", "metric_code": "RFT_TODAY", "levels": levels})                    # trùng mã
+    sr.set_status(db, ADMIN, r.id, False)
+    assert sr.evaluate(db, facs, values=vals) == []                                                                                # Ngưng áp dụng: không sinh tin

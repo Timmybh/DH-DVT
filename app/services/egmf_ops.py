@@ -22,7 +22,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 from app.models.core import Factory
-from app.models.data import PoPackDaily, PoProgress, QaDefectDaily, SyncRun
+from app.models.data import FactoryOutputDaily, PoPackDaily, PoProgress, QaDefectDaily, SyncRun
 from app.models.resources import LaborDaily, MachineRequirement, MachineType
 from app.services import actual_service, labor_snapshot
 from app.services.sync_core import add_items
@@ -116,6 +116,56 @@ WHERE PO IS NOT NULL AND ThoiGianTao >= :since
 GROUP BY PO, TenChuyen, XiNghiep"""
 
 
+OUTPUT_DAILY_SQL = """
+WITH latest AS (
+    SELECT XiNghiep, MayRaSoLuong,
+           ROW_NUMBER() OVER (PARTITION BY PO, TenChuyen, XiNghiep ORDER BY ThoiGianTao DESC) AS rn
+    FROM dbo.Report_BaoCaoMayRa
+    WHERE PO IS NOT NULL AND NgaySanXuat >= :d0 AND NgaySanXuat < :d1
+)
+SELECT XiNghiep AS xn, SUM(ISNULL(MayRaSoLuong, 0)) AS may_ra FROM latest WHERE rn = 1 GROUP BY XiNghiep"""  # chỉ quét MỘT ngày (hôm nay), chỉ một phép SUM — nhẹ hơn nhiều so với báo cáo đầy đủ
+
+# Kế hoạch may trong ngày theo chuyền (OMM_KeHoachThang): SoNgaySX <= 1 thì lấy SoLuong, ngược lại SoLuong / SoNgaySX; dòng tính khi ngày hôm nay nằm trong [bắt đầu may, kết thúc may]
+PLAN_TODAY_SQL = """
+SELECT ChuyenId AS chuyen_id, SUM(CASE WHEN ISNULL(SoNgaySX, 0) <= 1 THEN SoLuong ELSE SoLuong / SoNgaySX END) AS ke_hoach
+FROM dbo.OMM_KeHoachThang
+WHERE SoLuong > 0 AND ChuyenId IS NOT NULL
+  AND CAST(NgayMayKeHoachBatDau AS date) <= :d0 AND :d0 <= CAST(NgayMayKeHoachKetThuc AS date)
+GROUP BY ChuyenId"""
+
+# ChuyenId (mã chuyền toàn công ty) -> xí nghiệp: các chuyền đánh số liên tiếp theo xí nghiệp, tên chuyền quay về '1' khi sang xí nghiệp kế tiếp (165-182 XN1, 183-200 XN2, 201-226 XN3)
+LINE_MAP_SQL = "SELECT DISTINCT ChuyenId AS chuyen_id, TenChuyen AS ten FROM dbo.Lib_TaiKhoan_Chuyen ORDER BY ChuyenId"
+
+
+def line_to_xn(conn: Connection) -> dict[int, int]:
+    out, xn = {}, 0
+    for r in conn.execute(text(LINE_MAP_SQL)):
+        name = str(r.ten).strip()
+        if not name.isdigit() or name in ("0", "99"):  # 'CHƯA PHÂN CHUYỀN', chuyền giả
+            continue
+        if name == "1":
+            xn += 1
+        if xn:
+            out[int(r.chuyen_id)] = xn
+    return out
+
+
+def fetch_output_today(conn: Connection, fmap: dict[int, int], today: date) -> dict[int, list[int]]:
+    """{factory_id: [may_ra_hom_nay, ke_hoach_hom_nay]}: may ra = SUM(MayRaSoLuong) (Report_BaoCaoMayRa); kế hoạch = SUM kế hoạch/ngày của các chuyền thuộc xí nghiệp (OMM_KeHoachThang)."""
+    agg: dict[int, list[int]] = {}
+    for r in conn.execute(text(OUTPUT_DAILY_SQL), {"d0": today, "d1": today + timedelta(days=1)}):
+        ma = normalize_xn(f"XN{r.xn}") if r.xn is not None else None
+        fid = fmap.get(ma) if ma is not None else None
+        if fid is not None:
+            agg.setdefault(fid, [0, 0])[0] += int(r.may_ra or 0)
+    lines = line_to_xn(conn)
+    for r in conn.execute(text(PLAN_TODAY_SQL), {"d0": today}):
+        fid = fmap.get(lines.get(int(r.chuyen_id), -1))
+        if fid is not None:
+            agg.setdefault(fid, [0, 0])[1] += int(round(float(r.ke_hoach or 0)))
+    return agg
+
+
 def sync_ops(db: Session, run: SyncRun, conn: Connection, fmap: dict[int, int]) -> dict:
     """Đồng bộ QA + tiến độ PO vào Postgres. Trả tóm tắt các đối tượng; lỗi từng phần được ghi thành ERROR nhưng không làm hỏng doanh thu."""
     since = qa_window_start(date.today())
@@ -189,6 +239,22 @@ def sync_ops(db: Session, run: SyncRun, conn: Connection, fmap: dict[int, int]) 
         log.exception("Đồng bộ tiến độ PO lỗi")
         errors.append(("Tiến độ PO", f"Không đồng bộ được: {str(exc)[:180]}", {}))
         objects.append({"name": "Tiến độ PO (Report_BaoCaoMayRa)", "read": 0, "matched": 0, "unmatched": 1})
+
+    # ---- Sản lượng may ra trong ngày theo XN (Gauge "Sản lượng hôm nay"): SUM(MayRaSoLuong) so với SUM(SoLuong)
+    try:
+        today = date.today()
+        agg = fetch_output_today(conn, fmap, today)
+        outs = [dict(factory_id=f, day=today, sewn_qty=v[0], target_qty=v[1], sync_run_id=run.id) for f, v in agg.items()]
+        with db.begin_nested():
+            for part in _chunks(outs, 500):
+                stmt = pg_insert(FactoryOutputDaily).values(part)
+                db.execute(stmt.on_conflict_do_update(constraint="uq_factory_output_daily", set_={"sewn_qty": stmt.excluded.sewn_qty, "target_qty": stmt.excluded.target_qty, "sync_run_id": stmt.excluded.sync_run_id}))
+        objects.append({"name": "Sản lượng may ra trong ngày (Report_BaoCaoMayRa)", "read": len(outs), "matched": len(outs), "unmatched": 0})
+        total_rows += len(outs)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("Đồng bộ sản lượng trong ngày lỗi")
+        errors.append(("Sản lượng trong ngày", f"Không đồng bộ được: {str(exc)[:180]}", {}))
+        objects.append({"name": "Sản lượng may ra trong ngày (Report_BaoCaoMayRa)", "read": 0, "matched": 0, "unmatched": 1})
 
     # ---- Xác nhận đóng gói theo PO/ngày (toàn bộ lịch sử: ngày hoàn thành cần số lũy kế)
     try:

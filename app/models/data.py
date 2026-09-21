@@ -217,3 +217,17 @@ class PoPackDaily(Base):
     day: Mapped[date] = mapped_column(Date)
     qty: Mapped[int] = mapped_column(Integer, default=0)
     sync_run_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class FactoryOutputDaily(Base):
+    """Sản lượng may ra trong ngày theo xí nghiệp (Report_BaoCaoMayRa): SUM(MayRaSoLuong) (bản ghi mới nhất của mỗi PO/chuyền) so với kế hoạch may trong ngày từ OMM_KeHoachThang."""
+
+    __tablename__ = "factory_output_daily"
+    __table_args__ = (UniqueConstraint("factory_id", "day", name="uq_factory_output_daily"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    factory_id: Mapped[int] = mapped_column(ForeignKey("factories.id"), index=True)
+    day: Mapped[date] = mapped_column(Date, index=True)
+    sewn_qty: Mapped[int] = mapped_column(Integer, default=0)  # SUM(MayRaSoLuong)
+    target_qty: Mapped[int] = mapped_column(Integer, default=0)  # kế hoạch ngày: SoLuong hoặc SoLuong/SoNgaySX
+    sync_run_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

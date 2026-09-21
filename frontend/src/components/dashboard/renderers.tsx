@@ -1,6 +1,7 @@
 import { ReactNode } from "react";
 import { Drill, RuntimeItem } from "../../api/client";
 import { num } from "../../lib/format";
+import SpeedGauge from "../SpeedGauge";
 import HrSection from "../HrSection";
 import OrderKpiSection from "../OrderKpiSection";
 import ProgressSection from "../ProgressSection";
@@ -74,6 +75,19 @@ function KpiCard({ item }: { item: RuntimeItem }) {
   );
 }
 
+/** Nhóm Gauge theo xí nghiệp (Sản lượng / Hiệu suất / RFT hôm nay): payload {title, unit, items:[{code,name,value,target,pct}]}. */
+function GaugeGroup({ item }: { item: RuntimeItem }) {
+  const p = item.data.payload ?? {};
+  const items: { code: string; name: string; pct: number | null; window?: string | null }[] = p.items ?? [];
+  return (
+    <Section title={p.title ?? item.indicator.indicator_name}>
+      <div className={`grid gap-3 ${items.length > 2 ? "grid-cols-3" : items.length === 2 ? "grid-cols-2" : "grid-cols-1"}`} data-testid={`gauge-group-${item.indicator.indicator_code}`}>
+        {items.map((g) => <SpeedGauge key={g.code} label={g.code} pct={g.pct} />)}
+      </div>
+    </Section>
+  );
+}
+
 function TextWidget({ item }: { item: RuntimeItem }) {
   const heading = Boolean(item.data.payload?.heading);
   const text = String(item.data.payload?.text ?? "");
@@ -124,6 +138,7 @@ export const RENDERERS: Record<string, Renderer> = {
     ) : (
       <GoodNewsCard items={item.data.payload?.items ?? []} onDrill={a.drillSignal} />
     ),
+  GAUGE: (item) => <GaugeGroup item={item} />,
   KPI_CARD: (item) => <KpiCard item={item} />,
   COUNTER: (item) => <KpiCard item={item} />,
   STATUS_COUNTER: (item) => <KpiCard item={item} />,

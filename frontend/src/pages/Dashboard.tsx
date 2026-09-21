@@ -70,10 +70,10 @@ export default function Dashboard() {
   const tabs = [{ code: "TONG", name: "Tổng công ty" }, ...(meta?.factories ?? [])];
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold text-slate-900">Dashboard điều hành — {runtime?.header.scope_name ?? "..."}</h1>
+          <h1 className="text-lg font-bold text-slate-900">Dashboard điều hành — {runtime?.header.scope_name ?? "..."}</h1>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
@@ -82,7 +82,7 @@ export default function Dashboard() {
               <button
                 key={t.code}
                 onClick={() => setScope(t.code)}
-                className={`rounded-lg px-3 py-1.5 text-sm font-medium ${scope === t.code ? "bg-brand text-white shadow" : "text-slate-600 hover:bg-slate-50"}`}
+                className={`rounded-lg px-2.5 py-1 text-xs font-medium ${scope === t.code ? "bg-brand text-white shadow" : "text-slate-600 hover:bg-slate-50"}`}
               >
                 {t.code === "TONG" ? t.name : t.code}
               </button>
@@ -92,17 +92,17 @@ export default function Dashboard() {
             type="month"
             value={month}
             onChange={(e) => setMonth(e.target.value)}
-            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm shadow-sm"
+            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs shadow-sm"
             aria-label="Chọn tháng"
           />
-          <button onClick={load} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-600 shadow-sm hover:bg-slate-50">
+          <button onClick={load} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 shadow-sm hover:bg-slate-50">
             {loading ? "Đang tải..." : "Làm mới"}
           </button>
         </div>
       </div>
 
       {runtime?.header.has_demo && (
-        <div className="rounded-xl border-2 border-dashed border-orange-300 bg-orange-50 p-3 text-sm font-medium text-orange-800">
+        <div className="rounded-xl border-2 border-dashed border-orange-300 bg-orange-50 px-3 py-1.5 text-xs font-medium text-orange-800">
           DỮ LIỆU DOANH THU MẪU — chưa đồng bộ được từ ERP. Số liệu doanh thu bên dưới chỉ để minh họa; sẽ tự thay bằng số thật khi đồng bộ thành công.
         </div>
       )}

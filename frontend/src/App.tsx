@@ -36,7 +36,7 @@ function Protected({ children, perm }: { children: ReactNode; perm?: string }) {
   return (
     <div className={`${mode === "dark" ? "dvt-bg dvt-dark" : "dvt-light"} min-h-screen`}>
       <Navbar />
-      <main className="mx-auto max-w-[1500px] px-4 py-6 sm:px-6">{children}</main>
+      <main className="mx-auto max-w-[1500px] px-4 py-4 sm:px-6">{children}</main>
     </div>
   );
 }

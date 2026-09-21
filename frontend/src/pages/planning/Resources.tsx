@@ -4,12 +4,14 @@ import { api, errorMessage, PlanVersion } from "../../api/client";
 import { useAuth } from "../../context/AuthContext";
 import { dateVi, num } from "../../lib/format";
 import { isoWeek, weekRange } from "../../lib/weeks";
+import SamPanel from "./SamPanel";
 import { GradesPanel, LaborStandardsPanel, MachineSharingMaintenancePanel, MachineTypesPanel } from "./ResourceMaster";
 
 const SECTIONS = [
   { key: "capacity", label: "Năng suất (Capacity)" },
   { key: "machines", label: "Máy móc" },
   { key: "labor", label: "Lao động" },
+  { key: "sam", label: "SAM mã hàng" },
   { key: "release", label: "Lịch nguồn lực rảnh" },
 ];
 const SHOW_STYLE_REQUIREMENTS = false;
@@ -510,6 +512,7 @@ export default function Resources() {
       {current.key === "capacity" && <CapacityTab canManage={can("resource.manage")} />}
       {current.key === "machines" && <MachinesTab canManage={can("resource.manage")} />}
       {current.key === "labor" && <LaborTab canManage={can("resource.manage")} />}
+      {current.key === "sam" && <SamPanel canManage={can("resource.manage")} />}
       {current.key === "release" && <ReleaseTab />}
     </div>
   );

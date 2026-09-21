@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base, utcnow
@@ -129,3 +129,40 @@ class DashboardLayoutSection(Base):
     title: Mapped[str] = mapped_column(String(120), default="")
     preset: Mapped[str] = mapped_column(String(16), default="100")
     is_visible: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class SignalRule(Base):
+    """Đăng ký Tin tốt / Tin xấu: một chỉ số đo lường + các cấp độ (khoảng giá trị → vùng, mức độ, nhãn, lời ghép). Không xóa, chỉ Ngưng áp dụng."""
+
+    __tablename__ = "signal_rules"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    metric_code: Mapped[str] = mapped_column(String(40))
+    scope: Mapped[str] = mapped_column(String(14), default="PER_FACTORY")
+    status: Mapped[str] = mapped_column(String(10), default="ACTIVE", index=True)  # ACTIVE | INACTIVE
+    display_order: Mapped[int] = mapped_column(Integer, default=0)
+    note: Mapped[str] = mapped_column(String(300), default="")
+    created_by: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_by: Mapped[str] = mapped_column(String(100), default="")
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class SignalRuleLevel(Base):
+    """Cấp độ của quy tắc: xét theo order_no, cấp đầu tiên khớp thắng."""
+
+    __tablename__ = "signal_rule_levels"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rule_id: Mapped[int] = mapped_column(ForeignKey("signal_rules.id", ondelete="CASCADE"), index=True)
+    order_no: Mapped[int] = mapped_column(Integer, default=0)
+    name: Mapped[str] = mapped_column(String(80), default="")
+    zone: Mapped[str] = mapped_column(String(6), default="GOOD")  # GOOD (tin tốt) | WARN (tin xấu / cảnh báo)
+    severity: Mapped[str] = mapped_column(String(10), default="INFO")  # INFO | WARNING | CRITICAL
+    tag: Mapped[str] = mapped_column(String(30), default="")  # "Tin nóng", "Báo động"...
+    op: Mapped[str] = mapped_column(String(8), default=">=")
+    value_from: Mapped[float] = mapped_column(Float, default=0)
+    value_to: Mapped[float | None] = mapped_column(Float, nullable=True)
+    template: Mapped[str] = mapped_column(String(300), default="")  # lời ghép: {xn} {factory} {value} {tag} {metric} {unit}

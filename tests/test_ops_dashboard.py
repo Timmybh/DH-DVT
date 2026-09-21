@@ -119,3 +119,50 @@ def test_fg_completion_uses_cumulative_packing_confirmations():
     db.commit()
     k = order_kpi(db, [f], 2026, 9, date(2026, 9, 20))
     assert (k["fg"]["on_time"], k["fg"]["late"], k["fg"]["overdue_open"]) == (1, 1, 1)
+
+
+def test_output_today_compares_sewn_with_target_from_erp():
+    from app.models.data import FactoryOutputDaily
+    from app.services.dashboard import output_today
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine, tables=[Factory.__table__, FactoryOutputDaily.__table__])
+    db = sessionmaker(bind=engine)()
+    fs = [Factory(code=f"XN{n}", name=f"XN {n}", sql_xn_id=n, display_order=n) for n in (1, 2, 3)]
+    db.add_all(fs)
+    db.commit()
+    today = date(2026, 9, 21)
+    db.add_all([FactoryOutputDaily(factory_id=fs[0].id, day=today, sewn_qty=330, target_qty=600), FactoryOutputDaily(factory_id=fs[1].id, day=today, sewn_qty=50, target_qty=0),
+                FactoryOutputDaily(factory_id=fs[0].id, day=date(2026, 9, 20), sewn_qty=999, target_qty=999)])          # ngày khác không tính
+    db.commit()
+    from datetime import datetime
+
+    out = output_today(db, fs, today, datetime(2026, 9, 21, 12, 0))
+    by = {i["code"]: i for i in out["items"]}
+    assert by["XN1"]["pct"] == 50.0 and by["XN2"]["pct"] == 50.0 and by["XN3"]["pct"] == 55.6     # 12:00: XN1/XN2 07:30-16:30, XN3 07:00-16:00
+    assert (by["XN1"]["value"], by["XN1"]["target"], by["XN1"]["actual_pct"]) == (330, 600, 55.0)   # số thực tế vẫn trả kèm
+    assert by["XN2"]["actual_pct"] is None and by["XN2"]["value"] == 50
+    assert [output_today(db, fs, today, datetime(2026, 9, 21, h, m))["items"][0]["pct"] for h, m in ((6, 0), (7, 30), (16, 30), (20, 0))] == [0.0, 0.0, 100.0, 100.0]
+    assert output_today(db, fs, today, datetime(2026, 9, 21, 7, 0))["items"][2]["pct"] == 0.0 and output_today(db, fs, today, datetime(2026, 9, 21, 16, 0))["items"][2]["pct"] == 100.0
+
+
+def test_rft_today_hardcoded_ramps_to_goal_in_work_window():
+    from datetime import datetime
+
+    from app.services.dashboard import rft_today
+
+    fs = [Factory(code=f"XN{n}", name=f"XN {n}", sql_xn_id=n, display_order=n) for n in (1, 2, 3)]
+    at = lambda h, m: {i["code"]: i["pct"] for i in rft_today(fs, datetime(2026, 9, 21, h, m))["items"]}  # noqa: E731
+    assert at(6, 0) == {"XN1": 0.0, "XN2": 0.0, "XN3": 0.0}
+    assert at(20, 0) == {"XN1": 97.0, "XN2": 96.0, "XN3": 98.0}
+    assert at(12, 0) == {"XN1": 48.5, "XN2": 48.0, "XN3": 54.5}                     # nửa khung giờ: XN1/XN2 50%, XN3 55.6% của mức RFT
+
+
+def test_efficiency_today_hardcoded():
+    from datetime import datetime
+
+    from app.services.dashboard import efficiency_today
+
+    fs = [Factory(code=f"XN{n}", name=f"XN {n}", sql_xn_id=n, display_order=n) for n in (1, 2, 3)]
+    at = lambda h: {i["code"]: i["pct"] for i in efficiency_today(fs, datetime(2026, 9, 21, h, 0))["items"]}  # noqa: E731
+    assert at(6) == {"XN1": 0.0, "XN2": 0.0, "XN3": 0.0} and at(20) == {"XN1": 92.0, "XN2": 95.0, "XN3": 96.0}

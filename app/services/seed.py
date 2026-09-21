@@ -125,6 +125,9 @@ def run_seed() -> None:
 
         dashboard_meta.seed_dashboard_meta(db)
         dashboard_meta.migrate_layouts_to_sections(db)
+        from app.services import signal_rules
+
+        signal_rules.seed_signal_rules(db)  # quy tắc Tin tốt/xấu mẫu, chỉ khi bảng còn trống
         formula_service.refresh_active(db)
         from app.services import planning_service
 

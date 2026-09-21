@@ -17,6 +17,9 @@ const RISK_TILES = [
   { key: "MATERIAL", label: "Thiếu nguyên phụ liệu", cls: "border-amber-200 bg-amber-50 text-amber-800" },
 ] as const;
 
+// Tạm ẩn biểu đồ 'PO đã xếp kế hoạch theo đơn vị' (đặt true để hiện lại)
+const SHOW_UNIT_CHART = false;
+
 export default function ProgressSection({ data, onDrill }: Props) {
   useTheme();
   if (!data.available || !data.pipeline || !data.risks) {
@@ -87,7 +90,7 @@ export default function ProgressSection({ data, onDrill }: Props) {
         })}
       </div>
 
-      {chart.length > 1 && (
+      {SHOW_UNIT_CHART && chart.length > 1 && (
         <div className="mt-5">
           <p className="mb-2 text-xs font-semibold text-slate-500">PO đã xếp kế hoạch theo đơn vị</p>
           <ResponsiveContainer width="100%" height={200}>

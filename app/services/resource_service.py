@@ -14,7 +14,7 @@ from app.db.session import utcnow
 from app.models.core import User
 from app.models.data import PlanRow
 from app.models.planning import PlanningVersionRow
-from app.models.resources import CapacityDefinition, LaborDaily, MachineCapacity, MachineMaintenance, MachineRequirement, MachineSharedPool, MachineSharing, MachineStyleOutput, MachineType
+from app.models.resources import CapacityDefinition, LaborDaily, MachineCapacity, MachineMaintenance, MachineRequirement, MachineSharedPool, MachineSharing, MachineStyleOutput, MachineType, StyleSam
 from app.services.audit import write_audit
 from app.services.formula import EXCEL_EPOCH
 from app.services.lanes import row_lines
@@ -611,4 +611,73 @@ def save_pool(db: Session, user: User, d: dict) -> MachineSharedPool:
     db.add(row)
     db.commit()
     write_audit("MACHINE_SHARED_POOL_CREATE", user=user, object_type="MachineSharedPool", object_id=str(row.id), detail=f"{row.factory_code} {row.machine_type} x{row.quantity} chuyền {','.join(lines)}")
+    return row
+
+
+# ------------------------------------------------------------------ SAM theo mã hàng
+WORKING_MINUTES = 480       # phút làm việc/ngày dùng để ước lượng
+ASSUMED_EFFICIENCY = 0.85   # hiệu suất giả định của kế hoạch
+
+
+def sam_view(r: StyleSam) -> dict:
+    return {"id": r.id, "style_cc": r.style_cc, "sam_minutes": r.sam_minutes, "source": r.source, "samples": r.samples, "note": r.note, "updated_by": r.updated_by,
+            "updated_at": r.updated_at.isoformat() if r.updated_at else None}
+
+
+def known_styles(db: Session) -> set[str]:
+    """Mọi mã hàng đã xuất hiện trong hệ thống: kế hoạch (Unplanned + Planned), các phiên bản kế hoạch, tiến độ ERP, công suất máy theo mã hàng."""
+    from app.models.data import PoProgress
+
+    out: set[str] = set()
+    for model, col in ((PlanRow, PlanRow.style_cc), (PlanningVersionRow, PlanningVersionRow.style_cc), (PoProgress, PoProgress.style), (MachineStyleOutput, MachineStyleOutput.style_cc)):
+        out |= {str(x).strip().upper() for (x,) in db.query(col).distinct() if x and str(x).strip()}
+    return out
+
+
+def estimate_sam(db: Session) -> dict[str, tuple[float, int]]:
+    """Ước lượng SAM/mã hàng = WORKER × phút làm việc × hiệu suất giả định ÷ CAPACITY của các dòng kế hoạch (lấy trung vị). Chỉ là số ban đầu, không chuẩn."""
+    from statistics import median
+
+    vals: dict[str, list[float]] = defaultdict(list)
+    for style, worker, cap in db.query(PlanRow.style_cc, PlanRow.worker, PlanRow.capacity):
+        if style and worker and cap and worker > 0 and cap > 0:
+            vals[str(style).strip().upper()].append(worker * WORKING_MINUTES * ASSUMED_EFFICIENCY / cap)
+    return {k: (round(median(v), 2), len(v)) for k, v in vals.items()}
+
+
+def refresh_style_sam(db: Session, user: User) -> dict:
+    """Thêm dòng SAM cho mọi mã hàng chưa có (không đụng dòng đã có / đã chỉnh tay). Mã hàng không ước lượng được nhận SAM mặc định = trung vị toàn bộ."""
+    from statistics import median
+
+    have = {x for (x,) in db.query(StyleSam.style_cc)}
+    est = estimate_sam(db)
+    default = round(median([v for v, _n in est.values()]), 2) if est else None
+    added = est_n = default_n = 0
+    for style in sorted(known_styles(db) - have):
+        if style in est:
+            sam, n = est[style]
+            db.add(StyleSam(style_cc=style, sam_minutes=sam, source="ESTIMATE", samples=n, note=f"Ước lượng từ WORKER/CAPACITY kế hoạch ({n} dòng), {WORKING_MINUTES} phút, hiệu suất {ASSUMED_EFFICIENCY:.0%}", updated_by=user.username))
+            est_n += 1
+        else:
+            db.add(StyleSam(style_cc=style, sam_minutes=default, source="DEFAULT", note="Chưa có WORKER/CAPACITY — tạm dùng trung vị các mã hàng khác", updated_by=user.username))
+            default_n += 1
+        added += 1
+    db.commit()
+    write_audit("STYLE_SAM_REFRESH", user=user, object_type="StyleSam", object_id="ALL", detail=f"thêm {added} mã hàng ({est_n} ước lượng, {default_n} mặc định)")
+    return {"added": added, "estimated": est_n, "default": default_n, "default_sam": default, "total": db.query(StyleSam).count()}
+
+
+def save_style_sam(db: Session, user: User, style: str, d: dict) -> StyleSam:
+    row = db.query(StyleSam).filter(StyleSam.style_cc == style.strip().upper()).first()
+    if row is None:
+        raise HTTPException(404, "Không tìm thấy mã hàng")
+    if d.get("sam_minutes") is not None:
+        if not float(d["sam_minutes"]) > 0:
+            raise HTTPException(422, "SAM phải > 0 (phút/sản phẩm)")
+        row.sam_minutes, row.source = float(d["sam_minutes"]), d.get("source") if d.get("source") in ("MANUAL", "TRAINED") else "MANUAL"
+    if "note" in d and d["note"] is not None:
+        row.note = d["note"]
+    row.updated_by, row.updated_at = user.username, utcnow()
+    db.commit()
+    write_audit("STYLE_SAM_UPDATE", user=user, object_type="StyleSam", object_id=row.style_cc, detail=f"SAM {row.sam_minutes}")
     return row

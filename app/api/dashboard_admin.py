@@ -260,3 +260,66 @@ def publish_layout(layout_id: int, db: Session = Depends(get_db), user: User = P
 @router.post("/layouts/{layout_id}/retire")
 def retire_layout(layout_id: int, db: Session = Depends(get_db), user: User = Publish):
     return meta.layout_view(db, meta.retire_layout(db, user, layout_id), True)
+
+
+# ------------------------------------------------------------------ đăng ký Tin tốt / Tin xấu
+from app.services import signal_rules as sr  # noqa: E402
+
+
+class SignalLevelBody(BaseModel):
+    name: str = Field("", max_length=80)
+    zone: str
+    severity: str = "INFO"
+    tag: str = Field("", max_length=30)
+    op: str
+    value_from: float
+    value_to: float | None = None
+    template: str = Field(..., max_length=300)
+
+
+class SignalRuleBody(BaseModel):
+    code: str | None = Field(None, max_length=40)
+    name: str | None = Field(None, max_length=120)
+    metric_code: str | None = None
+    note: str | None = Field(None, max_length=300)
+    display_order: int | None = None
+    levels: list[SignalLevelBody] | None = None
+
+
+@router.get("/signal-metrics")
+def signal_metrics(_: User = View):
+    return {"metrics": [{"code": k, "name": v["name"], "unit": v["unit"], "note": v["note"]} for k, v in sr.metric_catalog().items()], "placeholders": list(sr.PLACEHOLDERS), "ops": list(sr.OPS)}
+
+
+@router.get("/signal-rules")
+def list_signal_rules(db: Session = Depends(get_db), _: User = View):
+    from app.models.dashboard_cfg import SignalRule
+
+    return [sr.rule_view(db, r) for r in db.query(SignalRule).order_by(SignalRule.display_order, SignalRule.id)]
+
+
+@router.get("/signal-rules/preview")
+def preview_signal_rules(db: Session = Depends(get_db), _: User = View):
+    from app.services.dashboard import scope_factories
+
+    return sr.evaluate(db, scope_factories(db, "TONG")[0])
+
+
+@router.post("/signal-rules")
+def create_signal_rule(body: SignalRuleBody, db: Session = Depends(get_db), user: User = Manage):
+    return sr.rule_view(db, sr.save_rule(db, user, body.model_dump(exclude_unset=True)))
+
+
+@router.put("/signal-rules/{rid}")
+def update_signal_rule(rid: int, body: SignalRuleBody, db: Session = Depends(get_db), user: User = Manage):
+    return sr.rule_view(db, sr.save_rule(db, user, body.model_dump(exclude_unset=True), rid))
+
+
+@router.post("/signal-rules/{rid}/deactivate")
+def deactivate_signal_rule(rid: int, db: Session = Depends(get_db), user: User = Manage):
+    return sr.rule_view(db, sr.set_status(db, user, rid, False))
+
+
+@router.post("/signal-rules/{rid}/activate")
+def activate_signal_rule(rid: int, db: Session = Depends(get_db), user: User = Manage):
+    return sr.rule_view(db, sr.set_status(db, user, rid, True))

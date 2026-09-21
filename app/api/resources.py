@@ -2,12 +2,13 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_perm
 from app.db.session import get_db
 from app.models.core import User
-from app.models.resources import LaborStandard, ProductivityGrade, CapacityDefinition, MachineCapacity, MachineMaintenance, MachineRequirement, MachineSharedPool, MachineSharing, MachineStyleOutput, MachineType
+from app.models.resources import LaborStandard, ProductivityGrade, CapacityDefinition, MachineCapacity, MachineMaintenance, MachineRequirement, MachineSharedPool, MachineSharing, MachineStyleOutput, MachineType, StyleSam
 from app.services import labor_grade_service as lg
 from app.services import resource_service as svc
 from app.services.audit import write_audit
@@ -454,3 +455,32 @@ def deactivate_shared(pid: int, body: StatusBody, db: Session = Depends(get_db),
 @router.post("/machine-shared/{pid}/activate")
 def activate_shared(pid: int, body: StatusBody, db: Session = Depends(get_db), user: User = Manage):
     return svc.pool_view(svc.set_row_status(db, user, MachineSharedPool, pid, True, body.reason))
+
+
+# ------------------------------------------------------------------ SAM theo mã hàng
+class SamBody(BaseModel):
+    sam_minutes: float | None = Field(None, gt=0)
+    source: str | None = None
+    note: str | None = Field(None, max_length=300)
+
+
+@router.get("/style-sam")
+def list_style_sam(q: str | None = None, source: str | None = None, limit: int = Query(3000, ge=1, le=5000), db: Session = Depends(get_db), _: User = View):
+    query = db.query(StyleSam)
+    if q:
+        query = query.filter(StyleSam.style_cc.ilike(f"%{q.strip()}%"))
+    if source:
+        query = query.filter(StyleSam.source == source)
+    total = query.count()
+    return {"total": total, "rows": [svc.sam_view(r) for r in query.order_by(StyleSam.style_cc).limit(limit)],
+            "by_source": {k: v for k, v in db.query(StyleSam.source, func.count(StyleSam.id)).group_by(StyleSam.source).all()}}
+
+
+@router.post("/style-sam/refresh")
+def refresh_style_sam(db: Session = Depends(get_db), user: User = Manage):
+    return svc.refresh_style_sam(db, user)
+
+
+@router.put("/style-sam/{style}")
+def update_style_sam(style: str, body: SamBody, db: Session = Depends(get_db), user: User = Manage):
+    return svc.sam_view(svc.save_style_sam(db, user, style, body.model_dump(exclude_unset=True)))

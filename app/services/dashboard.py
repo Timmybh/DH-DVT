@@ -550,3 +550,69 @@ def drill_qa(db: Session, all_factories: list[Factory], category: str, year: int
     rows = [{"day": d.isoformat(), **v, "total": sum(v.values())} for d, v in sorted(by_day.items())]
     label = dict(QA_LABELS).get(category, "Tất cả nhóm")
     return {"category": category, "label": label, "month": f"{year}-{month:02d}", "factories": [f.code for f in all_factories], "rows": rows}
+
+
+# ------------------------------------------------------------------ Gauge "Sản lượng hôm nay" (may ra so với kế hoạch hôm nay)
+# Tạm thời (hard-code): gauge chạy theo giờ làm việc từ 0% đến 100% — chưa dùng số may ra thực tế để tô gauge
+OUTPUT_WORK_WINDOWS = {"XN1": ("07:30", "16:30"), "XN2": ("07:30", "16:30"), "XN3": ("07:00", "16:00")}
+
+
+def _window_pct(window: tuple[str, str], now: datetime) -> float:
+    def minutes(hhmm: str) -> int:
+        h, m = hhmm.split(":")
+        return int(h) * 60 + int(m)
+
+    start, end = minutes(window[0]), minutes(window[1])
+    cur = now.hour * 60 + now.minute + now.second / 60
+    return round(max(0.0, min(1.0, (cur - start) / (end - start))) * 100, 1)
+
+
+def output_today(db: Session, factories: list[Factory], today: date | None = None, now: datetime | None = None) -> dict:
+    """Gauge "Sản lượng hôm nay". HIỆN TẠI phần trăm của gauge được hard-code theo giờ làm việc của từng XN (XN1/XN2 07:30–16:30, XN3 07:00–16:00: 0% → 100%).
+    Số may ra thực tế (SUM MayRaSoLuong) và kế hoạch ngày (OMM_KeHoachThang) vẫn được đồng bộ và trả kèm để đối chiếu, sẽ dùng lại khi chốt cách tính."""
+    from app.models.data import FactoryOutputDaily
+
+    now = now or datetime.now(ZoneInfo(settings.timezone))
+    today = today or now.date()
+    ids = {f.id: f for f in factories}
+    got = {r.factory_id: r for r in db.query(FactoryOutputDaily).filter(FactoryOutputDaily.day == today, FactoryOutputDaily.factory_id.in_(list(ids) or [0]))}
+    latest_day = db.query(func.max(FactoryOutputDaily.day)).scalar()
+    items = []
+    for f in factories:
+        r = got.get(f.id)
+        v, t = (r.sewn_qty if r else 0), (r.target_qty if r else 0)
+        win = OUTPUT_WORK_WINDOWS.get(f.code)
+        items.append({"code": f.code, "name": f.name, "value": v, "target": t, "actual_pct": round(v / t * 100, 1) if t else None,
+                      "pct": _window_pct(win, now) if win else None, "window": f"{win[0]}–{win[1]}" if win else None})
+    return {"title": "Sản lượng hôm nay", "unit": "sp", "date": today.isoformat(), "items": items, "has_data": True, "as_of": latest_day.isoformat() if latest_day else None,
+            "mode": "TIME", "note": "Tạm thời chạy theo giờ làm việc: XN1, XN2 07:30–16:30; XN3 07:00–16:00 (0% → 100%)."}
+
+
+# Tạm thời (hard-code): RFT hôm nay theo XN, tăng từ 0% đến mức RFT trong cùng khung giờ với gauge sản lượng — chờ nối DB hiPro
+RFT_TARGETS = {"XN1": 97.0, "XN2": 96.0, "XN3": 98.0}
+
+
+def _ramp_gauge(factories: list[Factory], goals: dict[str, float], title: str, now: datetime | None) -> dict:
+    now = now or datetime.now(ZoneInfo(settings.timezone))
+    items = []
+    for f in factories:
+        win, goal = OUTPUT_WORK_WINDOWS.get(f.code), goals.get(f.code)
+        pct = round(goal * _window_pct(win, now) / 100, 1) if win and goal is not None else None
+        items.append({"code": f.code, "name": f.name, "value": pct, "target": goal, "pct": pct, "window": f"{win[0]}–{win[1]}" if win else None})
+    return {"title": title, "unit": "%", "date": now.date().isoformat(), "items": items, "has_data": True, "mode": "HARDCODE"}
+
+
+def rft_today(factories: list[Factory], now: datetime | None = None) -> dict:
+    out = _ramp_gauge(factories, RFT_TARGETS, "RFT hôm nay", now)
+    out["note"] = "Tạm thời số cố định: XN1 97%, XN2 96%, XN3 98%, tăng dần từ 0% theo khung giờ làm việc. Sẽ lấy từ DB hiPro."
+    return out
+
+
+# Tạm thời (hard-code): Hiệu suất hôm nay theo XN, tăng từ 0% đến mức hiệu suất trong cùng khung giờ — chờ tính từ SAM
+EFFICIENCY_TARGETS = {"XN1": 92.0, "XN2": 95.0, "XN3": 96.0}
+
+
+def efficiency_today(factories: list[Factory], now: datetime | None = None) -> dict:
+    out = _ramp_gauge(factories, EFFICIENCY_TARGETS, "Hiệu suất hôm nay", now)
+    out["note"] = "Tạm thời số cố định: XN1 92%, XN2 95%, XN3 96%, tăng dần từ 0% theo khung giờ làm việc. Sẽ tính từ sản lượng × SAM."
+    return out

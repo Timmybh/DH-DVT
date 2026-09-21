@@ -195,5 +195,8 @@ def build_signals(db: Session, factories: list[Factory], is_total: bool, month: 
     else:
         add("plan.missing", "WARN", "WARNING", "Chưa nhập file kế hoạch SX", "Nhập file Excel tại màn hình Sync Log", {"kind": "sync_log"})
 
+    from app.services import signal_rules  # Tin tốt/xấu theo bảng đăng ký (chỉ số đo lường + lời ghép)
+
+    signals.extend(signal_rules.evaluate(db, factories, today))
     signals.sort(key=lambda s: SEVERITY_ORDER[s["severity"]])
     return signals

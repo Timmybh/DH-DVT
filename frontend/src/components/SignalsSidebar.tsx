@@ -6,6 +6,17 @@ interface Props {
   onDrill: (drill: Drill) => void;
 }
 
+/** Tiêu đề tin: nhãn (Tin nóng, Báo động...) hiển thị thành chip riêng, phần lời ghép đi sau. */
+function SignalTitle({ s, hot }: { s: Signal; hot: boolean }) {
+  const body = s.tag && s.title.startsWith(`${s.tag}: `) ? s.title.slice(s.tag.length + 2) : s.title;
+  return (
+    <p className="text-sm font-semibold text-slate-800">
+      {s.tag && <span className={`mr-1.5 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${hot ? "bg-red-500 text-white" : "bg-emerald-500 text-white"}`}>{s.tag}</span>}
+      {body}
+    </p>
+  );
+}
+
 interface CardProps {
   items: Signal[];
   onDrill: (drill: Drill) => void;
@@ -26,7 +37,7 @@ export function GoodNewsCard({ items: good, onDrill }: CardProps) {
               onClick={() => s.drill && onDrill(s.drill)}
               className="w-full rounded-lg border border-green-200 bg-white p-3 text-left hover:border-green-400 hover:shadow-sm"
             >
-              <p className="text-sm font-semibold text-slate-800">{s.title}</p>
+              <SignalTitle s={s} hot={false} />
               {s.detail && <p className="mt-0.5 text-xs text-slate-500">{s.detail}</p>}
             </button>
           ))}
@@ -64,7 +75,7 @@ export function WarningCard({ items: warn, onDrill }: CardProps) {
                 <div className="flex items-start gap-2">
                   <span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${crit ? "bg-red-500" : "bg-amber-500"}`} />
                   <div className="min-w-0">
-                    <p className="text-sm font-semibold text-slate-800">{s.title}</p>
+                    <SignalTitle s={s} hot />
                     {s.detail && <p className="mt-0.5 break-words text-xs text-slate-500">{s.detail}</p>}
                   </div>
                 </div>
