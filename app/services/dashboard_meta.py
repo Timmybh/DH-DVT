@@ -36,6 +36,13 @@ GRID_COLUMNS = 12
 LAYOUT_SCOPES = ("COMPANY", "FACTORY")
 # Section presets của Layout Designer: số cột theo tỉ lệ trên lưới 12 (không resize pixel tự do)
 SECTION_PRESETS: dict[str, list[int]] = {"100": [12], "50_50": [6, 6], "66_34": [8, 4], "34_66": [4, 8], "33_33_33": [4, 4, 4], "25_25_25_25": [3, 3, 3, 3]}
+CUSTOM_PRESET = "CUSTOM"  # tỉ lệ % tự do theo cột, xem DashboardLayoutSection.custom_spans
+
+
+def section_spans(preset: str, custom_spans: list | None) -> list[float]:
+    if preset == CUSTOM_PRESET:
+        return [float(x) for x in custom_spans] if custom_spans else [50.0, 50.0]
+    return SECTION_PRESETS.get(preset, [12])
 
 _cache: dict[tuple, tuple[float, dict]] = {}
 
@@ -164,7 +171,7 @@ def layout_view(db: Session, l: DashboardLayout, with_items: bool = False) -> di
 
 
 def section_view(x: DashboardLayoutSection) -> dict:
-    return {"id": x.id, "order_no": x.order_no, "title": x.title, "preset": x.preset, "is_visible": x.is_visible, "spans": SECTION_PRESETS.get(x.preset, [12])}
+    return {"id": x.id, "order_no": x.order_no, "title": x.title, "preset": x.preset, "custom_spans": x.custom_spans, "is_visible": x.is_visible, "spans": section_spans(x.preset, x.custom_spans)}
 
 
 def _sections(db: Session, layout_id: int) -> list[DashboardLayoutSection]:
@@ -303,8 +310,18 @@ def find_overlaps(items: list[dict]) -> list[tuple[str, str]]:
 def _validate_sections(sections: list[dict], items: list[dict]) -> None:
     refs = set()
     for s_ in sections:
-        if s_.get("preset", "100") not in SECTION_PRESETS:
-            raise _bad(f"preset '{s_.get('preset')}' không hợp lệ (chọn: {', '.join(SECTION_PRESETS)})")
+        preset = s_.get("preset", "100")
+        if preset == CUSTOM_PRESET:
+            spans = s_.get("custom_spans") or []
+            if len(spans) < 1 or len(spans) > 6:
+                raise _bad("Tùy chỉnh %: cần từ 1 đến 6 cột")
+            if any(not isinstance(x, (int, float)) or x <= 0 for x in spans):
+                raise _bad("Tùy chỉnh %: mỗi cột phải là số dương")
+            total = sum(spans)
+            if not 90 <= total <= 110:
+                raise _bad(f"Tùy chỉnh %: tổng các cột phải khoảng 100% (hiện {total:.0f}%)")
+        elif preset not in SECTION_PRESETS:
+            raise _bad(f"preset '{preset}' không hợp lệ (chọn: {', '.join(SECTION_PRESETS)}, {CUSTOM_PRESET})")
         ref = str(s_.get("ref", ""))
         if not ref or ref in refs:
             raise _bad("Mỗi Section cần một ref duy nhất")
@@ -320,14 +337,15 @@ def _replace_sections_items(db: Session, layout: DashboardLayout, sections: list
     db.query(DashboardLayoutSection).filter(DashboardLayoutSection.layout_id == layout.id).delete()
     by_ref: dict[str, tuple[DashboardLayoutSection, int]] = {}
     for n, s_ in enumerate(sections, start=1):
-        row = DashboardLayoutSection(layout_id=layout.id, order_no=n, title=s_.get("title", "") or "", preset=s_.get("preset", "100"), is_visible=bool(s_.get("is_visible", True)))
+        row = DashboardLayoutSection(layout_id=layout.id, order_no=n, title=s_.get("title", "") or "", preset=s_.get("preset", "100"),
+                                    custom_spans=(s_.get("custom_spans") if s_.get("preset") == CUSTOM_PRESET else None), is_visible=bool(s_.get("is_visible", True)))
         db.add(row)
         by_ref[str(s_["ref"])] = (row, n)
     db.flush()
     rank: dict[tuple[str, int], int] = {}
     for n, it in enumerate(items, start=1):
         row, sec_idx = by_ref[str(it["section_ref"])]
-        spans = SECTION_PRESETS[row.preset]
+        spans = section_spans(row.preset, row.custom_spans)
         col = max(0, min(int(it.get("column_no", 0)), len(spans) - 1))
         r = rank.get((str(it["section_ref"]), col), 0)
         rank[(str(it["section_ref"]), col)] = r + 1
@@ -395,7 +413,7 @@ def clone_layout(db: Session, user: User, layout_id: int) -> DashboardLayout:
     secs = _sections(db, src.id)
     if secs:
         items = [{**item_view(i), "section_ref": str(i.section_id)} for i in rows]
-        return create_layout(db, user, {**base, "sections": [{"ref": str(x.id), "title": x.title, "preset": x.preset, "is_visible": x.is_visible} for x in secs], "items": items})
+        return create_layout(db, user, {**base, "sections": [{"ref": str(x.id), "title": x.title, "preset": x.preset, "custom_spans": x.custom_spans, "is_visible": x.is_visible} for x in secs], "items": items})
     return create_layout(db, user, {**base, "items": [item_view(i) for i in rows]})
 
 

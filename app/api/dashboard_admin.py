@@ -203,6 +203,7 @@ class SectionBody(BaseModel):
     ref: str
     title: str = Field('', max_length=120)
     preset: str = '100'
+    custom_spans: list[float] | None = None
     is_visible: bool = True
 
 

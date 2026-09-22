@@ -326,3 +326,19 @@ def test_signal_rules_levels_templates_and_evaluation(db):
         sr.save_rule(db, ADMIN, {"code": "EFF", "name": "dup", "metric_code": "RFT_TODAY", "levels": levels})                    # trùng mã
     sr.set_status(db, ADMIN, r.id, False)
     assert sr.evaluate(db, facs, values=vals) == []                                                                                # Ngưng áp dụng: không sinh tin
+
+
+def test_layout_designer_custom_percentage_columns(db):
+    m.save_indicator(db, ADMIN, ind("A"))
+    m.save_indicator(db, ADMIN, ind("B"))
+    secs = [{"ref": "s1", "preset": "CUSTOM", "custom_spans": [70, 30]}]
+    items = [{"indicator_code": "A", "section_ref": "s1", "column_no": 0}, {"indicator_code": "B", "section_ref": "s1", "column_no": 1}]
+    l = m.create_layout(db, ADMIN, {"layout_code": "PCT", "layout_name": "PCT", "sections": secs, "items": items})
+    v = m.layout_view(db, l, True)
+    assert v["sections"][0]["preset"] == "CUSTOM" and v["sections"][0]["spans"] == [70.0, 30.0] and v["sections"][0]["custom_spans"] == [70, 30]
+    m.publish_layout(db, ADMIN, l.id)  # không kiểm chồng lấn ở chế độ Section
+    for bad in ({"custom_spans": [70, -30]}, {"custom_spans": [70, 10]}, {"custom_spans": []}, {"custom_spans": [10, 10, 10, 10, 10, 10, 10]}):
+        with pytest.raises(HTTPException):
+            m.update_layout(db, ADMIN, l.id, {"sections": [{"ref": "s1", "preset": "CUSTOM", **bad}], "items": [{"indicator_code": "A", "section_ref": "s1", "column_no": 0}]})
+    draft = m.clone_layout(db, ADMIN, l.id)
+    assert m.layout_view(db, draft, True)["sections"][0]["custom_spans"] == [70, 30]

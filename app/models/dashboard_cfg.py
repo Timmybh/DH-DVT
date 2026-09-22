@@ -127,7 +127,8 @@ class DashboardLayoutSection(Base):
     layout_id: Mapped[int] = mapped_column(ForeignKey("dashboard_layouts.id", ondelete="CASCADE"), index=True)
     order_no: Mapped[int] = mapped_column(Integer, default=0)
     title: Mapped[str] = mapped_column(String(120), default="")
-    preset: Mapped[str] = mapped_column(String(16), default="100")
+    preset: Mapped[str] = mapped_column(String(16), default="100")  # preset cố định, hoặc "CUSTOM" (tỉ lệ % tự do — xem custom_spans)
+    custom_spans: Mapped[list | None] = mapped_column(JSON, nullable=True)  # preset=CUSTOM: [%cột1, %cột2, ...], tổng 100
     is_visible: Mapped[bool] = mapped_column(Boolean, default=True)
 
 

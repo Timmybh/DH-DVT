@@ -52,6 +52,7 @@ def _upgrade_schema() -> None:
             "ALTER TABLE actual_mappings ALTER COLUMN status TYPE VARCHAR(16)",
             "ALTER TABLE dashboard_layout_items ADD COLUMN IF NOT EXISTS section_id INTEGER",
             "ALTER TABLE dashboard_layout_items ADD COLUMN IF NOT EXISTS column_no INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE dashboard_layout_sections ADD COLUMN IF NOT EXISTS custom_spans JSON",
             "ALTER TABLE machine_style_outputs ADD COLUMN IF NOT EXISTS required_quantity INTEGER",
             "ALTER TABLE machine_style_outputs ADD COLUMN IF NOT EXISTS source VARCHAR(10) NOT NULL DEFAULT 'MANUAL'",
             "ALTER TABLE machine_style_outputs ALTER COLUMN output_per_day DROP NOT NULL",
