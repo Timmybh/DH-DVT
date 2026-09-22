@@ -10,8 +10,11 @@ KHÔNG đọc/ghi `StyleSam` — bảng đó được giữ nguyên làm nguồn
 from __future__ import annotations
 
 import hashlib
+import json
+from datetime import date
 
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.session import utcnow
@@ -37,7 +40,8 @@ _TRANSITIONS = {
     "approve": {"from": ("REVIEWED",), "to": "APPROVED"},
     "retire": {"from": ("APPROVED",), "to": "RETIRED"},
 }
-_EDITABLE_STATUSES = ("DRAFT", "SIMULATED", "REVIEWED")  # APPROVED/RETIRED bất biến (V-007 + hệ quả tất yếu của RETIRED)
+_EDITABLE_STATUSES = ("DRAFT", "SIMULATED")  # REVIEWED/APPROVED/RETIRED bất biến — sửa lại theo GPT review #4 mục 3: mapping đã chốt là
+# `manage` chỉ sửa DRAFT/SIMULATED, `review` chuyển sang REVIEWED (khóa nội dung), `approve` từ REVIEWED. Muốn sửa sau REVIEWED phải derive version mới.
 
 
 def _bad(msg: str) -> HTTPException:
@@ -89,9 +93,20 @@ def machine_model_view(m: MachineModel) -> dict:
 
 
 # ------------------------------------------------------------------ TechnologyProcess
-def _process_code(style_cc: str, model_code: str) -> str:
+def _process_code_base(style_cc: str, model_code: str) -> str:
     base = f"TP-{style_cc}" + (f"-{model_code}" if model_code else "")
-    return base.strip().upper()[:60]
+    return base.strip().upper()
+
+
+def _unique_process_code(db: Session, style_cc: str, model_code: str) -> str:
+    """process_code phải là business identity ổn định/bất biến (GPT review #4 mục 6): base tạo từ style/model (đọc được),
+    nhưng nếu trùng với process KHÁC sau khi upper-case + cắt 60 ký tự (VD 'ab' vs 'AB', hoặc style/model rất dài trùng
+    tiền tố) thì disambiguate bằng hash ngắn, deterministic theo chính style_cc+model_code — không dựa vào random/thời gian."""
+    base = _process_code_base(style_cc, model_code)[:60]
+    if db.query(TechnologyProcess.id).filter(TechnologyProcess.process_code == base).first() is None:
+        return base
+    suffix = hashlib.sha1(f"{style_cc}::{model_code}".encode("utf-8")).hexdigest()[:8].upper()
+    return f"{base[:51]}-{suffix}"[:60]
 
 
 def create_process(db: Session, user: User, d: dict) -> TechnologyProcess:
@@ -101,10 +116,15 @@ def create_process(db: Session, user: User, d: dict) -> TechnologyProcess:
         raise _bad("Cần Style/CC")
     if db.query(TechnologyProcess).filter(TechnologyProcess.style_cc == style_cc, TechnologyProcess.model_code == model_code).first():
         raise HTTPException(409, f"Đã có Technology Process cho Style {style_cc}" + (f" / Model {model_code}" if model_code else ""))
-    p = TechnologyProcess(process_code=_process_code(style_cc, model_code), style_cc=style_cc, model_code=model_code, product_family=(d.get("product_family") or None),
+    p = TechnologyProcess(process_code=_unique_process_code(db, style_cc, model_code), style_cc=style_cc, model_code=model_code, product_family=(d.get("product_family") or None),
                           description=d.get("description") or "", created_by=user.username)
     db.add(p)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # an toàn cuối cùng cho race condition (2 request đồng thời cùng style/model) — trả business error, không 500 (GPT review #4 mục 6)
+        db.rollback()
+        raise HTTPException(409, f"Đã có Technology Process cho Style {style_cc}" + (f" / Model {model_code}" if model_code else "")) from None
     write_audit("TECH_PROCESS_CREATE", user=user, object_type="TechnologyProcess", object_id=p.process_code, detail=f"{style_cc}/{model_code or '-'}")
     return p
 
@@ -223,6 +243,11 @@ def update_version(db: Session, user: User, version_id: int, d: dict) -> Technol
         et = d.get("effective_to", v.effective_to)
         if ef and et and et < ef:
             raise _bad("effective_to phải >= effective_from")
+    # note/assumptions_json là cột NOT NULL (default "" / {}) — null tường minh được hiểu là "xóa nội dung", không phải lỗi (GPT review #4 mục 5)
+    if "note" in d and d["note"] is None:
+        d = {**d, "note": ""}
+    if "assumptions_json" in d and d["assumptions_json"] is None:
+        d = {**d, "assumptions_json": {}}
     for k in ("source_ref", "source_date", "effective_from", "effective_to", "expected_output_per_day", "required_labor", "assumptions_json", "note"):
         if k in d:
             setattr(v, k, d[k])
@@ -232,14 +257,18 @@ def update_version(db: Session, user: User, version_id: int, d: dict) -> Technol
 
 
 # ------------------------------------------------------------------ Total SAM (BR-016, BR-017)
-def recalc_total_sam(db: Session, v: TechnologyProcessVersion) -> TechnologyProcessVersion:
-    active = [op for op in v.operations if op.is_active]
+def _sam_summary(operations) -> tuple[float | None, str]:
+    """Hàm thuần (không đụng DB) — dùng chung cho recalc_total_sam và bootstrap atomic (GPT review #4 mục 1)."""
+    active = [op for op in operations if op.is_active]
     if not active:
-        v.total_sam_minutes, v.sam_status = None, "EMPTY"
-    elif any(op.sam_minutes is None for op in active):
-        v.total_sam_minutes, v.sam_status = None, "INCOMPLETE"  # BR-017 — không lấy median/default Style khác lấp vào
-    else:
-        v.total_sam_minutes, v.sam_status = round(sum(op.sam_minutes for op in active), 4), "COMPLETE"
+        return None, "EMPTY"
+    if any(op.sam_minutes is None for op in active):
+        return None, "INCOMPLETE"  # BR-017 — không lấy median/default Style khác lấp vào
+    return round(sum(op.sam_minutes for op in active), 4), "COMPLETE"
+
+
+def recalc_total_sam(db: Session, v: TechnologyProcessVersion) -> TechnologyProcessVersion:
+    v.total_sam_minutes, v.sam_status = _sam_summary(v.operations)
     db.commit()
     return v
 
@@ -291,12 +320,20 @@ def add_operation(db: Session, user: User, version_id: int, d: dict) -> Technolo
     return op
 
 
+# Cột NOT NULL trên TechnologyProcessOperation — null tường minh trên các trường này không có nghĩa nghiệp vụ hợp lệ
+# (khác với các cột nullable như sam_minutes/machine_type_code, nơi null nghĩa là "chưa có/xóa giá trị" hợp lệ). GPT review #4 mục 5.
+_OPERATION_NOT_NULLABLE = ("sequence_no", "operation_code", "operation_name", "operator_count", "automation_level", "source_type", "evidence_note")
+
+
 def update_operation(db: Session, user: User, operation_id: int, d: dict) -> TechnologyProcessOperation:
     op = db.get(TechnologyProcessOperation, operation_id)
     if op is None:
         raise HTTPException(404, "Không tìm thấy công đoạn")
     v = get_version(db, op.process_version_id)
     _guard_editable(v)
+    bad_null = [k for k in _OPERATION_NOT_NULLABLE if k in d and d[k] is None]
+    if bad_null:
+        raise _bad(f"Trường {', '.join(bad_null)} không được để trống (null)")
     merged = {**operation_view(op), **d}
     _validate_operation(db, merged)
     if "sequence_no" in d and d["sequence_no"] != op.sequence_no:
@@ -361,9 +398,14 @@ def simulate_version(db: Session, user: User, version_id: int) -> TechnologyProc
 
 # ------------------------------------------------------------------ Compare (§13)
 def compare_versions(db: Session, version_ids: list[int]) -> list[dict]:
+    """So sánh các version — CHỈ trong cùng một TechnologyProcess (GPT review #4 mục 4): so Style/Model khác nhau
+    dễ gây hiểu nhầm là các phương án của cùng một mã hàng, nên bị từ chối tường minh thay vì âm thầm trả kết quả."""
+    versions = [get_version(db, vid) for vid in version_ids]
+    process_ids = {v.technology_process_id for v in versions}
+    if len(process_ids) > 1:
+        raise _bad("Chỉ so sánh được các version của cùng một Technology Process (cùng Style/Model)")
     out = []
-    for vid in version_ids:
-        v = get_version(db, vid)
+    for v in versions:
         active = [op for op in v.operations if op.is_active]
         machines = sorted({(op.machine_type_code or "", op.machine_model_id) for op in active if op.machine_type_code or op.machine_model_id})
         out.append({**version_view(v), "process_code": v.technology_process.process_code, "style_cc": v.technology_process.style_cc, "model_code": v.technology_process.model_code,
@@ -373,14 +415,37 @@ def compare_versions(db: Session, version_ids: list[int]) -> list[dict]:
 
 # ------------------------------------------------------------------ Bootstrap / import Current Process (§11)
 # BR: KHÔNG tự query ERP trong Task 1 (Known Gap) — nhận input đã chuẩn hóa qua service/API (manual/controlled bootstrap).
-def _fingerprint(style_cc: str, model_code: str, layer: str, source_ref: str, operations: list[dict]) -> str:
-    ops_key = "|".join(f"{o.get('operation_code','')}:{o.get('sequence_no','')}:{o.get('sam_minutes','')}:{o.get('machine_type_code','')}" for o in sorted(operations, key=lambda o: o.get("sequence_no", 0)))
-    raw = f"{style_cc}::{model_code}::{layer}::{source_ref}::{ops_key}"
+
+# Toàn bộ trường nghiệp vụ của một operation trong payload bootstrap tham gia fingerprint (GPT review #4 mục 2) —
+# đổi bất kỳ trường nào trong danh sách này phải ra fingerprint khác. `note` (ghi chú tự do cấp version) CHỦ Ý không tham gia vì
+# là metadata mô tả, không ảnh hưởng nội dung kỹ thuật của Current Process.
+_BOOTSTRAP_OP_FINGERPRINT_FIELDS = (
+    "sequence_no", "operation_code", "operation_name", "machine_type_code", "machine_model_id", "operator_count", "helper_count", "sam_minutes",
+    "cycle_time_seconds", "expected_output_per_day", "automation_level", "setup_changeover_minutes", "expected_defect_rate", "source_type", "evidence_note", "evidence_ref", "source_date",
+)
+
+
+def _canon(v):
+    if isinstance(v, date):
+        return v.isoformat()
+    return v
+
+
+def _fingerprint(style_cc: str, model_code: str, layer: str, source_ref: str, source_date_: date | None, operations: list[dict]) -> str:
+    """Canonical JSON (sort_keys, thứ tự operation deterministic theo sequence_no rồi operation_name) -> SHA-256.
+    GPT review #4 mục 2: hash phải đại diện đầy đủ business fields của payload, không chỉ 4 field như bản cũ."""
+    ops_canon = [{k: _canon(o.get(k)) for k in _BOOTSTRAP_OP_FINGERPRINT_FIELDS} for o in sorted(operations, key=lambda o: (o.get("sequence_no") or 0, o.get("operation_name") or ""))]
+    payload = {"style_cc": style_cc, "model_code": model_code, "layer": layer, "source_ref": source_ref, "source_date": _canon(source_date_), "operations": ops_canon}
+    raw = json.dumps(payload, sort_keys=True, ensure_ascii=True, default=str)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:40]
 
 
 def bootstrap_current_process(db: Session, user: User, d: dict) -> dict:
-    """Bootstrap thủ công/normalized có kiểm soát cho Current Process (BR-011, BR-015). KHÔNG tự nối ERP sống trong Task 1."""
+    """Bootstrap thủ công/normalized có kiểm soát cho Current Process (BR-011, BR-015). KHÔNG tự nối ERP sống trong Task 1.
+
+    Atomic (GPT review #4 mục 1): validate TOÀN BỘ operation trước (đọc-only), kiểm tra idempotency trước khi ghi bất kỳ dòng nào,
+    sau đó insert process/version/operation và chỉ COMMIT MỘT LẦN ở cuối. Bất kỳ lỗi nào trước commit -> rollback toàn bộ,
+    không bao giờ để lại version có bootstrap_fingerprint nhưng operation dở dang."""
     style_cc, model_code = (d.get("style_cc") or "").strip(), (d.get("model_code") or "").strip()
     if not style_cc:
         raise _bad("Cần Style/CC")
@@ -390,31 +455,95 @@ def bootstrap_current_process(db: Session, user: User, d: dict) -> dict:
     source_ref = (d.get("source_ref") or "").strip()
     if not source_ref:
         raise _bad("Cần source_ref (bằng chứng nguồn) cho bootstrap — không được để trống")
-    fp = _fingerprint(style_cc, model_code, "CURRENT_PROCESS", source_ref, operations)
+    source_date_ = d.get("source_date")
 
-    p = get_or_create_process(db, user, style_cc, model_code, d.get("product_family"))
-    existing = db.query(TechnologyProcessVersion).filter(TechnologyProcessVersion.technology_process_id == p.id, TechnologyProcessVersion.layer == "CURRENT_PROCESS",
-                                                           TechnologyProcessVersion.bootstrap_fingerprint == fp).first()
-    if existing is not None:  # BR-015 — idempotent: cùng fingerprint không tạo duplicate
-        return {"created": False, "process": process_view(p), "version": version_view(existing, True)}
+    # 1) Validate + chuẩn hóa TOÀN BỘ operation trước — chưa ghi gì vào DB (chỉ đọc MachineType/MachineModel để kiểm tra)
+    seen_seq: set = set()
+    norm_ops: list[dict] = []
+    for i, raw_od in enumerate(operations, start=1):
+        od = {**raw_od, "sequence_no": raw_od.get("sequence_no") or i, "source_type": raw_od.get("source_type") or "IMPORT"}
+        if not (od.get("operation_name") or "").strip():
+            raise _bad(f"Operation #{i}: cần operation_name")
+        if od["sequence_no"] in seen_seq:
+            raise _bad(f"Thứ tự công đoạn {od['sequence_no']} bị trùng trong payload bootstrap")
+        seen_seq.add(od["sequence_no"])
+        _validate_operation(db, od)
+        norm_ops.append(od)
 
-    v = create_draft_version(db, user, p.id, {"layer": "CURRENT_PROCESS", "source_type": "IMPORT", "source_ref": source_ref, "source_date": d.get("source_date"),
-                                              "note": d.get("note") or "Bootstrap thủ công — chưa nối live ERP QTCN (Known Gap)"})
-    v.bootstrap_fingerprint = fp
-    db.commit()
-    for i, od in enumerate(operations, start=1):
-        add_operation(db, user, v.id, {**od, "sequence_no": od.get("sequence_no", i), "source_type": od.get("source_type") or "IMPORT"})
+    fp = _fingerprint(style_cc, model_code, "CURRENT_PROCESS", source_ref, source_date_, norm_ops)
+
+    # 2) Idempotency check TRƯỚC khi ghi (BR-015) — nếu đã có version cùng fingerprint, trả nguyên trạng, không đụng DB
+    existing_process = db.query(TechnologyProcess).filter(TechnologyProcess.style_cc == style_cc, TechnologyProcess.model_code == model_code).first()
+    if existing_process is not None:
+        existing_version = db.query(TechnologyProcessVersion).filter(TechnologyProcessVersion.technology_process_id == existing_process.id,
+                                                                       TechnologyProcessVersion.layer == "CURRENT_PROCESS", TechnologyProcessVersion.bootstrap_fingerprint == fp).first()
+        if existing_version is not None:
+            return {"created": False, "process": process_view(existing_process), "version": version_view(existing_version, True)}
+
+    # 3) Ghi — không commit cho tới khi mọi thứ insert xong; lỗi bất kỳ đâu -> rollback toàn bộ, không tạo process/version dở dang
+    try:
+        p = existing_process
+        if p is None:
+            p = TechnologyProcess(process_code=_unique_process_code(db, style_cc, model_code), style_cc=style_cc, model_code=model_code,
+                                  product_family=(d.get("product_family") or None), description="", created_by=user.username)
+            db.add(p)
+            db.flush()  # cần p.id cho version — chưa commit
+
+        v = TechnologyProcessVersion(
+            technology_process_id=p.id, layer="CURRENT_PROCESS", version_no=_next_version_no(db, p.id, "CURRENT_PROCESS"), status="DRAFT", source_type="IMPORT",
+            source_ref=source_ref, source_date=source_date_, note=d.get("note") or "Bootstrap thủ công — chưa nối live ERP QTCN (Known Gap)",
+            created_by=user.username, bootstrap_fingerprint=fp,
+        )
+        db.add(v)
+        db.flush()  # cần v.id cho operation — chưa commit
+
+        ops_added: list[TechnologyProcessOperation] = []
+        for od in norm_ops:
+            op = TechnologyProcessOperation(
+                process_version_id=v.id, sequence_no=od["sequence_no"], operation_code=od.get("operation_code") or "", operation_name=od["operation_name"],
+                machine_type_code=od.get("machine_type_code") or None, machine_model_id=od.get("machine_model_id") or None, operator_count=int(od.get("operator_count") or 0),
+                helper_count=od.get("helper_count"), sam_minutes=od.get("sam_minutes"), cycle_time_seconds=od.get("cycle_time_seconds"), expected_output_per_day=od.get("expected_output_per_day"),
+                automation_level=od.get("automation_level") or "", setup_changeover_minutes=od.get("setup_changeover_minutes"), expected_defect_rate=od.get("expected_defect_rate"),
+                source_type=od.get("source_type") or "IMPORT", evidence_note=od.get("evidence_note") or "", evidence_ref=od.get("evidence_ref"), source_date=od.get("source_date"),
+                is_active=True,  # đặt tường minh: cột có default ở DB nhưng CHƯA áp dụng cho object Python trước khi flush/commit — _sam_summary() đọc ngay object này
+                created_by=user.username,
+            )
+            db.add(op)
+            ops_added.append(op)
+
+        v.total_sam_minutes, v.sam_status = _sam_summary(ops_added)
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, f"Đã có Technology Process cho Style {style_cc}" + (f" / Model {model_code}" if model_code else "")) from None
+    except Exception:
+        db.rollback()
+        raise
+
     db.refresh(v)
-    write_audit("TECH_PROCESS_BOOTSTRAP", user=user, object_type="TechnologyProcessVersion", object_id=str(v.id), detail=f"{p.process_code} CURRENT_PROCESS bootstrap ({len(operations)} operation), source_ref={source_ref}")
+    write_audit("TECH_PROCESS_BOOTSTRAP", user=user, object_type="TechnologyProcessVersion", object_id=str(v.id), detail=f"{p.process_code} CURRENT_PROCESS bootstrap ({len(norm_ops)} operation), source_ref={source_ref}")
     return {"created": True, "process": process_view(p), "version": version_view(v, True)}
 
 
 # ------------------------------------------------------------------ Machine Model / Candidate (§10) — master độc lập, KHÔNG thuộc sở hữu một Process
+# Cột NOT NULL trên MachineModel; brand/model/automation_level/source/note là text mô tả nên coi null tường minh = "" (xóa nội dung).
+_MACHINE_MODEL_NOT_NULLABLE = ("machine_type_code", "status")
+
+
 def save_machine_model(db: Session, user: User, d: dict, model_id: int | None = None) -> MachineModel:
+    bad_null = [k for k in _MACHINE_MODEL_NOT_NULLABLE if k in d and d[k] is None]
+    if bad_null:  # GPT review #4 mục 5 — machine_type_code/status là NOT NULL và có ý nghĩa cấu trúc, null tường minh là lỗi input
+        raise _bad(f"Trường {', '.join(bad_null)} không được để trống (null)")
     if d.get("machine_type_code") is not None and not db.get(MachineType, d["machine_type_code"]):
         raise _bad(f"Loại máy '{d['machine_type_code']}' không tồn tại")
     if d.get("status") is not None and d["status"] not in MACHINE_MODEL_STATUSES:
         raise _bad(f"status phải là một trong {MACHINE_MODEL_STATUSES}")
+    for k in ("brand", "model", "automation_level", "source", "note"):  # text field NOT NULL — null tường minh -> "" (xóa nội dung, không phải lỗi)
+        if k in d and d[k] is None:
+            d = {**d, k: ""}
     if model_id is None:
         if not d.get("machine_type_code"):
             raise _bad("Cần loại máy")

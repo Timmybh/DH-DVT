@@ -188,17 +188,8 @@ def get_process(process_id: int, db: Session = Depends(get_db), _: User = View):
 
 
 # ------------------------------------------------------------------ Bootstrap Current Process (§11) — service boundary, KHÔNG nối live ERP trong Task 1
-class BootstrapOperation(BaseModel):
-    sequence_no: int | None = Field(None, ge=1)
-    operation_code: str | None = Field(None, max_length=60)
-    operation_name: str = Field(..., max_length=200)
-    machine_type_code: str | None = Field(None, max_length=20)
-    operator_count: int = Field(0, ge=0)
-    helper_count: int | None = Field(None, ge=0)
-    sam_minutes: float | None = Field(None, gt=0)
-    evidence_note: str | None = Field(None, max_length=300)
-
-
+# Dùng chung schema với OperationBody (thêm operation trực tiếp) — bootstrap là một kênh nhập normalized đầy đủ như nhập tay,
+# không phải bản rút gọn; điều này cũng đảm bảo fingerprint (mục 2 review) hash được đúng mọi trường có thể nhập qua bootstrap.
 class BootstrapBody(BaseModel):
     style_cc: str = Field(..., max_length=60)
     model_code: str | None = Field(None, max_length=60)
@@ -206,7 +197,7 @@ class BootstrapBody(BaseModel):
     source_ref: str = Field(..., min_length=1, max_length=200)
     source_date: date | None = None
     note: str | None = Field(None, max_length=500)
-    operations: list[BootstrapOperation]
+    operations: list[OperationBody]
 
 
 @router.post("/bootstrap")

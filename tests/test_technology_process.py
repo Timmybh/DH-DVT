@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import create_engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 from app.core.permissions import permissions_for
@@ -287,3 +288,130 @@ def test_compare_versions_reports_sam_labor_output_operation_count_and_machines(
     out = svc.compare_versions(db, [v1.id, v2.id])
     assert len(out) == 2 and {o["layer"] for o in out} == {"CURRENT_PROCESS", "OPTIMIZED_CURRENT_TECHNOLOGY"}
     assert all(o["total_sam_minutes"] == 2.0 for o in out) and all(o["operation_count"] == 2 for o in out)
+
+
+# ==================================================================================================================
+# Regression tests — GPT review #4 (PR #4 / Issue #3), STATUS:CHANGES_REQUESTED, 6 điểm 1-6
+# ==================================================================================================================
+
+# ------------------------------------------------------------------ mục 1 — bootstrap phải atomic, không để lại dữ liệu dở dang
+def test_bootstrap_atomic_rollback_on_commit_failure_leaves_no_partial_data(db, monkeypatch):
+    real_commit = db.commit
+    calls = {"n": 0}
+
+    def flaky_commit():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise IntegrityError("stmt", {}, Exception("boom"))
+        return real_commit()
+
+    monkeypatch.setattr(db, "commit", flaky_commit)
+    payload = {"style_cc": "ATOMIC1", "source_ref": "manual", "operations": [{"operation_name": "a", "sam_minutes": 1}, {"operation_name": "b", "sam_minutes": 2}]}
+    with pytest.raises(HTTPException) as e:
+        svc.bootstrap_current_process(db, ADMIN, payload)
+    assert e.value.status_code == 409  # lỗi ghi được chuyển thành business error, không 500
+    # KHÔNG được để lại process/version/operation dở dang — toàn bộ phải rollback
+    assert db.query(TechnologyProcess).filter_by(style_cc="ATOMIC1").count() == 0
+    assert db.query(TechnologyProcessVersion).count() == 0
+    assert db.query(TechnologyProcessOperation).count() == 0
+    # retry sau khi lỗi được sửa (commit không còn flaky) phải chạy sạch, không bị "đã tồn tại nhưng dở dang"
+    r = svc.bootstrap_current_process(db, ADMIN, payload)
+    assert r["created"] is True and r["version"]["total_sam_minutes"] == 3.0
+
+
+# ------------------------------------------------------------------ mục 2 — fingerprint phải đại diện đủ business field
+def test_bootstrap_fingerprint_sensitive_to_operator_helper_and_evidence_fields(db):
+    base = {"style_cc": "FP1", "source_ref": "src", "operations": [{"operation_name": "op1", "sam_minutes": 1.0, "operator_count": 1}]}
+    r1 = svc.bootstrap_current_process(db, ADMIN, base)
+    # cùng operation_name + sam_minutes, chỉ khác operator_count -> KHÔNG được coi là đã import rồi (bug cũ: fingerprint không đổi)
+    r2 = svc.bootstrap_current_process(db, ADMIN, {**base, "operations": [{**base["operations"][0], "operator_count": 5}]})
+    assert r1["created"] is True and r2["created"] is True and r1["version"]["id"] != r2["version"]["id"]
+    # chỉ khác evidence_note -> cũng phải ra fingerprint khác
+    r3 = svc.bootstrap_current_process(db, ADMIN, {**base, "operations": [{**base["operations"][0], "evidence_note": "phiếu khác"}]})
+    assert r3["created"] is True and r3["version"]["id"] not in (r1["version"]["id"], r2["version"]["id"])
+    # chạy lại nguyên payload gốc thì vẫn idempotent (không tạo thêm)
+    r4 = svc.bootstrap_current_process(db, ADMIN, dict(base))
+    assert r4["created"] is False and r4["version"]["id"] == r1["version"]["id"]
+
+
+# ------------------------------------------------------------------ mục 3 — REVIEWED phải khóa nội dung, không chỉ APPROVED
+def test_reviewed_version_blocks_operation_and_version_edits(db):
+    _, v = _process_with_ops(db)
+    svc.transition_version(db, ADMIN, v.id, "review")
+    db.refresh(v)
+    assert v.status == "REVIEWED" and svc.version_view(v)["editable"] is False
+    with pytest.raises(HTTPException) as e:
+        svc.add_operation(db, ADMIN, v.id, {"operation_name": "sau review"})
+    assert e.value.status_code == 409
+    op = v.operations[0]
+    with pytest.raises(HTTPException):
+        svc.update_operation(db, ADMIN, op.id, {"sam_minutes": 9})
+    with pytest.raises(HTTPException):
+        svc.remove_operation(db, ADMIN, op.id)
+    with pytest.raises(HTTPException):
+        svc.update_version(db, ADMIN, v.id, {"note": "sửa sau review"})
+    # vẫn approve được bình thường từ REVIEWED
+    svc.transition_version(db, ADMIN, v.id, "approve")
+    db.refresh(v)
+    assert v.status == "APPROVED"
+
+
+# ------------------------------------------------------------------ mục 4 — compare chỉ trong cùng Technology Process
+def test_compare_rejects_versions_from_different_process(db):
+    _, v1 = _process_with_ops(db)
+    p2 = svc.create_process(db, ADMIN, {"style_cc": "OTHERSTYLE", "model_code": ""})
+    v2 = svc.create_draft_version(db, ADMIN, p2.id, {"layer": "CURRENT_PROCESS"})
+    with pytest.raises(HTTPException) as e:
+        svc.compare_versions(db, [v1.id, v2.id])
+    assert e.value.status_code == 422
+    # cùng process thì vẫn hoạt động bình thường
+    v3 = svc.create_draft_version(db, ADMIN, v1.technology_process_id, {"layer": "OPTIMIZED_CURRENT_TECHNOLOGY"})
+    assert len(svc.compare_versions(db, [v1.id, v3.id])) == 2
+
+
+# ------------------------------------------------------------------ mục 5 — null tường minh trên field NOT NULL không được gây 500
+def test_update_operation_rejects_explicit_null_on_required_fields_allows_on_nullable(db):
+    _, v = _process_with_ops(db)
+    op = v.operations[0]
+    for bad in ({"operation_name": None}, {"sequence_no": None}, {"operator_count": None}, {"source_type": None}, {"automation_level": None}, {"evidence_note": None}):
+        with pytest.raises(HTTPException) as e:
+            svc.update_operation(db, ADMIN, op.id, bad)
+        assert e.value.status_code == 422
+    ok = svc.update_operation(db, ADMIN, op.id, {"sam_minutes": None, "machine_type_code": None, "evidence_ref": None})  # nullable — hợp lệ, nghĩa là "xóa giá trị"
+    assert ok.sam_minutes is None and ok.machine_type_code is None
+
+
+def test_save_machine_model_rejects_null_type_and_status_but_coerces_text_fields(db):
+    mm = svc.save_machine_model(db, ADMIN, {"machine_type_code": "1K", "brand": "Juki", "model": "DDL-9000"})
+    with pytest.raises(HTTPException) as e:
+        svc.save_machine_model(db, ADMIN, {"machine_type_code": None}, mm.id)
+    assert e.value.status_code == 422
+    with pytest.raises(HTTPException):
+        svc.save_machine_model(db, ADMIN, {"status": None}, mm.id)
+    updated = svc.save_machine_model(db, ADMIN, {"brand": None, "note": None, "automation_level": None, "source": None}, mm.id)  # text field — null -> "" (xóa nội dung), không lỗi
+    assert updated.brand == "" and updated.note == "" and updated.automation_level == "" and updated.source == ""
+
+
+def test_update_version_coerces_null_note_and_assumptions_keeps_nullable_fields_as_null(db):
+    _, v = _process_with_ops(db)
+    updated = svc.update_version(db, ADMIN, v.id, {"note": None, "assumptions_json": None, "source_ref": None, "required_labor": None})
+    assert updated.note == "" and updated.assumptions_json == {}
+    assert updated.source_ref is None and updated.required_labor is None  # nullable — null hợp lệ
+
+
+# ------------------------------------------------------------------ mục 6 — process_code collision-safe, duplicate không 500
+def test_process_code_disambiguated_on_case_collision_and_stays_deterministic(db):
+    p1 = svc.create_process(db, ADMIN, {"style_cc": "ab", "model_code": ""})
+    p2 = svc.create_process(db, ADMIN, {"style_cc": "AB", "model_code": ""})  # (style_cc, model_code) khác nhau -> qua được check trùng, nhưng cùng process_code sau upper-case
+    assert p1.process_code == "TP-AB"
+    assert p2.process_code != p1.process_code and p2.process_code.startswith("TP-AB-")
+    # deterministic: xóa p2 và tạo lại với cùng style_cc="AB" phải ra CÙNG process_code (không random/không theo thời gian)
+    code_again = svc._unique_process_code(db, "AB", "")
+    assert code_again == p2.process_code
+
+
+def test_create_process_duplicate_style_model_is_409_not_500(db):
+    svc.create_process(db, ADMIN, {"style_cc": "DUP1", "model_code": "M1"})
+    with pytest.raises(HTTPException) as e:
+        svc.create_process(db, ADMIN, {"style_cc": "DUP1", "model_code": "M1"})
+    assert e.value.status_code == 409
