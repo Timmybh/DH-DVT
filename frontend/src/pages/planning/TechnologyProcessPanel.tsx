@@ -28,7 +28,7 @@ interface VersionDetail extends VersionRow { operations: Operation[] }
 interface Options { layers: string[]; statuses: string[]; source_types: string[]; machine_model_statuses: string[] }
 interface MachineType { code: string; name: string }
 interface MachineModel { id: number; machine_type_code: string; brand: string; model: string; automation_level: string; source: string; status: string; note: string }
-type Perm = { manage: boolean; review: boolean; approve: boolean };
+type Perm = { manage: boolean; review: boolean; approve: boolean; syncView: boolean; syncRun: boolean };
 type Msg = { ok: boolean; text: string } | null;
 
 function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
@@ -58,6 +58,7 @@ export default function TechnologyProcessPanel({ perm }: { perm: Perm }) {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [compareIds, setCompareIds] = useState<number[] | null>(null);
   const [machineModels, setMachineModels] = useState(false);
+  const [erpSync, setErpSync] = useState(false);
 
   const load = useCallback(async () => {
     const params = { style: f.style || undefined, model: f.model || undefined, layer: f.layer || undefined, status: f.status || undefined, q: f.q || undefined };
@@ -90,6 +91,7 @@ export default function TechnologyProcessPanel({ perm }: { perm: Perm }) {
         <span className="text-xs text-slate-400">{num(rows.length)} version</span>
         <span className="flex-1" />
         {selected.size > 0 && <button onClick={() => setCompareIds([...selected])} className={btn} data-testid="compare-btn">So sánh ({selected.size})</button>}
+        {perm.syncView && <button onClick={() => setErpSync(true)} className={btn} data-testid="erp-sync-open">Đồng bộ ERP QTCN</button>}
         {perm.manage && <button onClick={() => setMachineModels(true)} className={btn}>Máy (model/candidate)</button>}
         {perm.manage && <button onClick={() => setBootstrapping(true)} className={btn} data-testid="bootstrap-open">Bootstrap Current Process</button>}
         {perm.manage && <button onClick={() => setCreating(true)} className={primary} data-testid="process-add">+ Process / Version mới</button>}
@@ -122,7 +124,103 @@ export default function TechnologyProcessPanel({ perm }: { perm: Perm }) {
       )}
       {compareIds && <CompareModal versionIds={compareIds} onClose={() => setCompareIds(null)} setMsg={setMsg} />}
       {machineModels && perm.manage && <MachineModelsModal machineTypes={machineTypes} onClose={() => setMachineModels(false)} setMsg={setMsg} />}
+      {erpSync && perm.syncView && <ErpSyncModal perm={perm} onClose={() => setErpSync(false)} onApplied={load} setMsg={setMsg} />}
     </div>
+  );
+}
+
+// ================================================================ Đồng bộ ERP QTCN (Task 2 — Issue #5)
+const EXC_LABEL: Record<string, string> = {
+  MISSING_STYLE: "Thiếu Style", AMBIGUOUS_PROCESS: "Nhiều Master trùng Style+Mùa", NO_PUBLISHED_VERSION: "Chưa có bản đã ban hành",
+  INCONSISTENT_VERSION_STATUS: "Trạng thái phiên bản không nhất quán", DUPLICATE_SEQUENCE: "Trùng thứ tự công đoạn",
+  MISSING_SEQUENCE: "Thiếu thứ tự công đoạn", UNMAPPED_OPERATION: "Công đoạn chưa khớp danh mục", UNMAPPED_MACHINE_TYPE: "Máy chưa khớp danh mục",
+  INVALID_SOURCE_RELATION: "Quan hệ nguồn không hợp lệ", INVALID_SAM: "SAM không hợp lệ", OTHER: "Khác",
+};
+
+interface PreviewOut { source_row_count: number; out_of_scope_source_row_count: number; counts: Record<string, number>; exception_by_category: Record<string, number>; soft_exception_by_category: Record<string, number> }
+interface ExceptionRow { id: number; category: string; source_key: string; reason: string; detected_at: string | null; resolution_status: string; resolution_note: string }
+
+function ErpSyncModal({ perm, onClose, onApplied, setMsg }: { perm: Perm; onClose: () => void; onApplied: () => void; setMsg: (m: Msg) => void }) {
+  const [preview, setPreview] = useState<PreviewOut | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [applyResult, setApplyResult] = useState<{ created: number; no_change: number; failed: number; exception_count: number; run_code: string; status: string } | null>(null);
+  const [showExceptions, setShowExceptions] = useState(false);
+  const [exceptions, setExceptions] = useState<ExceptionRow[]>([]);
+
+  const runPreview = useCallback(async () => {
+    setBusy(true);
+    try {
+      setPreview((await api.get<PreviewOut>(`${RES}/erp-sync/preview`)).data);
+    } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); } finally { setBusy(false); }
+  }, [setMsg]);
+  useEffect(() => { void runPreview(); }, [runPreview]);
+
+  const runApply = async () => {
+    if (!window.confirm("Chạy đồng bộ thật từ ERP QTCN? Sẽ tạo Current Process Version mới (DRAFT) cho các Style mới/thay đổi.")) return;
+    setBusy(true);
+    try {
+      const r = await api.post<{ run_id: number; run_code: string; status: string; created: number; no_change: number; failed: number; exception_count: number }>(`${RES}/erp-sync/apply`);
+      setApplyResult(r.data);
+      setMsg({ ok: true, text: `Đồng bộ xong (${r.data.run_code}): tạo mới ${r.data.created}, không đổi ${r.data.no_change}, lỗi ${r.data.failed}, exception ${r.data.exception_count}.` });
+      await runPreview();
+      onApplied();
+    } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); } finally { setBusy(false); }
+  };
+
+  const loadExceptions = async () => {
+    setShowExceptions(true);
+    try {
+      setExceptions((await api.get<{ items: ExceptionRow[] }>(`${RES}/erp-sync/exceptions`, { params: { status: "OPEN" } })).data.items);
+    } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); }
+  };
+
+  return (
+    <Modal title="Đồng bộ Quy trình công nghệ từ ERP QTCN" onClose={onClose} wide>
+      <div className="space-y-3 text-sm">
+        <p className="text-xs text-slate-500">
+          Nguồn: <code>QTCN_QuyTrinhCongNghe_Master/Detail</code> (SQL Server eGMF). Chỉ tạo/import layer <b>Current Process</b>, luôn ở trạng thái DRAFT — không tự Approve.
+          SAM/số lao động chưa map trong bước này (chưa xác minh được công thức ERP đáng tin) — cần bổ sung ở task sau.
+        </p>
+        {busy && <p className="text-xs text-slate-400">Đang tải...</p>}
+        {preview && (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="rounded-xl border border-slate-200 p-3"><div className="text-[11px] uppercase text-slate-400">Style mới</div><div className="text-xl font-bold text-green-600">{preview.counts.NEW ?? 0}</div></div>
+            <div className="rounded-xl border border-slate-200 p-3"><div className="text-[11px] uppercase text-slate-400">Đã thay đổi</div><div className="text-xl font-bold text-amber-600">{preview.counts.CHANGED ?? 0}</div></div>
+            <div className="rounded-xl border border-slate-200 p-3"><div className="text-[11px] uppercase text-slate-400">Không đổi</div><div className="text-xl font-bold text-slate-500">{preview.counts.NO_CHANGE ?? 0}</div></div>
+            <div className="rounded-xl border border-slate-200 p-3"><div className="text-[11px] uppercase text-slate-400">Exception</div><div className="text-xl font-bold text-red-600">{preview.counts.EXCEPTION ?? 0}</div></div>
+          </div>
+        )}
+        {preview && Object.keys(preview.exception_by_category).length > 0 && (
+          <div className="text-xs text-slate-500">
+            {Object.entries(preview.exception_by_category).map(([k, v]) => <span key={k} className="mr-3">{EXC_LABEL[k] ?? k}: <b>{v}</b></span>)}
+          </div>
+        )}
+        {preview && preview.out_of_scope_source_row_count > 0 && (
+          <p className="text-xs text-slate-400">{num(preview.out_of_scope_source_row_count)} dòng nguồn ngoài phạm vi (thư viện công đoạn dùng chung, IdQTCN=-1) — không tính vào exception.</p>
+        )}
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <button onClick={() => void runPreview()} className={btn} disabled={busy}>↻ Preview lại</button>
+          {perm.syncRun && <button onClick={() => void runApply()} className={primary} disabled={busy}>Apply Sync</button>}
+          <button onClick={() => void loadExceptions()} className={btn}>Xem exception</button>
+        </div>
+        {applyResult && (
+          <p className="text-xs text-slate-500">Lần chạy gần nhất <b>{applyResult.run_code}</b> ({applyResult.status}): tạo mới {applyResult.created}, không đổi {applyResult.no_change}, lỗi {applyResult.failed}, exception {applyResult.exception_count}.</p>
+        )}
+        {showExceptions && (
+          <div className="max-h-64 overflow-y-auto rounded-xl border border-slate-200">
+            <table className="w-full text-xs">
+              <thead><tr><th className={th}>Loại</th><th className={th}>Source key</th><th className={th}>Lý do</th></tr></thead>
+              <tbody>
+                {exceptions.map((e) => (
+                  <tr key={e.id} className="border-t border-slate-100"><td className="px-3 py-1.5">{EXC_LABEL[e.category] ?? e.category}</td><td className="px-3 font-mono">{e.source_key}</td><td className="px-3 text-slate-500">{e.reason}</td></tr>
+                ))}
+                {exceptions.length === 0 && <tr><td colSpan={3} className="py-4 text-center text-slate-400">Không có exception đang mở.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </Modal>
   );
 }
 

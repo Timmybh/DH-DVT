@@ -326,9 +326,12 @@ def add_operation(db: Session, user: User, version_id: int, d: dict) -> Technolo
         seq = (max((op.sequence_no for op in v.operations if op.is_active), default=0)) + 1
     elif any(op.sequence_no == seq and op.is_active for op in v.operations):
         raise _bad(f"Thứ tự công đoạn {seq} đã tồn tại trong version này")  # V-003
+    # operator_count: "không truyền" (manual UI cũ) vẫn mặc định 0; null TƯỜNG MINH (VD import ERP chưa biết) phải giữ
+    # nguyên None, không coerce về 0 — 0 có nghĩa nghiệp vụ khác "không biết" (Task 2, Issue #5 review vòng 2 mục 3).
+    operator_count = 0 if "operator_count" not in d else (None if d["operator_count"] is None else int(d["operator_count"]))
     op = TechnologyProcessOperation(
         process_version_id=v.id, sequence_no=seq, operation_code=d.get("operation_code") or "", operation_name=d.get("operation_name") or "",
-        machine_type_code=d.get("machine_type_code") or None, machine_model_id=d.get("machine_model_id") or None, operator_count=int(d.get("operator_count") or 0),
+        machine_type_code=d.get("machine_type_code") or None, machine_model_id=d.get("machine_model_id") or None, operator_count=operator_count,
         helper_count=d.get("helper_count"), sam_minutes=d.get("sam_minutes"), cycle_time_seconds=d.get("cycle_time_seconds"), expected_output_per_day=d.get("expected_output_per_day"),
         automation_level=d.get("automation_level") or "", setup_changeover_minutes=d.get("setup_changeover_minutes"), expected_defect_rate=d.get("expected_defect_rate"),
         source_type=d.get("source_type") or "MANUAL", evidence_note=d.get("evidence_note") or "", evidence_ref=d.get("evidence_ref"), source_date=d.get("source_date"),
@@ -343,7 +346,8 @@ def add_operation(db: Session, user: User, version_id: int, d: dict) -> Technolo
 
 # Cột NOT NULL trên TechnologyProcessOperation — null tường minh trên các trường này không có nghĩa nghiệp vụ hợp lệ
 # (khác với các cột nullable như sam_minutes/machine_type_code, nơi null nghĩa là "chưa có/xóa giá trị" hợp lệ). GPT review #4 mục 5.
-_OPERATION_NOT_NULLABLE = ("sequence_no", "operation_code", "operation_name", "operator_count", "automation_level", "source_type", "evidence_note")
+_OPERATION_NOT_NULLABLE = ("sequence_no", "operation_code", "operation_name", "automation_level", "source_type", "evidence_note")
+# operator_count bỏ khỏi danh sách trên (Task 2, Issue #5 review vòng 2 mục 3): null tường minh giờ hợp lệ = "không biết".
 
 
 def update_operation(db: Session, user: User, operation_id: int, d: dict) -> TechnologyProcessOperation:

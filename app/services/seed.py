@@ -73,6 +73,7 @@ def _upgrade_schema() -> None:
             "ALTER TABLE machine_capacities ADD COLUMN IF NOT EXISTS down_quantity INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE actual_mappings ADD COLUMN IF NOT EXISTS mapped_so_id INTEGER",
             "ALTER TABLE actual_mappings ALTER COLUMN method TYPE VARCHAR(24)",
+            "ALTER TABLE technology_process_operations ALTER COLUMN operator_count DROP NOT NULL",  # Task 2: 0 != "không biết" (ERP import)
         ):
             try:
                 conn.execute(text(ddl))
@@ -139,4 +140,7 @@ def run_seed() -> None:
         from app.services import so_service
 
         so_service.bulk_issue_current(db, "system")  # cấp SO TẠM cho dữ liệu hiện có chưa có SO (UAT); chạy lại an toàn
+        from app.services import erp_qtcn_sync
+
+        erp_qtcn_sync.seed_machine_crosswalk(db)  # 6 crosswalk EXACT đã duyệt (Issue #5 review vòng 2 mục 4), chỉ khi chưa có
         recover_stale_runs(db)

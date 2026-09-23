@@ -373,12 +373,13 @@ def test_compare_rejects_versions_from_different_process(db):
 def test_update_operation_rejects_explicit_null_on_required_fields_allows_on_nullable(db):
     _, v = _process_with_ops(db)
     op = v.operations[0]
-    for bad in ({"operation_name": None}, {"sequence_no": None}, {"operator_count": None}, {"source_type": None}, {"automation_level": None}, {"evidence_note": None}):
+    for bad in ({"operation_name": None}, {"sequence_no": None}, {"source_type": None}, {"automation_level": None}, {"evidence_note": None}):
         with pytest.raises(HTTPException) as e:
             svc.update_operation(db, ADMIN, op.id, bad)
         assert e.value.status_code == 422
-    ok = svc.update_operation(db, ADMIN, op.id, {"sam_minutes": None, "machine_type_code": None, "evidence_ref": None})  # nullable — hợp lệ, nghĩa là "xóa giá trị"
-    assert ok.sam_minutes is None and ok.machine_type_code is None
+    # operator_count nullable từ Task 2 (Issue #5 review vòng 2 mục 3) — 0 khác "không biết", null hợp lệ
+    ok = svc.update_operation(db, ADMIN, op.id, {"sam_minutes": None, "machine_type_code": None, "evidence_ref": None, "operator_count": None})
+    assert ok.sam_minutes is None and ok.machine_type_code is None and ok.operator_count is None
 
 
 def test_save_machine_model_rejects_null_type_and_status_but_coerces_text_fields(db):
@@ -471,3 +472,12 @@ def test_create_draft_version_gives_up_after_max_retries_as_409_not_500(db, monk
         svc.create_draft_version(db, ADMIN, p.id, {"layer": "CURRENT_PROCESS"})
     assert e.value.status_code == 409  # hết lượt retry -> business error, không phải 500
     assert db.query(TechnologyProcessVersion).filter_by(technology_process_id=p.id).count() == 0
+
+
+# ------------------------------------------------------------------ Task 2 (Issue #5 review vòng 2 mục 3) — operator_count nullable
+def test_add_operation_operator_count_absent_defaults_0_explicit_null_stays_unknown(db):
+    _, v = _process_with_ops(db, sams=())
+    op_absent = svc.add_operation(db, ADMIN, v.id, {"operation_name": "OP-manual-ui", "sam_minutes": 1.0})
+    assert op_absent.operator_count == 0  # hành vi cũ (manual UI Task 1) không đổi khi không truyền field
+    op_unknown = svc.add_operation(db, ADMIN, v.id, {"operation_name": "OP-erp-import", "operator_count": None})
+    assert op_unknown.operator_count is None  # ERP import: 0 khác "không biết"

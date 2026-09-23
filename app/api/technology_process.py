@@ -132,7 +132,7 @@ class OperationBody(BaseModel):
     operation_name: str = Field(..., max_length=200)
     machine_type_code: str | None = Field(None, max_length=20)
     machine_model_id: int | None = None
-    operator_count: int = Field(0, ge=0)
+    operator_count: int | None = Field(0, ge=0)  # null hợp lệ = "không biết" (Task 2, Issue #5 review vòng 2 mục 3)
     helper_count: int | None = Field(None, ge=0)
     sam_minutes: float | None = Field(None, gt=0)
     cycle_time_seconds: float | None = Field(None, ge=0)

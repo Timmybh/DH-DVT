@@ -515,7 +515,7 @@ export default function Resources() {
       {current.key === "machines" && <MachinesTab canManage={can("resource.manage")} />}
       {current.key === "labor" && <LaborTab canManage={can("resource.manage")} />}
       {current.key === "sam" && <SamPanel canManage={can("resource.manage")} />}
-      {current.key === "tech-process" && <TechnologyProcessPanel perm={{ manage: can("technology_process.manage"), review: can("technology_process.review"), approve: can("technology_process.approve") }} />}
+      {current.key === "tech-process" && <TechnologyProcessPanel perm={{ manage: can("technology_process.manage"), review: can("technology_process.review"), approve: can("technology_process.approve"), syncView: can("sync.view"), syncRun: can("sync.run") }} />}
       {current.key === "release" && <ReleaseTab />}
     </div>
   );
