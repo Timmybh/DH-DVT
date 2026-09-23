@@ -24,8 +24,9 @@ from app.models.dashboard_cfg import (
     DashboardLayoutItem,
     DashboardRuleRegistry,
 )
-from app.models.resources import CapacityDefinition, LaborDaily, MachineCapacity, MachineRequirement, MachineType
+from app.models.resources import CapacityDefinition, LaborDaily, MachineCapacity, MachineModel, MachineRequirement, MachineType
 from app.models.planning import CalendarDayType, FormulaDefinition, PlanColumn, PlanningEditSession, PlanningVersion, PlanningVersionRow, WorkingCalendarRule
+from app.models.technology_process import TechnologyProcess, TechnologyProcessOperation, TechnologyProcessVersion
 
 __all__ = [
     "PlanningSO",
@@ -64,6 +65,7 @@ __all__ = [
     "CapacityDefinition",
     "LaborDaily",
     "MachineCapacity",
+    "MachineModel",
     "MachineRequirement",
     "MachineType",
     "FormulaDefinition",
@@ -72,4 +74,7 @@ __all__ = [
     "PlanningVersion",
     "PlanningVersionRow",
     "WorkingCalendarRule",
+    "TechnologyProcess",
+    "TechnologyProcessOperation",
+    "TechnologyProcessVersion",
 ]

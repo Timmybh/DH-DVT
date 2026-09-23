@@ -6,12 +6,14 @@ import { dateVi, num } from "../../lib/format";
 import { isoWeek, weekRange } from "../../lib/weeks";
 import SamPanel from "./SamPanel";
 import { GradesPanel, LaborStandardsPanel, MachineSharingMaintenancePanel, MachineTypesPanel } from "./ResourceMaster";
+import TechnologyProcessPanel from "./TechnologyProcessPanel";
 
 const SECTIONS = [
   { key: "capacity", label: "Năng suất (Capacity)" },
   { key: "machines", label: "Máy móc" },
   { key: "labor", label: "Lao động" },
   { key: "sam", label: "SAM mã hàng" },
+  { key: "tech-process", label: "Quy trình công nghệ" },
   { key: "release", label: "Lịch nguồn lực rảnh" },
 ];
 const SHOW_STYLE_REQUIREMENTS = false;
@@ -513,6 +515,7 @@ export default function Resources() {
       {current.key === "machines" && <MachinesTab canManage={can("resource.manage")} />}
       {current.key === "labor" && <LaborTab canManage={can("resource.manage")} />}
       {current.key === "sam" && <SamPanel canManage={can("resource.manage")} />}
+      {current.key === "tech-process" && <TechnologyProcessPanel perm={{ manage: can("technology_process.manage"), review: can("technology_process.review"), approve: can("technology_process.approve") }} />}
       {current.key === "release" && <ReleaseTab />}
     </div>
   );

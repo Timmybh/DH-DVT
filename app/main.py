@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import actual, admin, auth, calendar_rules, snapshots, so, dashboard, dashboard_admin, formulas, lifecycle, monitoring, planning, resources, sync, theme
+from app.api import actual, admin, auth, calendar_rules, snapshots, so, dashboard, dashboard_admin, formulas, lifecycle, monitoring, planning, resources, sync, technology_process, theme
 from app.core.config import ROOT_DIR, settings
 from app.services.scheduler import start_scheduler, stop_scheduler
 from app.services.seed import run_seed
@@ -50,7 +50,7 @@ async def security_headers(request, call_next):
 
 
 api = APIRouter(prefix="/api")
-for module in (auth, admin, sync, dashboard, dashboard_admin, planning, formulas, resources, actual, lifecycle, monitoring, theme, calendar_rules, snapshots, so):
+for module in (auth, admin, sync, dashboard, dashboard_admin, planning, formulas, resources, actual, lifecycle, monitoring, theme, calendar_rules, snapshots, so, technology_process):
     api.include_router(module.router)
 
 

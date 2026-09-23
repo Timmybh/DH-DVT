@@ -248,6 +248,30 @@ class MachineSharedPool(Base):
     status_reason: Mapped[str] = mapped_column(String(200), default="")
 
 
+class MachineModel(Base):
+    """Model/candidate máy cụ thể thuộc một MachineType — master/resource độc lập (Technology Process §10): nhiều Operation của nhiều Style/Process có thể cùng tham chiếu một MachineModel.
+    KHÔNG thuộc sở hữu của một Technology Process nào; không tạo trùng danh mục loại máy (machine_type_code trỏ về MachineType.code đã có). Không xóa — chỉ đổi status."""
+
+    __tablename__ = "machine_models"
+    __table_args__ = (Index("ix_machine_model_type", "machine_type_code", "status"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    machine_type_code: Mapped[str] = mapped_column(ForeignKey("machine_types.code"), index=True)
+    brand: Mapped[str] = mapped_column(String(100), default="")
+    model: Mapped[str] = mapped_column(String(100), default="")
+    automation_level: Mapped[str] = mapped_column(String(60), default="")
+    reference_output: Mapped[float | None] = mapped_column(Float, nullable=True)  # pcs/ngày tham khảo (nhà SX/ước lượng — không phải Capacity Definition đã duyệt)
+    reference_cycle_time: Mapped[float | None] = mapped_column(Float, nullable=True)  # giây/thao tác tham khảo
+    required_operator: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source: Mapped[str] = mapped_column(String(100), default="MANUAL")  # nguồn thông tin (nhập tay, brochure, trial...) — KHÔNG phải nguồn ERP đồng bộ
+    status: Mapped[str] = mapped_column(String(10), default="CANDIDATE")  # CANDIDATE | TRIAL | APPROVED | REJECTED — không tự động APPROVED
+    note: Mapped[str] = mapped_column(String(300), default="")
+    created_by: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_by: Mapped[str] = mapped_column(String(100), default="")
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class StyleSam(Base):
     """SAM (Standard Allowed Minute — phút chuẩn/sản phẩm) theo mã hàng. Giá trị ban đầu là ƯỚC LƯỢNG (không chuẩn) để có sẵn bảng; sẽ được huấn luyện/hiệu chỉnh sau."""
 
