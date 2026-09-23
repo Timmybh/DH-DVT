@@ -20,9 +20,9 @@ Manage = Depends(require_perm("technology_process.manage"))
 
 
 @router.get("/preview")
-def preview(db: Session = Depends(get_db), _: User = View):
+def preview(db: Session = Depends(get_db), user: User = View):
     try:
-        return svc.preview(db)
+        return svc.preview(db, user)
     except RuntimeError as exc:
         raise HTTPException(400, str(exc)) from None
 

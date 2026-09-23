@@ -26,7 +26,9 @@ from datetime import date, datetime
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.db.session import utcnow
 from app.models.core import User
+from app.models.data import SyncRunItem
 from app.models.erp_sync import MachineCrosswalk, TechProcessSyncException
 from app.models.technology_process import TechnologyProcess, TechnologyProcessOperation, TechnologyProcessVersion
 from app.services import technology_process_service as tps
@@ -149,24 +151,40 @@ def group_masters_by_style_season(master_rows: list[dict]) -> dict[tuple[str, st
     return groups
 
 
-# ------------------------------------------------------------------ fingerprint (Issue #5 review vòng 2 mục 7)
-_OP_FP_FIELDS = ("STT", "IdCongDoan", "TenCongDoan", "IdThietBi", "TenThietBi", "ThoiGianThucTe", "ThoiGianThietKe", "ThoiGianThietKeHeSo", "HeSo")
-
-
+# ------------------------------------------------------------------ fingerprint (Issue #5 review vòng 2 mục 7; sửa theo PR #6 review mục 1)
 def _canon_val(v):
     if isinstance(v, (date, datetime)):
         return v.isoformat()
     return v
 
 
-def compute_fingerprint(style_cc: str, mua: str, master: dict, phienban: int, ops_at_phienban: list[dict]) -> str:
+def compute_fingerprint(style_cc: str, mua: str, master: dict, phienban: int, ops_at_phienban: list[dict], congdoan_catalog: dict[int, str], thietbi_catalog: dict[int, str]) -> str:
+    """Fingerprint CHỈ dùng business/catalog value đã canonical — KHÔNG dùng internal ERP ID (Master.Id, Detail.Id,
+    IdCongDoan, IdThietBi) làm durable content (BR-201, PR #6 review mục 1: ID có thể đổi khi ERP migrate/rebuild dù
+    nghiệp vụ không đổi). Internal ID vẫn lưu ở evidence/source_ref, không tham gia fingerprint. Gồm cả Master
+    SAM/SOT/Labor evidence — đổi các giá trị này dù operation không đổi vẫn phải tạo version mới."""
     ops_sorted = sorted(ops_at_phienban, key=lambda r: (r["STT"] or 0))
-    ops_canon = [{k: _canon_val(o.get(k)) for k in _OP_FP_FIELDS} for o in ops_sorted]
+    ops_canon = [
+        {
+            "stt": o["STT"],
+            "ma_cong_doan": congdoan_catalog.get(o["IdCongDoan"], ""),
+            "ten_cong_doan": (o["TenCongDoan"] or "").strip(),
+            "ma_thiet_bi": thietbi_catalog.get(o["IdThietBi"], ""),
+            "ten_thiet_bi": (o["TenThietBi"] or "").strip(),
+            "thoi_gian_thuc_te": _canon_val(o["ThoiGianThucTe"]),
+            "thoi_gian_thiet_ke": _canon_val(o["ThoiGianThietKe"]),
+            "thoi_gian_thiet_ke_he_so": _canon_val(o["ThoiGianThietKeHeSo"]),
+            "he_so": _canon_val(o["HeSo"]),
+        }
+        for o in ops_sorted
+    ]
     payload = {
         "style_cc": style_cc,
         "mua": mua,
-        "master_id": master["Id"],
         "master_ten_chung_loai": master.get("TenChungLoai") or "",
+        "master_sam": _canon_val(master.get("SAM")),
+        "master_sot": _canon_val(master.get("TongThoiGian")),
+        "master_labor": _canon_val(master.get("SoLaoDong")),
         "phienban": phienban,
         "operations": ops_canon,
     }
@@ -215,7 +233,7 @@ def classify_master(db: Session, style_group: list[dict], detail_by_idqtcn: dict
         return {"status": "EXCEPTION", "category": seq_cat, "master": m, "phienban": phienban}
 
     mua = (m["Mua"] or "").strip()
-    fp = compute_fingerprint(style_cc, mua, m, phienban, ops_at_pb)
+    fp = compute_fingerprint(style_cc, mua, m, phienban, ops_at_pb, congdoan_catalog, thietbi_catalog)
 
     exceptions_soft: list[dict] = []
     for op in ops_at_pb:
@@ -246,6 +264,22 @@ def _process_has_current_versions(db: Session, style_cc: str) -> bool:
     )
 
 
+def _detect_orphan_detail(source: dict) -> list[dict]:
+    """Detail có IdQTCN != -1 nhưng không khớp Master nào -> INVALID_SOURCE_RELATION thật (PR #6 review mục 3).
+    Khác IdQTCN=-1 (sentinel thư viện dùng chung, đã lọc ở read_source/out_of_scope_source_row_count)."""
+    master_ids = {m["Id"] for m in source["master"]}
+    items = []
+    for idqtcn, rows in source["detail_by_idqtcn"].items():
+        if idqtcn not in master_ids:
+            items.append({
+                "status": "EXCEPTION", "category": "INVALID_SOURCE_RELATION",
+                "master": {"Id": idqtcn, "MaHang": f"(orphan IdQTCN={idqtcn})", "Mua": ""},
+                "reason": f"IdQTCN={idqtcn} không khớp Master nào ({len(rows)} dòng Detail) — không phải sentinel -1",
+                "is_orphan": True,
+            })
+    return items
+
+
 # ------------------------------------------------------------------ pipeline chung: trả danh sách item đã phân loại + exception AMBIGUOUS_PROCESS
 def classify_all(db: Session, source: dict) -> list[dict]:
     crosswalk = _crosswalk_map(db)
@@ -261,11 +295,12 @@ def classify_all(db: Session, source: dict) -> list[dict]:
                 items.append({"status": "EXCEPTION", "category": "AMBIGUOUS_PROCESS", "master": m, "reason": f"{len(masters)} Master cùng Style={style_cc} Mua='{mua}', không có bằng chứng cái nào thay thế cái nào"})
             continue
         items.append(classify_master(db, masters, source["detail_by_idqtcn"], source["congdoan_catalog"], source["thietbi_catalog"], crosswalk))
+    items.extend(_detect_orphan_detail(source))
     return items
 
 
 # ------------------------------------------------------------------ Preview (KHÔNG ghi gì)
-def preview(db: Session) -> dict:
+def preview(db: Session, user: User) -> dict:
     if not sqlserver_configured():
         raise RuntimeError("Chưa cấu hình kết nối SQL Server (biến SQLSERVER_* trong .env)")
     with get_engine().connect() as conn:
@@ -281,6 +316,7 @@ def preview(db: Session) -> dict:
             exception_by_category[it["category"]] = exception_by_category.get(it["category"], 0) + 1
         for se in it.get("exceptions_soft", []):
             soft_by_category[se["category"]] = soft_by_category.get(se["category"], 0) + 1
+    write_audit("TECH_PROCESS_ERP_SYNC_PREVIEW", user=user, object_type="ERP_QTCN", object_id="preview", detail=f"counts={counts} exceptions={sum(exception_by_category.values())}")
     return {
         "source_row_count": len(source["master"]),
         "out_of_scope_source_row_count": source["out_of_scope_source_row_count"],
@@ -294,26 +330,42 @@ def preview(db: Session) -> dict:
     }
 
 
+def _get_or_build_process(db: Session, user: User, style_cc: str) -> TechnologyProcess:
+    """Giống `tps.get_or_create_process()` nhưng KHÔNG commit khi tạo mới (PR #6 review mục 2): tps.create_process()
+    commit ngay, nên nếu lỗi xảy ra sau đó (trước khi Version/Operation commit) sẽ để lại TechnologyProcess rỗng/dở
+    dang, trái BR-216. Ở đây chỉ add+flush (lấy id) — commit cùng một lần với Version+Operation ở _apply_one()."""
+    p = db.query(TechnologyProcess).filter(TechnologyProcess.style_cc == style_cc, TechnologyProcess.model_code == "").first()
+    if p is not None:
+        return p
+    p = TechnologyProcess(process_code=tps._unique_process_code(db, style_cc, ""), style_cc=style_cc, model_code="", product_family=None, description="", created_by=user.username)
+    db.add(p)
+    db.flush()
+    return p
+
+
 # ------------------------------------------------------------------ Apply (ghi thật, atomic theo từng style — BR-216/217)
-def _apply_one(db: Session, user: User, run_id: int, item: dict, congdoan_catalog: dict[int, str], thietbi_catalog: dict[int, str]) -> str:
-    """Trả 'created' | 'no_change'. Ghi commit riêng cho style này; lỗi -> rollback riêng, không ảnh hưởng style khác."""
+def _apply_one(db: Session, user: User, run_id: int, item: dict, congdoan_catalog: dict[int, str], thietbi_catalog: dict[int, str], snapshot_at: datetime) -> tuple[int, int]:
+    """Trả (version_id, process_id). CHỈ gọi khi item không phải NO_CHANGE/EXCEPTION (caller — apply() — đã lọc).
+    Toàn bộ Process(nếu mới)+Version+Operation chỉ commit MỘT LẦN ở cuối — lỗi bất kỳ trước đó (kể cả process vừa
+    tạo) sẽ được caller rollback() sạch, không để lại process rỗng (BR-216, PR #6 mục 2)."""
     m = item["master"]
     style_cc = tps._canon_key(m["MaHang"])
-    if item["status"] == "NO_CHANGE":
-        return "no_change"
 
-    p = tps.get_or_create_process(db, user, style_cc, "")
+    p = _get_or_build_process(db, user, style_cc)
     ops_at_pb = item["ops"]
     crosswalk = _crosswalk_map(db)
 
     v = TechnologyProcessVersion(
         technology_process_id=p.id, layer="CURRENT_PROCESS", version_no=tps._next_version_no(db, p.id, "CURRENT_PROCESS"), status="DRAFT",
-        source_type="ERP", source_ref=f"QTCN#{m['Id']} PB{item['phienban']}", source_date=None,
+        source_type="ERP", source_ref=f"QTCN#{m['Id']} PB{item['phienban']}", source_date=snapshot_at.date(),
         note=f"Nhập tự động từ ERP QTCN (Style {style_cc}, Mùa {item['mua'] or '-'})",
         bootstrap_fingerprint=item["fingerprint"], created_by=user.username,
         assumptions_json={
             "source_system": SOURCE, "source_business_key": {"style_cc": style_cc, "mua": item["mua"]},
             "source_master_id": m["Id"], "source_phienban": item["phienban"], "sync_run_id": run_id,
+            # BR-203 — ERP không có cột "sửa lần cuối" đáng tin ở Detail (chỉ có NgayBanHanh/NgayMoKhoa rải rác, không
+            # phủ hết mọi thay đổi) nên dùng thời điểm đọc/sync làm source_snapshot_at (PR #6 review mục 6).
+            "source_snapshot_at": snapshot_at.isoformat(),
             "erp_master_sam": float(m["SAM"]) if m["SAM"] is not None else None,
             "erp_master_sot": float(m["TongThoiGian"]) if m["TongThoiGian"] is not None else None,
             "erp_master_line_labor": float(m["SoLaoDong"]) if m["SoLaoDong"] is not None else None,
@@ -341,51 +393,62 @@ def _apply_one(db: Session, user: User, run_id: int, item: dict, congdoan_catalo
     v.total_sam_minutes, v.sam_status = None, "INCOMPLETE"
     db.commit()
     write_audit("TECH_PROCESS_ERP_SYNC_VERSION_CREATE", user=user, object_type="TechnologyProcessVersion", object_id=str(v.id), detail=f"{p.process_code} CURRENT_PROCESS from ERP QTCN#{m['Id']}")
-    return "created"
+    return v.id, p.id
+
+
+def _run_item(run_id: int, kind: str, source_key: str, message: str, payload: dict) -> SyncRunItem:
+    return SyncRunItem(run_id=run_id, kind=kind, source_object="QTCN_QuyTrinhCongNghe_Master", source_key=source_key[:200], message=message[:2000], payload=payload)
 
 
 def apply(db: Session, user: User, trigger: str = "MANUAL") -> dict:
+    """PR #6 review mục 5: mỗi item (kể cả NO_CHANGE) phải để lại `SyncRunItem` truy vết được source business key ->
+    outcome -> process/version id (BR-214). Mục 6: audit hành động Preview/Apply (không audit từng source row)."""
     if not sqlserver_configured():
         raise RuntimeError("Chưa cấu hình kết nối SQL Server (biến SQLSERVER_* trong .env)")
     run = start_run(db, SOURCE, trigger, user.username)
     t0 = time.perf_counter()
     try:
+        snapshot_at = utcnow()
         with get_engine().connect() as conn:
             source = read_source(conn)
         items = classify_all(db, source)
 
         created = no_change = failed = exception_count = 0
         for it in items:
+            m = it["master"]
+            style_cc = tps._canon_key(m.get("MaHang") or "")
+            source_key = f"MaHang={m.get('MaHang')} Mua={m.get('Mua')} Id={m.get('Id')}"
+
             if it["status"] == "EXCEPTION":
                 exception_count += 1
-                m = it["master"]
-                db.add(
-                    TechProcessSyncException(
-                        sync_run_id=run.id, category=it["category"], source_key=f"MaHang={m.get('MaHang')} Id={m.get('Id')}",
-                        source_snapshot={"MaHang": m.get("MaHang"), "Mua": m.get("Mua"), "Id": m.get("Id")}, reason=it.get("reason", it["category"]),
-                    )
-                )
+                db.add(TechProcessSyncException(sync_run_id=run.id, category=it["category"], source_key=source_key, source_snapshot={"MaHang": m.get("MaHang"), "Mua": m.get("Mua"), "Id": m.get("Id")}, reason=it.get("reason", it["category"])))
+                db.add(_run_item(run.id, "EXCEPTION", source_key, f"{it['category']}: {it.get('reason', '')}", {"category": it["category"]}))
                 db.commit()
                 continue
+
+            if it["status"] == "NO_CHANGE":
+                no_change += 1
+                db.add(_run_item(run.id, "NO_CHANGE", source_key, "Không đổi — fingerprint trùng version đã có", {"style_cc": style_cc, "existing_version_id": it.get("existing_version_id")}))
+                db.commit()
+                continue
+
             try:
-                outcome = _apply_one(db, user, run.id, it, source["congdoan_catalog"], source["thietbi_catalog"])
-                created += outcome == "created"
-                no_change += outcome == "no_change"
+                v_id, p_id = _apply_one(db, user, run.id, it, source["congdoan_catalog"], source["thietbi_catalog"], snapshot_at)
+                created += 1
+                db.add(_run_item(run.id, it["status"], source_key, f"Tạo Current Process Version mới ({it['status']})", {"style_cc": style_cc, "process_id": p_id, "version_id": v_id}))
+                db.commit()
             except Exception as exc:  # noqa: BLE001 — cô lập lỗi 1 style, không hỏng cả run (BR-217)
                 db.rollback()
                 failed += 1
-                log.exception("Lỗi import ERP QTCN cho MaHang=%s", it["master"].get("MaHang"))
-                db.add(
-                    TechProcessSyncException(
-                        sync_run_id=run.id, category="OTHER", source_key=f"MaHang={it['master'].get('MaHang')} Id={it['master'].get('Id')}",
-                        source_snapshot={"MaHang": it["master"].get("MaHang")}, reason=f"{type(exc).__name__}: {str(exc)[:300]}",
-                    )
-                )
+                log.exception("Lỗi import ERP QTCN cho MaHang=%s", m.get("MaHang"))
+                db.add(TechProcessSyncException(sync_run_id=run.id, category="OTHER", source_key=source_key, source_snapshot={"MaHang": m.get("MaHang")}, reason=f"{type(exc).__name__}: {str(exc)[:300]}"))
+                db.add(_run_item(run.id, "FAILED", source_key, f"{type(exc).__name__}: {str(exc)[:300]}", {"style_cc": style_cc}))
                 db.commit()
+
             for se in it.get("exceptions_soft", []):
                 exception_count += 1
                 db.add(TechProcessSyncException(sync_run_id=run.id, category=se["category"], source_key=se["source_key"], source_snapshot={}, reason=se["reason"]))
-        db.commit()
+            db.commit()
 
         run.total_records = len(source["master"])
         run.matched = created + no_change
@@ -393,12 +456,15 @@ def apply(db: Session, user: User, trigger: str = "MANUAL") -> dict:
         run.ambiguous = sum(1 for it in items if it.get("category") == "AMBIGUOUS_PROCESS")
         run.updated_rows = created
         run.summary = {
-            "process_count": len({tps._canon_key(it["master"]["MaHang"]) for it in items}),
+            "process_count": len({tps._canon_key(it["master"]["MaHang"]) for it in items if not it.get("is_orphan")}),
             "version_created_count": created, "no_change_count": no_change, "failed_count": failed,
             "exception_count": exception_count, "out_of_scope_source_row_count": source["out_of_scope_source_row_count"],
+            "source_snapshot_at": snapshot_at.isoformat(),
         }
         status = "SUCCEEDED" if failed == 0 and exception_count == 0 else "PARTIAL"
-        return {"run": finish_run(db, run, t0, status=status), "created": created, "no_change": no_change, "failed": failed, "exception_count": exception_count}
+        result_run = finish_run(db, run, t0, status=status)
+        write_audit("TECH_PROCESS_ERP_SYNC_APPLY", user=user, object_type="SyncRun", object_id=result_run.run_code, detail=f"created={created} no_change={no_change} failed={failed} exception={exception_count}")
+        return {"run": result_run, "created": created, "no_change": no_change, "failed": failed, "exception_count": exception_count}
     except Exception as exc:  # noqa: BLE001
         fail_run(db, run.id, t0, exc)
         raise

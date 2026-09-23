@@ -20,7 +20,7 @@ interface VersionRow {
 }
 interface Operation {
   id: number; process_version_id: number; sequence_no: number; operation_code: string; operation_name: string; machine_type_code: string | null; machine_model_id: number | null;
-  operator_count: number; helper_count: number | null; sam_minutes: number | null; cycle_time_seconds: number | null; expected_output_per_day: number | null; automation_level: string;
+  operator_count: number | null; helper_count: number | null; sam_minutes: number | null; cycle_time_seconds: number | null; expected_output_per_day: number | null; automation_level: string;
   setup_changeover_minutes: number | null; expected_defect_rate: number | null; source_type: string; evidence_note: string; evidence_ref: string | null; source_date: string | null;
   is_active: boolean; created_by: string; updated_by: string;
 }
@@ -319,7 +319,9 @@ function DetailModal({ versionId, perm, opts, machineTypes, onClose, onChanged, 
   };
   const saveOp = async () => {
     if (!editOp) return;
-    const body = { ...editOp, sequence_no: editOp.sequence_no ? Number(editOp.sequence_no) : undefined, operator_count: Number(editOp.operator_count ?? 0),
+    // operator_count: giữ nguyên null nếu đang null ("Chưa xác định" — VD operation nhập từ ERP) thay vì ép về 0,
+    // 0 và "chưa biết" có nghĩa nghiệp vụ khác nhau (Task 2, Issue #5 PR #6 review mục 4).
+    const body = { ...editOp, sequence_no: editOp.sequence_no ? Number(editOp.sequence_no) : undefined, operator_count: editOp.operator_count === null || editOp.operator_count === undefined ? null : Number(editOp.operator_count),
       helper_count: editOp.helper_count ?? undefined, sam_minutes: editOp.sam_minutes ?? undefined, machine_type_code: editOp.machine_type_code || undefined, machine_model_id: editOp.machine_model_id || undefined };
     const ok = await (async () => {
       try {
@@ -371,7 +373,7 @@ function DetailModal({ versionId, perm, opts, machineTypes, onClose, onChanged, 
             <tr key={o.id} className="border-t border-slate-100">
               <td className="py-1">{o.sequence_no}</td><td>{o.operation_name}</td>
               <td className="text-xs">{o.machine_type_code ?? "—"}{o.machine_model_id ? ` · ${machineModels.find((m) => m.id === o.machine_model_id)?.model ?? "#" + o.machine_model_id}` : ""}</td>
-              <td className="text-right">{o.operator_count}</td><td className="text-right">{o.helper_count ?? "—"}</td>
+              <td className="text-right">{o.operator_count ?? <span className="text-slate-400" title="Chưa xác định">—</span>}</td><td className="text-right">{o.helper_count ?? "—"}</td>
               <td className="text-right">{o.sam_minutes ?? <span className="text-amber-600">thiếu</span>}</td>
               <td className="max-w-[200px] truncate text-xs text-slate-400" title={o.evidence_note}>{o.source_type}{o.evidence_note ? ` · ${o.evidence_note}` : ""}</td>
               {perm.manage && v.editable && <td className="whitespace-nowrap text-right text-xs"><button onClick={() => setEditOp(o)} className="text-brand hover:underline">Sửa</button><button onClick={() => removeOp(o)} className="ml-2 text-red-500 hover:underline">Gỡ</button></td>}
@@ -388,7 +390,7 @@ function DetailModal({ versionId, perm, opts, machineTypes, onClose, onChanged, 
             <F label="Tên công đoạn"><input className={inp} value={editOp.operation_name ?? ""} onChange={(e) => setEditOp({ ...editOp, operation_name: e.target.value })} /></F>
             <F label="Loại máy"><select className={inp} value={editOp.machine_type_code ?? ""} onChange={(e) => setEditOp({ ...editOp, machine_type_code: e.target.value || null, machine_model_id: null })}><option value="">—</option>{machineTypes.map((t) => <option key={t.code} value={t.code}>{t.code} · {t.name}</option>)}</select></F>
             <F label="Model/Candidate"><select className={inp} value={editOp.machine_model_id ?? ""} onChange={(e) => setEditOp({ ...editOp, machine_model_id: e.target.value ? Number(e.target.value) : null })}><option value="">—</option>{modelsFor(editOp.machine_type_code).map((m) => <option key={m.id} value={m.id}>{m.brand} {m.model} ({m.status})</option>)}</select></F>
-            <F label="Operator"><input type="number" className={inp} value={editOp.operator_count ?? 0} onChange={(e) => setEditOp({ ...editOp, operator_count: Number(e.target.value) })} /></F>
+            <F label="Operator (để trống = chưa xác định)"><input type="number" className={inp} value={editOp.operator_count ?? ""} onChange={(e) => setEditOp({ ...editOp, operator_count: e.target.value === "" ? null : Number(e.target.value) })} /></F>
             <F label="Helper"><input type="number" className={inp} value={editOp.helper_count ?? ""} onChange={(e) => setEditOp({ ...editOp, helper_count: e.target.value === "" ? null : Number(e.target.value) })} /></F>
             <F label="SAM (phút)"><input type="number" step="0.01" className={inp} value={editOp.sam_minutes ?? ""} onChange={(e) => setEditOp({ ...editOp, sam_minutes: e.target.value === "" ? null : Number(e.target.value) })} /></F>
             <F label="Cycle time (giây)"><input type="number" step="0.1" className={inp} value={editOp.cycle_time_seconds ?? ""} onChange={(e) => setEditOp({ ...editOp, cycle_time_seconds: e.target.value === "" ? null : Number(e.target.value) })} /></F>
