@@ -400,13 +400,14 @@ def test_update_version_coerces_null_note_and_assumptions_keeps_nullable_fields_
 
 
 # ------------------------------------------------------------------ mục 6 — process_code collision-safe, duplicate không 500
-def test_process_code_disambiguated_on_case_collision_and_stays_deterministic(db):
-    p1 = svc.create_process(db, ADMIN, {"style_cc": "ab", "model_code": ""})
-    p2 = svc.create_process(db, ADMIN, {"style_cc": "AB", "model_code": ""})  # (style_cc, model_code) khác nhau -> qua được check trùng, nhưng cùng process_code sau upper-case
-    assert p1.process_code == "TP-AB"
-    assert p2.process_code != p1.process_code and p2.process_code.startswith("TP-AB-")
-    # deterministic: xóa p2 và tạo lại với cùng style_cc="AB" phải ra CÙNG process_code (không random/không theo thời gian)
-    code_again = svc._unique_process_code(db, "AB", "")
+def test_process_code_disambiguated_on_genuine_collision_and_stays_deterministic(db):
+    # 2 business identity THẬT SỰ khác nhau (style_cc khác nhau) nhưng vô tình sinh cùng process_code base sau ghép chuỗi
+    p1 = svc.create_process(db, ADMIN, {"style_cc": "AAA", "model_code": "BBB"})
+    p2 = svc.create_process(db, ADMIN, {"style_cc": "AAA-BBB", "model_code": ""})
+    assert p1.process_code == "TP-AAA-BBB"
+    assert p2.process_code != p1.process_code and p2.process_code.startswith("TP-AAA-BBB-")
+    # deterministic: gọi lại _unique_process_code với cùng cặp key phải ra CÙNG process_code (không random/không theo thời gian)
+    code_again = svc._unique_process_code(db, "AAA-BBB", "")
     assert code_again == p2.process_code
 
 
@@ -415,3 +416,58 @@ def test_create_process_duplicate_style_model_is_409_not_500(db):
     with pytest.raises(HTTPException) as e:
         svc.create_process(db, ADMIN, {"style_cc": "DUP1", "model_code": "M1"})
     assert e.value.status_code == 409
+
+
+# ------------------------------------------------------------------ GPT review vòng 2 mục 1 — business key canonical (trim+upper), không tạo 2 family cho cùng mã
+def test_create_process_case_insensitive_duplicate_is_409_not_second_process(db):
+    p1 = svc.create_process(db, ADMIN, {"style_cc": "A100", "model_code": "M1"})
+    with pytest.raises(HTTPException) as e:
+        svc.create_process(db, ADMIN, {"style_cc": "a100", "model_code": "m1"})  # cùng identity sau canonicalize -> 409, KHÔNG tạo process thứ 2
+    assert e.value.status_code == 409
+    assert db.query(TechnologyProcess).filter(TechnologyProcess.style_cc == "A100", TechnologyProcess.model_code == "M1").count() == 1
+    assert p1.style_cc == "A100" and p1.model_code == "M1"  # đã canonical hóa (upper) ngay khi lưu
+
+
+def test_get_or_create_process_resolves_same_identity_case_insensitive(db):
+    p1 = svc.get_or_create_process(db, ADMIN, "  a100 ", " m1 ")
+    p2 = svc.get_or_create_process(db, ADMIN, "A100", "M1")
+    assert p1.id == p2.id  # không tạo process thứ 2 cho cùng một mã style/model chỉ khác hoa/thường/khoảng trắng
+
+
+def test_bootstrap_uses_same_canonical_business_key_as_create_process(db):
+    p = svc.create_process(db, ADMIN, {"style_cc": "H800", "model_code": "MX"})
+    r = svc.bootstrap_current_process(db, ADMIN, {"style_cc": "h800", "model_code": "mx", "source_ref": "manual", "operations": [{"operation_name": "x", "sam_minutes": 1}]})
+    assert r["process"]["id"] == p.id  # bootstrap phải resolve về CÙNG TechnologyProcess đã canonical, không tạo family song song
+    assert db.query(TechnologyProcess).filter(TechnologyProcess.style_cc == "H800", TechnologyProcess.model_code == "MX").count() == 1
+
+
+# ------------------------------------------------------------------ GPT review vòng 2 mục 2 — version_no race condition, không lộ 500
+def test_create_draft_version_retries_on_version_no_race_and_does_not_500(db, monkeypatch):
+    p = svc.create_process(db, ADMIN, {"style_cc": "RACE1", "model_code": ""})
+    real_commit = db.commit
+    calls = {"n": 0}
+
+    def flaky_commit():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise IntegrityError("stmt", {}, Exception("uq_tpv_process_layer_version"))  # mô phỏng request khác vừa chiếm version_no=1
+        return real_commit()
+
+    monkeypatch.setattr(db, "commit", flaky_commit)
+    v = svc.create_draft_version(db, ADMIN, p.id, {"layer": "CURRENT_PROCESS"})
+    assert v.version_no == 1  # sau rollback + tính lại, version_no vẫn hợp lệ (không phải 500, không bỏ trống version_no=1)
+    assert calls["n"] == 2  # đúng 1 lần retry
+    assert db.query(TechnologyProcessVersion).filter_by(technology_process_id=p.id).count() == 1  # không để lại row dở dang từ lần commit lỗi
+
+
+def test_create_draft_version_gives_up_after_max_retries_as_409_not_500(db, monkeypatch):
+    p = svc.create_process(db, ADMIN, {"style_cc": "RACE2", "model_code": ""})
+
+    def always_fails():
+        raise IntegrityError("stmt", {}, Exception("uq_tpv_process_layer_version"))
+
+    monkeypatch.setattr(db, "commit", always_fails)
+    with pytest.raises(HTTPException) as e:
+        svc.create_draft_version(db, ADMIN, p.id, {"layer": "CURRENT_PROCESS"})
+    assert e.value.status_code == 409  # hết lượt retry -> business error, không phải 500
+    assert db.query(TechnologyProcessVersion).filter_by(technology_process_id=p.id).count() == 0

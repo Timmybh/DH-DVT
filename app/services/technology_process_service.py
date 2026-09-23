@@ -93,6 +93,13 @@ def machine_model_view(m: MachineModel) -> dict:
 
 
 # ------------------------------------------------------------------ TechnologyProcess
+def _canon_key(v: str | None) -> str:
+    """Business identity canonicalization cho style_cc/model_code (GPT review vòng 2 mục 1): trim + uppercase,
+    để 'A100'/'a100' luôn resolve về CÙNG một TechnologyProcess thay vì tạo 2 family khác nhau. Áp dụng đồng nhất
+    ở create_process/get_or_create_process/bootstrap — không có đường nào khác tạo TechnologyProcess."""
+    return (v or "").strip().upper()
+
+
 def _process_code_base(style_cc: str, model_code: str) -> str:
     base = f"TP-{style_cc}" + (f"-{model_code}" if model_code else "")
     return base.strip().upper()
@@ -110,8 +117,8 @@ def _unique_process_code(db: Session, style_cc: str, model_code: str) -> str:
 
 
 def create_process(db: Session, user: User, d: dict) -> TechnologyProcess:
-    style_cc = (d.get("style_cc") or "").strip()
-    model_code = (d.get("model_code") or "").strip()
+    style_cc = _canon_key(d.get("style_cc"))
+    model_code = _canon_key(d.get("model_code"))
     if not style_cc:
         raise _bad("Cần Style/CC")
     if db.query(TechnologyProcess).filter(TechnologyProcess.style_cc == style_cc, TechnologyProcess.model_code == model_code).first():
@@ -137,7 +144,7 @@ def get_process(db: Session, process_id: int) -> TechnologyProcess:
 
 
 def get_or_create_process(db: Session, user: User, style_cc: str, model_code: str, product_family: str | None = None) -> TechnologyProcess:
-    style_cc, model_code = style_cc.strip(), (model_code or "").strip()
+    style_cc, model_code = _canon_key(style_cc), _canon_key(model_code)
     p = db.query(TechnologyProcess).filter(TechnologyProcess.style_cc == style_cc, TechnologyProcess.model_code == model_code).first()
     if p is not None:
         return p
@@ -192,21 +199,35 @@ def _validate_version_fields(d: dict) -> None:
         raise _bad("effective_to phải >= effective_from")  # V-006
 
 
+# Số lần thử lại khi 2 request đồng thời cùng tính ra một version_no (GPT review vòng 2 mục 2) — unique constraint
+# uq_tpv_process_layer_version là lưới an toàn cuối, nhưng người dùng không được thấy 500 vì tranh chấp version_no.
+_MAX_VERSION_NO_RETRIES = 5
+
+
 def create_draft_version(db: Session, user: User, process_id: int, d: dict) -> TechnologyProcessVersion:
     p = get_process(db, process_id)
     d = {**d, "layer": d.get("layer")}
     _validate_version_fields(d)
-    v = TechnologyProcessVersion(
-        technology_process_id=p.id, layer=d["layer"], version_no=_next_version_no(db, p.id, d["layer"]), status="DRAFT",
-        source_type=d.get("source_type") or "MANUAL", source_ref=d.get("source_ref") or None, source_date=d.get("source_date"),
-        derived_from_version_id=d.get("derived_from_version_id"), effective_from=d.get("effective_from"), effective_to=d.get("effective_to"),
-        expected_output_per_day=d.get("expected_output_per_day"), required_labor=d.get("required_labor"), assumptions_json=d.get("assumptions_json") or {},
-        note=d.get("note") or "", created_by=user.username,
-    )
-    db.add(v)
-    db.commit()
-    write_audit("TECH_PROCESS_VERSION_CREATE", user=user, object_type="TechnologyProcessVersion", object_id=str(v.id), detail=f"{p.process_code} {v.layer} v{v.version_no}")
-    return v
+    last_error: IntegrityError | None = None
+    for _attempt in range(_MAX_VERSION_NO_RETRIES):
+        v = TechnologyProcessVersion(
+            technology_process_id=p.id, layer=d["layer"], version_no=_next_version_no(db, p.id, d["layer"]), status="DRAFT",
+            source_type=d.get("source_type") or "MANUAL", source_ref=d.get("source_ref") or None, source_date=d.get("source_date"),
+            derived_from_version_id=d.get("derived_from_version_id"), effective_from=d.get("effective_from"), effective_to=d.get("effective_to"),
+            expected_output_per_day=d.get("expected_output_per_day"), required_labor=d.get("required_labor"), assumptions_json=d.get("assumptions_json") or {},
+            note=d.get("note") or "", created_by=user.username,
+        )
+        db.add(v)
+        try:
+            db.commit()
+        except IntegrityError as e:
+            # va chạm version_no với request đồng thời khác (BR-005 unique) -> rollback, tính lại version_no, thử lại
+            db.rollback()
+            last_error = e
+            continue
+        write_audit("TECH_PROCESS_VERSION_CREATE", user=user, object_type="TechnologyProcessVersion", object_id=str(v.id), detail=f"{p.process_code} {v.layer} v{v.version_no}")
+        return v
+    raise HTTPException(409, f"Không thể tạo version mới cho layer {d['layer']} do tranh chấp số phiên bản, vui lòng thử lại") from last_error
 
 
 def derive_version(db: Session, user: User, source_version_id: int, target_layer: str, d: dict | None = None) -> TechnologyProcessVersion:
@@ -446,7 +467,7 @@ def bootstrap_current_process(db: Session, user: User, d: dict) -> dict:
     Atomic (GPT review #4 mục 1): validate TOÀN BỘ operation trước (đọc-only), kiểm tra idempotency trước khi ghi bất kỳ dòng nào,
     sau đó insert process/version/operation và chỉ COMMIT MỘT LẦN ở cuối. Bất kỳ lỗi nào trước commit -> rollback toàn bộ,
     không bao giờ để lại version có bootstrap_fingerprint nhưng operation dở dang."""
-    style_cc, model_code = (d.get("style_cc") or "").strip(), (d.get("model_code") or "").strip()
+    style_cc, model_code = _canon_key(d.get("style_cc")), _canon_key(d.get("model_code"))
     if not style_cc:
         raise _bad("Cần Style/CC")
     operations = d.get("operations") or []
