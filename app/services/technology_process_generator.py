@@ -215,6 +215,26 @@ def compute_generation_fingerprint(db: Session, src: TechnologyProcessVersion, d
     return _hash_json(payload), source_hash, compat_hash
 
 
+def _validate_selections(active_ops: list, selections: dict) -> dict[str, int]:
+    """Chuẩn hóa + validate `selections` TRƯỚC khi build decisions/fingerprint — key rác/không tồn tại/không phải
+    sequence_no active phải bị 422 ngay, không được lọt vào fingerprint (GPT review round 3 mục 1: nếu không,
+    cùng source + cùng mapping + cùng quyết định thực tế vẫn có thể tạo proposal mới chỉ vì request có key rác,
+    trái BR-316/V-308)."""
+    valid_seqs = {op.sequence_no for op in active_ops}
+    validated: dict[str, int] = {}
+    for k, v in (selections or {}).items():
+        try:
+            seq = int(k)
+        except (TypeError, ValueError):
+            raise HTTPException(422, f"Selection key '{k}' không hợp lệ — phải là sequence_no dạng số")
+        if seq not in valid_seqs:
+            raise HTTPException(422, f"Selection key '{k}' không khớp sequence_no nào đang active trong source")
+        if not isinstance(v, int) or isinstance(v, bool):
+            raise HTTPException(422, f"Giá trị selection cho sequence_no {seq} phải là compatibility id dạng số nguyên")
+        validated[str(seq)] = v
+    return validated
+
+
 # ------------------------------------------------------------------ Generate (ghi thật, atomic MỘT transaction)
 def generate_optimized_proposal(db: Session, user: User, source_version_id: int, selections: dict[str, int] | None = None) -> dict:
     """selections: {str(sequence_no): compatibility_row_id} — lựa chọn tường minh của user cho operation đang
@@ -222,9 +242,9 @@ def generate_optimized_proposal(db: Session, user: User, source_version_id: int,
     src = tps.get_version(db, source_version_id)
     if src.layer != "CURRENT_PROCESS":
         raise HTTPException(422, "Source version phải thuộc layer CURRENT_PROCESS")  # V-301
-    selections = selections or {}
 
     active_ops = sorted((o for o in src.operations if o.is_active), key=lambda o: o.sequence_no)
+    selections = _validate_selections(active_ops, selections)
     decisions: list[dict] = []
     for op in active_ops:
         candidates = _candidates_for_operation(db, op.operation_code, op.machine_type_code)
@@ -300,6 +320,9 @@ def generate_optimized_proposal(db: Session, user: User, source_version_id: int,
             "expected_output_per_day": "AVAILABLE" if new_v.expected_output_per_day is not None else "N/A",
             "required_labor": "AVAILABLE" if new_v.required_labor is not None else "N/A",
             "setup_changeover_minutes": "AVAILABLE" if cloned_ops and all(o.setup_changeover_minutes is not None for o in cloned_ops) else "N/A",
+            # Task 3 không có dữ liệu/công thức nào để tính bottleneck/utilization — luôn N/A, không tự bịa (GPT review round 3 mục 2)
+            "bottleneck": "N/A",
+            "utilization": "N/A",
         }
         new_v.assumptions_json = {
             "generator_rule_version": GENERATOR_RULE_VERSION, "generated_at": utcnow().isoformat(), "generated_by": user.username,

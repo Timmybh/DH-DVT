@@ -398,6 +398,40 @@ def test_generation_evidence_survives_later_compatibility_edit(db):
     assert version_after.assumptions_json["decisions"][0]["candidates_considered"][0]["compatibility_status"] == "APPROVED"
 
 
+# ------------------------------------------------------------------ GPT review round 3 mục 2 — completeness phải có đủ bottleneck/utilization = N/A
+def test_metric_completeness_has_bottleneck_and_utilization_na(db):
+    p, v = _current_process(db, "S27", [{"operation_name": "May cổ", "operation_code": "OP1"}])
+    r = gen.generate_optimized_proposal(db, ADMIN, v.id)
+    completeness = r["version"]["assumptions_json"]["metric_completeness"]
+    assert completeness["bottleneck"] == "N/A" and completeness["utilization"] == "N/A"  # Task 3 không có dữ liệu để tính, không tự bịa
+
+
+# ------------------------------------------------------------------ GPT review round 3 mục 1 — selection key rác không được lọt vào fingerprint
+def test_selection_key_not_matching_active_sequence_no_is_rejected(db):
+    p, v = _current_process(db, "S28", [{"operation_name": "Vắt sổ", "operation_code": "OP1", "machine_type_code": "1K"}])
+    with pytest.raises(HTTPException) as e:
+        gen.generate_optimized_proposal(db, ADMIN, v.id, selections={"999": 123})  # seq 999 không active
+    assert e.value.status_code == 422
+    assert db.query(TechnologyProcessVersion).filter_by(layer="OPTIMIZED_CURRENT_TECHNOLOGY").count() == 0  # không tạo version dở dang
+
+
+def test_selection_key_non_numeric_is_rejected(db):
+    p, v = _current_process(db, "S29", [{"operation_name": "Vắt sổ", "operation_code": "OP1", "machine_type_code": "1K"}])
+    with pytest.raises(HTTPException) as e:
+        gen.generate_optimized_proposal(db, ADMIN, v.id, selections={"abc": 123})
+    assert e.value.status_code == 422
+
+
+def test_stray_selection_key_does_not_change_fingerprint(db):
+    """Cùng source + cùng mapping + cùng quyết định thực tế -> key rác (dù có được validate reject) không được
+    làm phát sinh proposal khác nhau một khi đã pass validate với cùng selection hợp lệ thực sự."""
+    _compat(db, "OP1", candidate_type="2K", status="APPROVED")
+    p, v = _current_process(db, "S30", [{"operation_name": "Vắt sổ", "operation_code": "OP1", "machine_type_code": "1K"}])
+    r1 = gen.generate_optimized_proposal(db, ADMIN, v.id, selections={})
+    r2 = gen.generate_optimized_proposal(db, ADMIN, v.id, selections={})
+    assert r1["created"] is True and r2["created"] is False and r1["version"]["id"] == r2["version"]["id"]
+
+
 # ------------------------------------------------------------------ GPT review round 1 mục 4 — compare phải guard đúng layer/lineage
 def test_compare_rejects_when_source_not_current_process(db):
     p, v = _current_process(db, "S23", [{"operation_name": "X", "operation_code": "OP1"}])
