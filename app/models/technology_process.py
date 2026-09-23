@@ -102,7 +102,13 @@ class TechnologyProcessOperation(Base):
     machine_type_code: Mapped[str | None] = mapped_column(ForeignKey("machine_types.code"), nullable=True)
     machine_model_id: Mapped[int | None] = mapped_column(ForeignKey("machine_models.id"), nullable=True)
 
-    operator_count: Mapped[int] = mapped_column(Integer, default=0)  # >= 0 — V-005
+    # Nullable (Task 2, Issue #5 review vòng 2 mục 3): 0 có nghĩa nghiệp vụ khác "không biết" — ERP import không có
+    # observed operator count thật (Detail.SoLaoDong là giá trị phân bổ tính toán, không phải headcount quan sát) nên
+    # phải để NULL thay vì mặc định 0. KHÔNG đặt default= ở cột: SQLAlchemy áp default bất cứ khi nào giá trị hiện tại
+    # là None, kể cả khi None được set TƯỜNG MINH — service layer (add_operation) mới là nơi quyết định 0 vs None.
+    # Manual entry (Task 1 UI) vẫn giữ hành vi cũ: không truyền field -> service tự set 0.
+    operator_count: Mapped[int | None] = mapped_column(Integer, nullable=True)  # >= 0 nếu có giá trị — V-005
+
     helper_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     sam_minutes: Mapped[float | None] = mapped_column(Float, nullable=True)  # > 0 nếu có giá trị — V-004

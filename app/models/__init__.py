@@ -27,6 +27,7 @@ from app.models.dashboard_cfg import (
 from app.models.resources import CapacityDefinition, LaborDaily, MachineCapacity, MachineModel, MachineRequirement, MachineType
 from app.models.planning import CalendarDayType, FormulaDefinition, PlanColumn, PlanningEditSession, PlanningVersion, PlanningVersionRow, WorkingCalendarRule
 from app.models.technology_process import TechnologyProcess, TechnologyProcessOperation, TechnologyProcessVersion
+from app.models.erp_sync import MachineCrosswalk, TechProcessSyncException
 
 __all__ = [
     "PlanningSO",
@@ -77,4 +78,6 @@ __all__ = [
     "TechnologyProcess",
     "TechnologyProcessOperation",
     "TechnologyProcessVersion",
+    "MachineCrosswalk",
+    "TechProcessSyncException",
 ]
