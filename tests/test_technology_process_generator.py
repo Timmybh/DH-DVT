@@ -269,6 +269,117 @@ def test_save_compatibility_requires_operation_code_and_valid_machine_type(db):
     assert row.compatibility_status == "PROPOSED"  # mặc định, không tự APPROVED
 
 
+# ------------------------------------------------------------------ GPT review round 1 mục 2 — compatibility integrity
+def test_save_compatibility_rejects_invalid_status_and_missing_source_type(db):
+    with pytest.raises(HTTPException) as e:
+        gen.save_compatibility(db, ADMIN, {"operation_code": "OP1", "candidate_machine_type_code": "2K", "compatibility_status": "BOGUS"})
+    assert e.value.status_code == 422
+    with pytest.raises(HTTPException) as e:
+        gen.save_compatibility(db, ADMIN, {"operation_code": "OP1", "candidate_machine_type_code": "2K", "source_machine_type_code": "NOPE"})
+    assert e.value.status_code == 422
+
+
+def test_save_compatibility_rejects_model_type_mismatch(db):
+    mm = MachineModel(machine_type_code="1K", brand="X", model="Y", status="APPROVED", created_by="admin")
+    db.add(mm)
+    db.commit()
+    db.refresh(mm)
+    with pytest.raises(HTTPException) as e:
+        gen.save_compatibility(db, ADMIN, {"operation_code": "OP1", "candidate_machine_type_code": "2K", "candidate_machine_model_id": mm.id})
+    assert e.value.status_code == 422  # model thuộc 1K, không khớp candidate_machine_type_code 2K (V-009)
+
+
+def test_update_compatibility_rejects_explicit_null_required_field(db):
+    row = gen.save_compatibility(db, ADMIN, {"operation_code": "OP1", "candidate_machine_type_code": "2K"})
+    with pytest.raises(HTTPException) as e:
+        gen.save_compatibility(db, ADMIN, {"operation_code": None}, row.id)  # explicit null -> 422, không phải IntegrityError/500
+    assert e.value.status_code == 422
+    with pytest.raises(HTTPException) as e:
+        gen.save_compatibility(db, ADMIN, {"candidate_machine_type_code": ""}, row.id)
+    assert e.value.status_code == 422
+
+
+def test_update_compatibility_validates_final_merged_state(db):
+    """Sửa 1 field không kèm field khác vẫn phải validate trạng thái CUỐI, không chỉ field vừa gửi."""
+    row = gen.save_compatibility(db, ADMIN, {"operation_code": "OP1", "candidate_machine_type_code": "2K"})
+    with pytest.raises(HTTPException) as e:
+        gen.save_compatibility(db, ADMIN, {"candidate_machine_type_code": "NOPE"}, row.id)
+    assert e.value.status_code == 422
+    updated = gen.save_compatibility(db, ADMIN, {"compatibility_status": "APPROVED"}, row.id)
+    assert updated.candidate_machine_type_code == "2K" and updated.compatibility_status == "APPROVED"
+
+
+# ------------------------------------------------------------------ GPT review round 1 mục 3 — REJECTED/inactive không phải candidate hợp lệ
+def test_rejected_machine_model_not_selectable_even_by_user(db):
+    mm = MachineModel(machine_type_code="2K", brand="X", model="Y", status="REJECTED", created_by="admin")
+    db.add(mm)
+    db.commit()
+    db.refresh(mm)
+    row = _compat(db, "OP1", candidate_type="2K", model_id=mm.id, status="APPROVED")
+    p, v = _current_process(db, "S19", [{"operation_name": "Vắt sổ", "operation_code": "OP1", "machine_type_code": "1K"}])
+    preview = gen.preview_optimized_proposal(db, v.id)
+    assert preview["operations"][0]["decision"] == "UNCHANGED"  # không còn candidate hợp lệ nào để hiện
+    assert preview["operations"][0]["candidates"] == []
+    with pytest.raises(HTTPException) as e:
+        gen.generate_optimized_proposal(db, ADMIN, v.id, selections={"1": row.id})  # không selectable dù user chọn tay
+    assert e.value.status_code == 422
+
+
+def test_inactive_machine_type_not_selectable(db):
+    db.add(MachineType(code="4K", name="4 kim", status="INACTIVE"))
+    db.commit()
+    row = _compat(db, "OP1", candidate_type="4K", status="APPROVED")
+    p, v = _current_process(db, "S20", [{"operation_name": "Vắt sổ", "operation_code": "OP1", "machine_type_code": "1K"}])
+    r = gen.generate_optimized_proposal(db, ADMIN, v.id)
+    assert r["version"]["operations"][0]["change_type"] == "UNCHANGED"  # MachineType inactive -> không tự áp
+    with pytest.raises(HTTPException) as e:
+        gen.generate_optimized_proposal(db, ADMIN, v.id, selections={"1": row.id})
+    assert e.value.status_code == 422  # cũng không cho user chọn tay
+
+
+# ------------------------------------------------------------------ GPT review round 1 mục 1 — fingerprint phải phản ánh đổi target trên CÙNG row
+def test_changing_candidate_target_on_same_row_creates_new_proposal(db):
+    row = _compat(db, "OP1", candidate_type="2K", status="APPROVED")
+    p, v = _current_process(db, "S21", [{"operation_name": "Vắt sổ", "operation_code": "OP1", "machine_type_code": "1K"}])
+    r1 = gen.generate_optimized_proposal(db, ADMIN, v.id)
+    assert r1["version"]["operations"][0]["machine_type_code"] == "2K"
+    db.add(MachineType(code="5K", name="5 kim", status="ACTIVE"))
+    db.commit()
+    row.candidate_machine_type_code = "5K"  # đổi target trên CÙNG compatibility row id, vẫn APPROVED
+    db.commit()
+    r2 = gen.generate_optimized_proposal(db, ADMIN, v.id)
+    assert r2["created"] is True and r2["version"]["id"] != r1["version"]["id"]
+    assert r2["version"]["operations"][0]["machine_type_code"] == "5K"
+
+
+def test_generation_evidence_has_snapshot_hashes(db):
+    _compat(db, "OP1", candidate_type="2K", status="APPROVED")
+    p, v = _current_process(db, "S22", [{"operation_name": "Vắt sổ", "operation_code": "OP1", "machine_type_code": "1K"}])
+    r = gen.generate_optimized_proposal(db, ADMIN, v.id)
+    assumptions = r["version"]["assumptions_json"]
+    assert assumptions["source_snapshot_hash"] and assumptions["compatibility_snapshot_hash"]
+    assert assumptions["sam_status"] == r["version"]["sam_status"]
+
+
+# ------------------------------------------------------------------ GPT review round 1 mục 4 — compare phải guard đúng layer/lineage
+def test_compare_rejects_when_source_not_current_process(db):
+    p, v = _current_process(db, "S23", [{"operation_name": "X", "operation_code": "OP1"}])
+    r = gen.generate_optimized_proposal(db, ADMIN, v.id)
+    with pytest.raises(HTTPException) as e:
+        gen.compare_current_vs_optimized(db, r["version"]["id"], v.id)  # đảo ngược a/b — a không phải CURRENT_PROCESS
+    assert e.value.status_code == 422
+
+
+def test_compare_rejects_when_target_not_lineage_of_source(db):
+    """Cùng 1 process, 2 version CURRENT_PROCESS khác nhau — b không phải derive từ a (khác lineage) dù cùng process/đúng layer."""
+    p, v1 = _current_process(db, "S24", [{"operation_name": "X", "operation_code": "OP1"}])
+    v1b = tps.create_draft_version(db, ADMIN, p.id, {"layer": "CURRENT_PROCESS"})
+    r1 = gen.generate_optimized_proposal(db, ADMIN, v1.id)
+    with pytest.raises(HTTPException) as e:
+        gen.compare_current_vs_optimized(db, v1b.id, r1["version"]["id"])
+    assert e.value.status_code == 422
+
+
 # ------------------------------------------------------------------ Audit
 def test_generate_and_compatibility_save_are_audited(db):
     p, v = _current_process(db, "S18", [{"operation_name": "May cổ", "operation_code": "OP1"}])

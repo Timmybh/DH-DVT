@@ -32,7 +32,7 @@ from sqlalchemy.orm import Session
 from app.db.session import utcnow
 from app.models.core import User
 from app.models.resources import MachineModel, MachineType
-from app.models.tech_compatibility import OperationMachineCompatibility
+from app.models.tech_compatibility import COMPATIBILITY_STATUSES, OperationMachineCompatibility
 from app.models.technology_process import TechnologyProcessVersion
 from app.services import technology_process_service as tps
 from app.services.audit import write_audit
@@ -44,7 +44,24 @@ DECISION_STATES = ("UNCHANGED", "MACHINE_SUBSTITUTION", "MULTIPLE_CANDIDATES", "
 
 
 # ------------------------------------------------------------------ candidate lookup (chỉ đọc)
+def _candidate_machine_type_ok(db: Session, machine_type_code: str) -> bool:
+    mt = db.get(MachineType, machine_type_code)
+    return mt is not None and mt.status == "ACTIVE"
+
+
+def _candidate_machine_model_selectable(db: Session, row: OperationMachineCompatibility) -> bool:
+    """Model REJECTED hoặc thuộc sai loại máy (mismatch) không phải candidate hợp lệ dù chỉ để user chọn tay
+    (GPT review round 1 mục 3) — chỉ CANDIDATE/TRIAL/APPROVED thuộc đúng candidate_machine_type_code mới hiện."""
+    if row.candidate_machine_model_id is None:
+        return True  # type-level, không có model cụ thể
+    mm = db.get(MachineModel, row.candidate_machine_model_id)
+    return mm is not None and mm.status != "REJECTED" and mm.machine_type_code == row.candidate_machine_type_code
+
+
 def _candidates_for_operation(db: Session, operation_code: str, current_machine_type_code: str | None) -> list[OperationMachineCompatibility]:
+    """Candidate hợp lệ để hiện/preview/select — không gồm REJECTED, không gồm MachineType inactive, không gồm
+    MachineModel REJECTED/mismatch (GPT review round 1 mục 3: những trường hợp này không phải 'unverified candidate'
+    hợp lệ, kể cả để user chọn tay)."""
     if not operation_code:
         return []
     rows = (
@@ -52,17 +69,23 @@ def _candidates_for_operation(db: Session, operation_code: str, current_machine_
         .filter(OperationMachineCompatibility.operation_code == operation_code, OperationMachineCompatibility.compatibility_status != "REJECTED")
         .all()
     )
-    return [r for r in rows if r.source_machine_type_code is None or r.source_machine_type_code == current_machine_type_code]
+    rows = [r for r in rows if r.source_machine_type_code is None or r.source_machine_type_code == current_machine_type_code]
+    rows = [r for r in rows if _candidate_machine_type_ok(db, r.candidate_machine_type_code)]
+    rows = [r for r in rows if _candidate_machine_model_selectable(db, r)]
+    return rows
 
 
 def _is_eligible(db: Session, row: OperationMachineCompatibility) -> bool:
+    """Đủ điều kiện auto-apply. Defense-in-depth: kiểm tra lại cả MachineType active + MachineModel thuộc đúng
+    loại máy (GPT review round 1 mục 2), không chỉ dựa vào việc row đã lọt qua `_candidates_for_operation`."""
     if row.compatibility_status != "APPROVED":
         return False
+    if not _candidate_machine_type_ok(db, row.candidate_machine_type_code):
+        return False
     if row.candidate_machine_model_id is None:
-        mt = db.get(MachineType, row.candidate_machine_type_code)
-        return mt is not None and mt.status == "ACTIVE"
+        return True
     mm = db.get(MachineModel, row.candidate_machine_model_id)
-    return mm is not None and mm.status in ("APPROVED", "TRIAL")
+    return mm is not None and mm.status in ("APPROVED", "TRIAL") and mm.machine_type_code == row.candidate_machine_type_code
 
 
 def _decide(db: Session, op, candidates: list[OperationMachineCompatibility]) -> tuple[str, OperationMachineCompatibility | None]:
@@ -110,11 +133,16 @@ def preview_optimized_proposal(db: Session, source_version_id: int) -> dict:
     return {"source_version_id": src.id, "source_layer": src.layer, "operations": rows}
 
 
-# ------------------------------------------------------------------ fingerprint (review mục 5)
+# ------------------------------------------------------------------ fingerprint (review mục 5; sửa round 1 mục 1)
 def _canon_val(v):
     if isinstance(v, (date, datetime)):
         return v.isoformat()
     return v
+
+
+def _hash_json(payload) -> str:
+    raw = json.dumps(payload, sort_keys=True, ensure_ascii=True, default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:40]
 
 
 _OP_SNAPSHOT_FIELDS = (
@@ -123,17 +151,53 @@ _OP_SNAPSHOT_FIELDS = (
 )
 
 
-def compute_generation_fingerprint(src: TechnologyProcessVersion, decisions: list[dict], selections: dict) -> str:
-    ops_snapshot = [
+def _source_snapshot(src: TechnologyProcessVersion) -> list[dict]:
+    return [
         {f: _canon_val(getattr(o, f)) for f in _OP_SNAPSHOT_FIELDS}
         for o in sorted((o for o in src.operations if o.is_active), key=lambda o: o.sequence_no)
     ]
+
+
+def _compatibility_snapshot(db: Session, active_ops: list) -> list[dict]:
+    """Canonical snapshot của TẤT CẢ compatibility rows liên quan tới các operation_code đang active trong source
+    (không chỉ candidate đã chọn) — gồm cả field ảnh hưởng eligibility (MachineType/MachineModel status, model
+    có đúng loại máy hay không) để đổi mapping/target machine/model trên CÙNG row cũng làm đổi fingerprint
+    (GPT review round 1 mục 1 — BR-317/V-308)."""
+    op_codes = sorted({(o.operation_code or "").strip() for o in active_ops if (o.operation_code or "").strip()})
+    if not op_codes:
+        return []
+    rows = (
+        db.query(OperationMachineCompatibility)
+        .filter(OperationMachineCompatibility.operation_code.in_(op_codes))
+        .order_by(OperationMachineCompatibility.id)
+        .all()
+    )
+    out = []
+    for r in rows:
+        mt = db.get(MachineType, r.candidate_machine_type_code)
+        mm = db.get(MachineModel, r.candidate_machine_model_id) if r.candidate_machine_model_id else None
+        out.append({
+            "id": r.id, "operation_code": r.operation_code, "source_machine_type_code": r.source_machine_type_code,
+            "candidate_machine_type_code": r.candidate_machine_type_code, "candidate_machine_model_id": r.candidate_machine_model_id,
+            "compatibility_status": r.compatibility_status, "evidence_ref": r.evidence_ref, "evidence_note": r.evidence_note,
+            "candidate_machine_type_status": mt.status if mt else None,
+            "candidate_machine_model_status": mm.status if mm else None,
+            "candidate_machine_model_type_code": mm.machine_type_code if mm else None,
+        })
+    return out
+
+
+def compute_generation_fingerprint(db: Session, src: TechnologyProcessVersion, decisions: list[dict], selections: dict) -> tuple[str, str, str]:
+    """Trả (generation_fingerprint, source_snapshot_hash, compatibility_snapshot_hash)."""
+    active_ops = sorted((o for o in src.operations if o.is_active), key=lambda o: o.sequence_no)
+    source_hash = _hash_json(_source_snapshot(src))
+    compat_hash = _hash_json(_compatibility_snapshot(db, active_ops))
     payload = {
-        "source_version_id": src.id, "source_layer": src.layer, "source_operations": ops_snapshot,
-        "generator_rule_version": GENERATOR_RULE_VERSION, "decisions": decisions, "selections": selections or {},
+        "source_version_id": src.id, "source_layer": src.layer, "source_snapshot_hash": source_hash,
+        "compatibility_snapshot_hash": compat_hash, "generator_rule_version": GENERATOR_RULE_VERSION,
+        "decisions": decisions, "selections": selections or {},
     }
-    raw = json.dumps(payload, sort_keys=True, ensure_ascii=True, default=str)
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:40]
+    return _hash_json(payload), source_hash, compat_hash
 
 
 # ------------------------------------------------------------------ Generate (ghi thật, atomic MỘT transaction)
@@ -158,14 +222,17 @@ def generate_optimized_proposal(db: Session, user: User, source_version_id: int,
             if match is None:
                 raise HTTPException(422, f"Candidate id {sel_id} không hợp lệ cho operation seq {op.sequence_no}")  # V-304/V-305
             chosen, user_selected, decision = match, True, "MACHINE_SUBSTITUTION"
+        chosen_mm = db.get(MachineModel, chosen.candidate_machine_model_id) if chosen and chosen.candidate_machine_model_id else None
         decisions.append({
             "sequence_no": op.sequence_no, "operation_code": op.operation_code, "decision": decision,
             "chosen_candidate_id": chosen.id if chosen else None,
             "chosen_compatibility_status": chosen.compatibility_status if chosen else None,
+            "chosen_machine_model_status": chosen_mm.status if chosen_mm else None,
+            "chosen_eligible": _is_eligible(db, chosen) if chosen else None,
             "user_selected": user_selected,
         })
 
-    fp = compute_generation_fingerprint(src, decisions, selections)
+    fp, source_hash, compat_hash = compute_generation_fingerprint(db, src, decisions, selections)
 
     # V-308 / BR-316 — same source + rule + mapping snapshot + selections -> no-op, không tạo duplicate
     existing = (
@@ -210,7 +277,10 @@ def generate_optimized_proposal(db: Session, user: User, source_version_id: int,
         new_v.generation_fingerprint = fp
         new_v.assumptions_json = {
             "generator_rule_version": GENERATOR_RULE_VERSION, "generated_at": utcnow().isoformat(), "generated_by": user.username,
-            "source_version_id": src.id, "generation_fingerprint": fp, "decisions": decisions, "selections": selections,
+            "source_version_id": src.id, "generation_fingerprint": fp,
+            "source_snapshot_hash": source_hash, "compatibility_snapshot_hash": compat_hash,
+            "sam_status": new_v.sam_status,  # AC-305 — chỉ ra rõ metric còn thiếu/chưa xác định (INCOMPLETE), không tự bịa
+            "decisions": decisions, "selections": selections,
         }
         db.commit()
     except Exception:
@@ -230,12 +300,18 @@ def compare_with_source(db: Session, optimized_version_id: int) -> dict:
     return compare_current_vs_optimized(db, vb.derived_from_version_id, optimized_version_id)
 
 
-# ------------------------------------------------------------------ Compare (mục 7 Issue #7)
+# ------------------------------------------------------------------ Compare (mục 7 Issue #7; guard sửa round 1 mục 4)
 def compare_current_vs_optimized(db: Session, version_a_id: int, version_b_id: int) -> dict:
     va = tps.get_version(db, version_a_id)
     vb = tps.get_version(db, version_b_id)
     if va.technology_process_id != vb.technology_process_id:
         raise HTTPException(422, "Chỉ so sánh được các version của cùng một Technology Process")
+    if va.layer != "CURRENT_PROCESS":
+        raise HTTPException(422, "version_a phải thuộc layer CURRENT_PROCESS")
+    if vb.layer != "OPTIMIZED_CURRENT_TECHNOLOGY":
+        raise HTTPException(422, "version_b phải thuộc layer OPTIMIZED_CURRENT_TECHNOLOGY")
+    if vb.derived_from_version_id != va.id:
+        raise HTTPException(422, "version_b không phải được derive từ version_a — endpoint này chỉ so Current gốc với đúng Optimized của nó")
     ops_b = [o for o in vb.operations if o.is_active]
     return {
         "version_a": tps.version_view(va), "version_b": tps.version_view(vb),
@@ -266,18 +342,41 @@ def compatibility_view(row: OperationMachineCompatibility) -> dict:
     }
 
 
+_COMPATIBILITY_REQUIRED_FIELDS = ("operation_code", "candidate_machine_type_code", "compatibility_status")
+
+
+def _validate_compatibility_final_state(db: Session, operation_code: str, source_mtc: str | None, candidate_mtc: str, candidate_model_id: int | None, status: str | None) -> None:
+    """Validate trạng thái CUỐI của row (không chỉ field vừa truyền) — GPT review round 1 mục 2."""
+    if not (operation_code or "").strip():
+        raise HTTPException(422, "Cần operation_code")  # bắt buộc, không suy đoán theo tên (BR-309)
+    if not (candidate_mtc or "").strip():
+        raise HTTPException(422, "Cần candidate_machine_type_code")
+    if not db.get(MachineType, candidate_mtc):
+        raise HTTPException(422, f"Loại máy '{candidate_mtc}' không tồn tại")  # V-304
+    if source_mtc and not db.get(MachineType, source_mtc):
+        raise HTTPException(422, f"Loại máy nguồn '{source_mtc}' không tồn tại")
+    if status not in COMPATIBILITY_STATUSES:
+        raise HTTPException(422, f"compatibility_status không hợp lệ: {status!r} (phải thuộc {COMPATIBILITY_STATUSES})")
+    if candidate_model_id is not None:
+        mm = db.get(MachineModel, candidate_model_id)
+        if mm is None:
+            raise HTTPException(422, f"MachineModel id {candidate_model_id} không tồn tại")
+        if mm.machine_type_code != candidate_mtc:
+            raise HTTPException(422, f"MachineModel #{candidate_model_id} thuộc loại máy '{mm.machine_type_code}', không khớp candidate_machine_type_code '{candidate_mtc}'")  # V-009
+
+
 def save_compatibility(db: Session, user: User, d: dict, row_id: int | None = None) -> OperationMachineCompatibility:
     if row_id is None:
-        if not (d.get("operation_code") or "").strip():
-            raise HTTPException(422, "Cần operation_code")  # bắt buộc, không suy đoán theo tên (BR-309)
-        if not (d.get("candidate_machine_type_code") or "").strip():
-            raise HTTPException(422, "Cần candidate_machine_type_code")
-        if not db.get(MachineType, d["candidate_machine_type_code"]):
-            raise HTTPException(422, f"Loại máy '{d['candidate_machine_type_code']}' không tồn tại")  # V-304
+        operation_code = (d.get("operation_code") or "").strip()
+        source_mtc = d.get("source_machine_type_code") or None
+        candidate_mtc = (d.get("candidate_machine_type_code") or "").strip()
+        candidate_model_id = d.get("candidate_machine_model_id") or None
+        status = d.get("compatibility_status") or "PROPOSED"
+        _validate_compatibility_final_state(db, operation_code, source_mtc, candidate_mtc, candidate_model_id, status)
         row = OperationMachineCompatibility(
-            operation_code=d["operation_code"].strip(), source_machine_type_code=d.get("source_machine_type_code") or None,
-            candidate_machine_type_code=d["candidate_machine_type_code"], candidate_machine_model_id=d.get("candidate_machine_model_id") or None,
-            compatibility_status=d.get("compatibility_status") or "PROPOSED", evidence_ref=d.get("evidence_ref"), evidence_note=d.get("evidence_note") or "",
+            operation_code=operation_code, source_machine_type_code=source_mtc,
+            candidate_machine_type_code=candidate_mtc, candidate_machine_model_id=candidate_model_id,
+            compatibility_status=status, evidence_ref=d.get("evidence_ref"), evidence_note=d.get("evidence_note") or "",
             created_by=user.username,
         )
         db.add(row)
@@ -285,11 +384,23 @@ def save_compatibility(db: Session, user: User, d: dict, row_id: int | None = No
         row = db.get(OperationMachineCompatibility, row_id)
         if row is None:
             raise HTTPException(404, "Không tìm thấy compatibility mapping")
-        if d.get("candidate_machine_type_code") is not None and not db.get(MachineType, d["candidate_machine_type_code"]):
-            raise HTTPException(422, f"Loại máy '{d['candidate_machine_type_code']}' không tồn tại")
-        for k in ("source_machine_type_code", "candidate_machine_type_code", "candidate_machine_model_id", "compatibility_status", "evidence_ref", "evidence_note"):
-            if k in d:
-                setattr(row, k, d[k])
+        # explicit null cho field bắt buộc khi update -> 422 tường minh, không để rơi xuống DB IntegrityError/500
+        for k in _COMPATIBILITY_REQUIRED_FIELDS:
+            if k in d and (d[k] is None or (isinstance(d[k], str) and not d[k].strip())):
+                raise HTTPException(422, f"{k} không được để trống")
+        final_operation_code = d["operation_code"].strip() if "operation_code" in d else row.operation_code
+        final_source_mtc = d["source_machine_type_code"] if "source_machine_type_code" in d else row.source_machine_type_code
+        final_candidate_mtc = d["candidate_machine_type_code"].strip() if "candidate_machine_type_code" in d else row.candidate_machine_type_code
+        final_candidate_model_id = d["candidate_machine_model_id"] if "candidate_machine_model_id" in d else row.candidate_machine_model_id
+        final_status = d["compatibility_status"] if "compatibility_status" in d else row.compatibility_status
+        _validate_compatibility_final_state(db, final_operation_code, final_source_mtc, final_candidate_mtc, final_candidate_model_id, final_status)
+        row.operation_code, row.source_machine_type_code = final_operation_code, final_source_mtc
+        row.candidate_machine_type_code, row.candidate_machine_model_id = final_candidate_mtc, final_candidate_model_id
+        row.compatibility_status = final_status
+        if "evidence_ref" in d:
+            row.evidence_ref = d["evidence_ref"]
+        if "evidence_note" in d:
+            row.evidence_note = d["evidence_note"] or ""
         row.updated_by, row.updated_at = user.username, utcnow()
     db.commit()
     write_audit("TECH_PROCESS_COMPATIBILITY_SAVE", user=user, object_type="OperationMachineCompatibility", object_id=str(row.id), detail=f"{row.operation_code} -> {row.candidate_machine_type_code} ({row.compatibility_status})")
