@@ -361,6 +361,43 @@ def test_generation_evidence_has_snapshot_hashes(db):
     assert assumptions["sam_status"] == r["version"]["sam_status"]
 
 
+# ------------------------------------------------------------------ GPT review round 2 mục 1 — compatibility_snapshot phải scope đúng theo source_machine_type
+def test_unrelated_mapping_change_does_not_create_new_proposal(db):
+    """Mapping cùng operation_code nhưng source_machine_type khác hẳn (không bao giờ là candidate cho operation
+    hiện tại) đổi -> KHÔNG được làm fingerprint đổi (round 1 có lỗi lấy rộng hơn candidate set thật)."""
+    db.add(MachineType(code="3K", name="3 kim", status="ACTIVE"))
+    db.add(MachineType(code="5K", name="5 kim", status="ACTIVE"))
+    db.commit()
+    _compat(db, "OP1", candidate_type="2K", status="APPROVED", source_type="1K")  # đúng scope (source=1K, op hiện tại machine=1K)
+    row_unrelated = _compat(db, "OP1", candidate_type="3K", status="APPROVED", source_type="5K")  # source=5K, không liên quan
+    p, v = _current_process(db, "S25", [{"operation_name": "Vắt sổ", "operation_code": "OP1", "machine_type_code": "1K"}])
+    r1 = gen.generate_optimized_proposal(db, ADMIN, v.id)
+    row_unrelated.candidate_machine_type_code = "5K"  # sửa mapping không liên quan (source=5K != machine hiện tại 1K)
+    db.commit()
+    r2 = gen.generate_optimized_proposal(db, ADMIN, v.id)
+    assert r2["created"] is False  # vẫn no-op, không tạo proposal mới giả
+    assert r1["version"]["id"] == r2["version"]["id"]
+
+
+# ------------------------------------------------------------------ GPT review round 2 mục 2 — evidence phải đủ giải thích sau khi mapping bị sửa tiếp
+def test_generation_evidence_survives_later_compatibility_edit(db):
+    c1 = _compat(db, "OP1", candidate_type="2K", status="APPROVED")
+    p, v = _current_process(db, "S26", [{"operation_name": "Vắt sổ", "operation_code": "OP1", "machine_type_code": "1K"}])
+    r = gen.generate_optimized_proposal(db, ADMIN, v.id)
+    decision0 = r["version"]["assumptions_json"]["decisions"][0]
+    assert decision0["candidates_considered"][0]["id"] == c1.id
+    assert decision0["candidates_considered"][0]["compatibility_status"] == "APPROVED"
+    completeness = r["version"]["assumptions_json"]["metric_completeness"]
+    assert completeness["total_sam_minutes"] in ("EMPTY", "COMPLETE", "INCOMPLETE")
+    assert completeness["expected_output_per_day"] == "N/A" and completeness["required_labor"] == "N/A"  # BR-303 — không tự tính
+
+    # sửa mapping SAU khi đã generate — evidence của proposal cũ (đã lưu) không được đổi theo
+    c1.compatibility_status = "REJECTED"
+    db.commit()
+    version_after = tps.get_version(db, r["version"]["id"])
+    assert version_after.assumptions_json["decisions"][0]["candidates_considered"][0]["compatibility_status"] == "APPROVED"
+
+
 # ------------------------------------------------------------------ GPT review round 1 mục 4 — compare phải guard đúng layer/lineage
 def test_compare_rejects_when_source_not_current_process(db):
     p, v = _current_process(db, "S23", [{"operation_name": "X", "operation_code": "OP1"}])

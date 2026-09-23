@@ -106,11 +106,16 @@ def _decide(db: Session, op, candidates: list[OperationMachineCompatibility]) ->
 
 
 def _candidate_out(db: Session, row: OperationMachineCompatibility) -> dict:
+    """Snapshot đầy đủ 1 candidate tại thời điểm gọi — dùng cho cả preview và Generation Evidence
+    (`candidates_considered`, GPT review round 2 mục 2: phải đủ để giải thích sau này vì sao được/không được chọn
+    dù compatibility mapping bị sửa tiếp)."""
+    mt = db.get(MachineType, row.candidate_machine_type_code)
     mm = db.get(MachineModel, row.candidate_machine_model_id) if row.candidate_machine_model_id else None
     return {
         "id": row.id, "candidate_machine_type_code": row.candidate_machine_type_code, "candidate_machine_model_id": row.candidate_machine_model_id,
-        "machine_model_status": mm.status if mm else None, "compatibility_status": row.compatibility_status,
-        "evidence_ref": row.evidence_ref, "evidence_note": row.evidence_note, "eligible": _is_eligible(db, row),
+        "candidate_machine_type_status": mt.status if mt else None, "machine_model_status": mm.status if mm else None,
+        "compatibility_status": row.compatibility_status, "evidence_ref": row.evidence_ref, "evidence_note": row.evidence_note,
+        "eligible": _is_eligible(db, row), "selectable": True,  # đã qua _candidates_for_operation nên luôn selectable
     }
 
 
@@ -159,13 +164,21 @@ def _source_snapshot(src: TechnologyProcessVersion) -> list[dict]:
 
 
 def _compatibility_snapshot(db: Session, active_ops: list) -> list[dict]:
-    """Canonical snapshot của TẤT CẢ compatibility rows liên quan tới các operation_code đang active trong source
-    (không chỉ candidate đã chọn) — gồm cả field ảnh hưởng eligibility (MachineType/MachineModel status, model
-    có đúng loại máy hay không) để đổi mapping/target machine/model trên CÙNG row cũng làm đổi fingerprint
-    (GPT review round 1 mục 1 — BR-317/V-308)."""
+    """Canonical snapshot của các compatibility rows THỰC SỰ có thể ảnh hưởng operation hiện tại — cùng scope với
+    `_candidates_for_operation()`: operation_code khớp VÀ (source_machine_type_code null HOẶC khớp machine_type_code
+    hiện tại của operation đó) (GPT review round 2 mục 1 — sửa lỗi round 1: trước đó lấy TẤT CẢ row cùng
+    operation_code kể cả mapping không liên quan tới source_machine_type hiện tại, gây false new-proposal khi
+    sửa 1 mapping không liên quan). Vẫn giữ row REJECTED/inactive/model REJECTED trong scope nếu source khớp,
+    vì đổi status của chính row đó có thể làm eligibility thay đổi. Gồm cả field ảnh hưởng eligibility
+    (MachineType/MachineModel status) để đổi target trên CÙNG row cũng làm đổi fingerprint (round 1 mục 1)."""
     op_codes = sorted({(o.operation_code or "").strip() for o in active_ops if (o.operation_code or "").strip()})
     if not op_codes:
         return []
+    allowed_source_types: dict[str, set] = {}
+    for o in active_ops:
+        code = (o.operation_code or "").strip()
+        if code:
+            allowed_source_types.setdefault(code, set()).add(o.machine_type_code)
     rows = (
         db.query(OperationMachineCompatibility)
         .filter(OperationMachineCompatibility.operation_code.in_(op_codes))
@@ -174,6 +187,8 @@ def _compatibility_snapshot(db: Session, active_ops: list) -> list[dict]:
     )
     out = []
     for r in rows:
+        if r.source_machine_type_code is not None and r.source_machine_type_code not in allowed_source_types.get(r.operation_code, set()):
+            continue
         mt = db.get(MachineType, r.candidate_machine_type_code)
         mm = db.get(MachineModel, r.candidate_machine_model_id) if r.candidate_machine_model_id else None
         out.append({
@@ -230,6 +245,10 @@ def generate_optimized_proposal(db: Session, user: User, source_version_id: int,
             "chosen_machine_model_status": chosen_mm.status if chosen_mm else None,
             "chosen_eligible": _is_eligible(db, chosen) if chosen else None,
             "user_selected": user_selected,
+            # snapshot TẤT CẢ candidate đã xét (không chỉ candidate được chọn) tại thời điểm generate — để sau này
+            # compatibility mapping bị sửa tiếp vẫn giải thích được vì sao lúc đó A được chọn còn B thì không
+            # (GPT review round 2 mục 2)
+            "candidates_considered": [_candidate_out(db, c) for c in candidates],
         })
 
     fp, source_hash, compat_hash = compute_generation_fingerprint(db, src, decisions, selections)
@@ -275,11 +294,18 @@ def generate_optimized_proposal(db: Session, user: User, source_version_id: int,
 
         new_v.total_sam_minutes, new_v.sam_status = tps._sam_summary(cloned_ops)
         new_v.generation_fingerprint = fp
+        metric_completeness = {
+            # AC-305 — chỉ rõ metric nào thiếu/chưa xác định tại thời điểm generate, không tự bịa (GPT review round 2 mục 2)
+            "total_sam_minutes": new_v.sam_status,  # EMPTY | COMPLETE | INCOMPLETE (BR-017)
+            "expected_output_per_day": "AVAILABLE" if new_v.expected_output_per_day is not None else "N/A",
+            "required_labor": "AVAILABLE" if new_v.required_labor is not None else "N/A",
+            "setup_changeover_minutes": "AVAILABLE" if cloned_ops and all(o.setup_changeover_minutes is not None for o in cloned_ops) else "N/A",
+        }
         new_v.assumptions_json = {
             "generator_rule_version": GENERATOR_RULE_VERSION, "generated_at": utcnow().isoformat(), "generated_by": user.username,
             "source_version_id": src.id, "generation_fingerprint": fp,
             "source_snapshot_hash": source_hash, "compatibility_snapshot_hash": compat_hash,
-            "sam_status": new_v.sam_status,  # AC-305 — chỉ ra rõ metric còn thiếu/chưa xác định (INCOMPLETE), không tự bịa
+            "sam_status": new_v.sam_status, "metric_completeness": metric_completeness,
             "decisions": decisions, "selections": selections,
         }
         db.commit()
