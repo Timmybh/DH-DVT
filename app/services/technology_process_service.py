@@ -56,6 +56,7 @@ def operation_view(op: TechnologyProcessOperation) -> dict:
         "sam_minutes": op.sam_minutes, "cycle_time_seconds": op.cycle_time_seconds, "expected_output_per_day": op.expected_output_per_day, "automation_level": op.automation_level,
         "setup_changeover_minutes": op.setup_changeover_minutes, "expected_defect_rate": op.expected_defect_rate, "source_type": op.source_type, "evidence_note": op.evidence_note,
         "evidence_ref": op.evidence_ref, "source_date": op.source_date.isoformat() if op.source_date else None, "is_active": op.is_active,
+        "change_type": op.change_type,
         "created_by": op.created_by, "created_at": op.created_at.isoformat() if op.created_at else None, "updated_by": op.updated_by,
         "updated_at": op.updated_at.isoformat() if op.updated_at else None,
     }
@@ -72,6 +73,7 @@ def version_view(v: TechnologyProcessVersion, with_operations: bool = False) -> 
         "reviewed_at": v.reviewed_at.isoformat() if v.reviewed_at else None, "approved_by": v.approved_by, "approved_at": v.approved_at.isoformat() if v.approved_at else None,
         "retired_by": v.retired_by, "retired_at": v.retired_at.isoformat() if v.retired_at else None, "editable": v.status in _EDITABLE_STATUSES,
         "operation_count": sum(1 for op in v.operations if op.is_active),
+        "generation_fingerprint": v.generation_fingerprint or None,
     }
     if with_operations:
         out["operations"] = [operation_view(op) for op in sorted(v.operations, key=lambda o: (not o.is_active, o.sequence_no))]
@@ -204,10 +206,10 @@ def _validate_version_fields(d: dict) -> None:
 _MAX_VERSION_NO_RETRIES = 5
 
 
-def create_draft_version(db: Session, user: User, process_id: int, d: dict) -> TechnologyProcessVersion:
-    p = get_process(db, process_id)
-    d = {**d, "layer": d.get("layer")}
-    _validate_version_fields(d)
+def _build_draft_version_flush(db: Session, user: User, p: TechnologyProcess, d: dict) -> TechnologyProcessVersion:
+    """Chỉ `flush()` — KHÔNG commit (Task 3, Issue #7 review mục 7): dùng chung cho `create_draft_version()` (commit
+    ngay sau, hành vi cũ không đổi) và cho generator Layer 2 (cần gộp vào MỘT transaction atomic với substitution).
+    Retry version_no vẫn hoạt động ở mức flush vì IntegrityError có thể nổi lên ngay khi flush gửi SQL xuống DB."""
     last_error: IntegrityError | None = None
     for _attempt in range(_MAX_VERSION_NO_RETRIES):
         v = TechnologyProcessVersion(
@@ -219,38 +221,62 @@ def create_draft_version(db: Session, user: User, process_id: int, d: dict) -> T
         )
         db.add(v)
         try:
-            db.commit()
+            db.flush()
         except IntegrityError as e:
-            # va chạm version_no với request đồng thời khác (BR-005 unique) -> rollback, tính lại version_no, thử lại
             db.rollback()
             last_error = e
             continue
-        write_audit("TECH_PROCESS_VERSION_CREATE", user=user, object_type="TechnologyProcessVersion", object_id=str(v.id), detail=f"{p.process_code} {v.layer} v{v.version_no}")
         return v
     raise HTTPException(409, f"Không thể tạo version mới cho layer {d['layer']} do tranh chấp số phiên bản, vui lòng thử lại") from last_error
 
 
-def derive_version(db: Session, user: User, source_version_id: int, target_layer: str, d: dict | None = None) -> TechnologyProcessVersion:
-    """Clone/derive (BR-006): tạo version DRAFT mới ở `target_layer`, copy các operation ACTIVE của version nguồn. Không auto-sync sau khi tạo."""
-    d = d or {}
-    src = get_version(db, source_version_id)
-    if target_layer not in LAYERS:
-        raise _bad(f"layer phải là một trong {LAYERS}")
-    new_v = create_draft_version(db, user, src.technology_process_id, {
-        "layer": target_layer, "source_type": d.get("source_type") or "ENGINEERING", "source_ref": d.get("source_ref") or f"Derived from version #{src.id}",
-        "derived_from_version_id": src.id, "note": d.get("note") or "",
-    })
-    for op in sorted((o for o in src.operations if o.is_active), key=lambda o: o.sequence_no):
-        db.add(TechnologyProcessOperation(
-            process_version_id=new_v.id, sequence_no=op.sequence_no, operation_code=op.operation_code, operation_name=op.operation_name,
+def create_draft_version(db: Session, user: User, process_id: int, d: dict) -> TechnologyProcessVersion:
+    p = get_process(db, process_id)
+    d = {**d, "layer": d.get("layer")}
+    _validate_version_fields(d)
+    v = _build_draft_version_flush(db, user, p, d)
+    db.commit()
+    write_audit("TECH_PROCESS_VERSION_CREATE", user=user, object_type="TechnologyProcessVersion", object_id=str(v.id), detail=f"{p.process_code} {v.layer} v{v.version_no}")
+    return v
+
+
+def _clone_operations_flush(db: Session, user: User, src_version: TechnologyProcessVersion, new_version: TechnologyProcessVersion) -> list[TechnologyProcessOperation]:
+    """Copy các operation ACTIVE của version nguồn sang version mới — chỉ add+flush, không commit (dùng chung với
+    `derive_version()` và generator Layer 2)."""
+    cloned: list[TechnologyProcessOperation] = []
+    for op in sorted((o for o in src_version.operations if o.is_active), key=lambda o: o.sequence_no):
+        new_op = TechnologyProcessOperation(
+            process_version_id=new_version.id, sequence_no=op.sequence_no, operation_code=op.operation_code, operation_name=op.operation_name,
             machine_type_code=op.machine_type_code, machine_model_id=op.machine_model_id, operator_count=op.operator_count, helper_count=op.helper_count,
             sam_minutes=op.sam_minutes, cycle_time_seconds=op.cycle_time_seconds, expected_output_per_day=op.expected_output_per_day, automation_level=op.automation_level,
             setup_changeover_minutes=op.setup_changeover_minutes, expected_defect_rate=op.expected_defect_rate, source_type=op.source_type,
             evidence_note=op.evidence_note, evidence_ref=op.evidence_ref, source_date=op.source_date, created_by=user.username,
-        ))
+        )
+        db.add(new_op)
+        cloned.append(new_op)
+    db.flush()
+    return cloned
+
+
+def derive_version(db: Session, user: User, source_version_id: int, target_layer: str, d: dict | None = None) -> TechnologyProcessVersion:
+    """Clone/derive (BR-006): tạo version DRAFT mới ở `target_layer`, copy các operation ACTIVE của version nguồn. Không auto-sync sau khi tạo.
+    Atomic MỘT transaction (Task 3, Issue #7 review mục 7 — trước đây 3 commit riêng: tạo version, copy operation,
+    recalc SAM; lỗi giữa chừng để lại version clone dở dang). Giờ chỉ MỘT `db.commit()` duy nhất ở cuối."""
+    d = d or {}
+    src = get_version(db, source_version_id)
+    if target_layer not in LAYERS:
+        raise _bad(f"layer phải là một trong {LAYERS}")
+    p = get_process(db, src.technology_process_id)
+    new_d = {
+        "layer": target_layer, "source_type": d.get("source_type") or "ENGINEERING", "source_ref": d.get("source_ref") or f"Derived from version #{src.id}",
+        "derived_from_version_id": src.id, "note": d.get("note") or "",
+    }
+    _validate_version_fields(new_d)
+    new_v = _build_draft_version_flush(db, user, p, new_d)
+    ops = _clone_operations_flush(db, user, src, new_v)
+    new_v.total_sam_minutes, new_v.sam_status = _sam_summary(ops)
     db.commit()
     db.refresh(new_v)
-    recalc_total_sam(db, new_v)
     write_audit("TECH_PROCESS_VERSION_DERIVE", user=user, object_type="TechnologyProcessVersion", object_id=str(new_v.id), detail=f"from version #{src.id} ({src.layer}) -> {target_layer}")
     return new_v
 

@@ -22,9 +22,9 @@ interface Operation {
   id: number; process_version_id: number; sequence_no: number; operation_code: string; operation_name: string; machine_type_code: string | null; machine_model_id: number | null;
   operator_count: number | null; helper_count: number | null; sam_minutes: number | null; cycle_time_seconds: number | null; expected_output_per_day: number | null; automation_level: string;
   setup_changeover_minutes: number | null; expected_defect_rate: number | null; source_type: string; evidence_note: string; evidence_ref: string | null; source_date: string | null;
-  is_active: boolean; created_by: string; updated_by: string;
+  is_active: boolean; created_by: string; updated_by: string; change_type: string | null;
 }
-interface VersionDetail extends VersionRow { operations: Operation[] }
+interface VersionDetail extends VersionRow { operations: Operation[]; assumptions_json?: Record<string, unknown> }
 interface Options { layers: string[]; statuses: string[]; source_types: string[]; machine_model_statuses: string[] }
 interface MachineType { code: string; name: string }
 interface MachineModel { id: number; machine_type_code: string; brand: string; model: string; automation_level: string; source: string; status: string; note: string }
@@ -307,6 +307,9 @@ function DetailModal({ versionId, perm, opts, machineTypes, onClose, onChanged, 
   const [machineModels, setMachineModels] = useState<MachineModel[]>([]);
   const [editOp, setEditOp] = useState<Partial<Operation> & { isNew?: boolean } | null>(null);
   const [deriving, setDeriving] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [showEvidence, setShowEvidence] = useState(false);
+  const [comparing, setComparing] = useState(false);
 
   const load = useCallback(async () => {
     const [vd, mm] = await Promise.all([api.get<VersionDetail>(`${RES}/versions/${versionId}`), api.get<MachineModel[]>(`${RES}/machine-models`)]);
@@ -357,6 +360,13 @@ function DetailModal({ versionId, perm, opts, machineTypes, onClose, onChanged, 
           <button onClick={() => act(() => api.post(`${RES}/versions/${versionId}/recalc-sam`), "Đã tính lại Total SAM.")} className={btn}>Tính lại SAM</button>
           {v.status === "DRAFT" && <button onClick={() => act(() => api.post(`${RES}/versions/${versionId}/simulate`), "Đã chuyển Simulated.")} className={btn}>→ Simulated</button>}
           <button onClick={() => setDeriving(true)} className={btn} data-testid="derive-open">Derive sang layer khác</button>
+          {v.layer === "CURRENT_PROCESS" && <button onClick={() => setGenerating(true)} className={btn} data-testid="generate-optimized-open">Tạo đề xuất Optimized Current Technology</button>}
+        </div>
+      )}
+      {v.source_type === "AUTO_GENERATED" && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          <button onClick={() => setShowEvidence(true)} className={btn}>Generation Evidence</button>
+          {v.derived_from_version_id && <button onClick={() => setComparing(true)} className={btn}>So sánh với Current gốc</button>}
         </div>
       )}
       <div className="mt-2 flex flex-wrap gap-2">
@@ -367,7 +377,7 @@ function DetailModal({ versionId, perm, opts, machineTypes, onClose, onChanged, 
       {!v.editable && <p className="mt-2 text-[11px] text-amber-700">Version {v.status} — nội dung kỹ thuật bất biến. Muốn thay đổi, hãy Derive sang version mới.</p>}
 
       <table className="mt-4 w-full text-sm">
-        <thead><tr className="text-[11px] uppercase text-slate-400"><th className="text-left">#</th><th className="text-left">Công đoạn</th><th className="text-left">Máy</th><th className="text-right">Operator</th><th className="text-right">Helper</th><th className="text-right">SAM</th><th className="text-left">Nguồn/Evidence</th>{perm.manage && v.editable && <th />}</tr></thead>
+        <thead><tr className="text-[11px] uppercase text-slate-400"><th className="text-left">#</th><th className="text-left">Công đoạn</th><th className="text-left">Máy</th><th className="text-right">Operator</th><th className="text-right">Helper</th><th className="text-right">SAM</th><th className="text-left">Thay đổi</th><th className="text-left">Nguồn/Evidence</th>{perm.manage && v.editable && <th />}</tr></thead>
         <tbody>
           {v.operations.filter((o) => o.is_active).map((o) => (
             <tr key={o.id} className="border-t border-slate-100">
@@ -375,11 +385,12 @@ function DetailModal({ versionId, perm, opts, machineTypes, onClose, onChanged, 
               <td className="text-xs">{o.machine_type_code ?? "—"}{o.machine_model_id ? ` · ${machineModels.find((m) => m.id === o.machine_model_id)?.model ?? "#" + o.machine_model_id}` : ""}</td>
               <td className="text-right">{o.operator_count ?? <span className="text-slate-400" title="Chưa xác định">—</span>}</td><td className="text-right">{o.helper_count ?? "—"}</td>
               <td className="text-right">{o.sam_minutes ?? <span className="text-amber-600">thiếu</span>}</td>
+              <td className="text-xs">{o.change_type && o.change_type !== "UNCHANGED" ? <span className="pg-chip pg-adv">{o.change_type}</span> : (o.change_type ? <span className="text-slate-400">Giữ nguyên</span> : "—")}</td>
               <td className="max-w-[200px] truncate text-xs text-slate-400" title={o.evidence_note}>{o.source_type}{o.evidence_note ? ` · ${o.evidence_note}` : ""}</td>
               {perm.manage && v.editable && <td className="whitespace-nowrap text-right text-xs"><button onClick={() => setEditOp(o)} className="text-brand hover:underline">Sửa</button><button onClick={() => removeOp(o)} className="ml-2 text-red-500 hover:underline">Gỡ</button></td>}
             </tr>
           ))}
-          {v.operations.filter((o) => o.is_active).length === 0 && <tr><td colSpan={8} className="py-4 text-center text-slate-400">Chưa có công đoạn nào.</td></tr>}
+          {v.operations.filter((o) => o.is_active).length === 0 && <tr><td colSpan={9} className="py-4 text-center text-slate-400">Chưa có công đoạn nào.</td></tr>}
         </tbody>
       </table>
 
@@ -404,6 +415,107 @@ function DetailModal({ versionId, perm, opts, machineTypes, onClose, onChanged, 
       )}
       {deriving && (
         <DeriveModal opts={opts} onClose={() => setDeriving(false)} onDone={(id) => { setDeriving(false); onChanged(); setMsg({ ok: true, text: "Đã tạo version mới (derive)." }); window.setTimeout(() => { onClose(); }, 0); void id; }} versionId={versionId} setMsg={setMsg} />
+      )}
+      {generating && (
+        <GenerateOptimizedModal versionId={versionId} onClose={() => setGenerating(false)} onDone={() => { setGenerating(false); onChanged(); setMsg({ ok: true, text: "Đã tạo đề xuất Optimized Current Technology." }); window.setTimeout(() => { onClose(); }, 0); }} setMsg={setMsg} />
+      )}
+      {showEvidence && <GenerationEvidenceModal assumptions={v.assumptions_json ?? {}} onClose={() => setShowEvidence(false)} />}
+      {comparing && v.derived_from_version_id && <CompareCurrentOptimizedModal optimizedId={v.id} onClose={() => setComparing(false)} setMsg={setMsg} />}
+    </Modal>
+  );
+}
+
+// ================================================================ Task 3 — Optimized Current Technology Generator (Issue #7)
+interface PreviewCandidate { id: number; candidate_machine_type_code: string; candidate_machine_model_id: number | null; machine_model_status: string | null; compatibility_status: string; eligible: boolean }
+interface PreviewOp { sequence_no: number; operation_code: string; operation_name: string; current_machine_type_code: string | null; decision: string; auto_candidate_id: number | null; candidates: PreviewCandidate[] }
+const DECISION_LABEL: Record<string, string> = { UNCHANGED: "Giữ nguyên", MACHINE_SUBSTITUTION: "Đề xuất thay máy (tự động)", MULTIPLE_CANDIDATES: "Nhiều lựa chọn — cần chọn tay", UNVERIFIED_CANDIDATE_AVAILABLE: "Có lựa chọn chưa kiểm chứng" };
+
+function GenerateOptimizedModal({ versionId, onClose, onDone, setMsg }: { versionId: number; onClose: () => void; onDone: (id: number) => void; setMsg: (m: Msg) => void }) {
+  const [ops, setOps] = useState<PreviewOp[] | null>(null);
+  const [selections, setSelections] = useState<Record<string, number>>({});
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api.get<{ operations: PreviewOp[] }>(`${RES}/versions/${versionId}/optimized-preview`).then((r) => setOps(r.data.operations)).catch((e) => setMsg({ ok: false, text: errorMessage(e) }));
+  }, [versionId, setMsg]);
+
+  const submit = async () => {
+    setBusy(true);
+    try {
+      const r = await api.post<{ created: boolean; version: { id: number } }>(`${RES}/versions/${versionId}/generate-optimized`, { selections });
+      if (!r.data.created) setMsg({ ok: true, text: "Không có gì thay đổi so với đề xuất đã có — dùng lại proposal cũ." });
+      onDone(r.data.version.id);
+    } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); } finally { setBusy(false); }
+  };
+
+  return (
+    <Modal title="Tạo đề xuất Optimized Current Technology" onClose={onClose} wide>
+      <p className="text-xs text-slate-500">
+        Copy toàn bộ công đoạn từ Current Process; chỉ thay máy ở công đoạn có candidate đủ điều kiện (compatibility đã Approved và máy/model đã Approved hoặc Trial).
+        Không tự bịa SAM/output/lao động — giữ nguyên giá trị hiện có (thường chưa có). Với công đoạn có nhiều lựa chọn hoặc lựa chọn chưa kiểm chứng, hãy chọn tay bên dưới.
+      </p>
+      {!ops && <p className="mt-3 text-xs text-slate-400">Đang tải...</p>}
+      {ops && (
+        <div className="mt-3 max-h-96 overflow-y-auto rounded-xl border border-slate-200">
+          <table className="w-full text-xs">
+            <thead><tr className="text-[11px] uppercase text-slate-400"><th className={th}>#</th><th className={th}>Công đoạn</th><th className={th}>Máy hiện tại</th><th className={th}>Quyết định</th><th className={th}>Chọn candidate</th></tr></thead>
+            <tbody>
+              {ops.map((o) => (
+                <tr key={o.sequence_no} className="border-t border-slate-100">
+                  <td className="px-3 py-1.5">{o.sequence_no}</td><td className="px-3">{o.operation_name}</td><td className="px-3">{o.current_machine_type_code ?? "—"}</td>
+                  <td className="px-3">{DECISION_LABEL[o.decision] ?? o.decision}</td>
+                  <td className="px-3">
+                    {(o.decision === "MULTIPLE_CANDIDATES" || o.decision === "UNVERIFIED_CANDIDATE_AVAILABLE") && o.candidates.length > 0 ? (
+                      <select className={inp} value={selections[String(o.sequence_no)] ?? ""} onChange={(e) => setSelections((s) => ({ ...s, [String(o.sequence_no)]: Number(e.target.value) }))}>
+                        <option value="">Giữ nguyên</option>
+                        {o.candidates.map((c) => <option key={c.id} value={c.id}>{c.candidate_machine_type_code} ({c.compatibility_status}{c.machine_model_status ? `/model ${c.machine_model_status}` : ""}){c.eligible ? "" : " — chưa kiểm chứng"}</option>)}
+                      </select>
+                    ) : (o.auto_candidate_id ? "Tự động" : "—")}
+                  </td>
+                </tr>
+              ))}
+              {ops.length === 0 && <tr><td colSpan={5} className="py-4 text-center text-slate-400">Version nguồn chưa có công đoạn nào.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div className="mt-5 flex justify-end gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-4 py-2 text-sm">Hủy</button>
+        <button onClick={submit} disabled={busy || !ops} className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white disabled:opacity-40" data-testid="generate-optimized-submit">Generate</button></div>
+    </Modal>
+  );
+}
+
+function GenerationEvidenceModal({ assumptions, onClose }: { assumptions: Record<string, unknown>; onClose: () => void }) {
+  return (
+    <Modal title="Generation Evidence" onClose={onClose} wide>
+      <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-xl bg-slate-950 p-3 text-xs text-slate-100">{JSON.stringify(assumptions, null, 2)}</pre>
+    </Modal>
+  );
+}
+
+function CompareCurrentOptimizedModal({ optimizedId, onClose, setMsg }: { optimizedId: number; onClose: () => void; setMsg: (m: Msg) => void }) {
+  interface CompareOut {
+    operation_changed_count: number; machine_substitution_count: number; automation_change_count: number;
+    total_sam_minutes: { a: number | null; b: number | null }; sam_status: { a: string; b: string };
+    required_labor: { a: number | null; b: number | null }; expected_output_per_day: { a: number | null; b: number | null };
+  }
+  const [c, setC] = useState<CompareOut | null>(null);
+  useEffect(() => {
+    api.get<CompareOut>(`${RES}/versions/${optimizedId}/compare-with-source`).then((r) => setC(r.data)).catch((e) => setMsg({ ok: false, text: errorMessage(e) }));
+  }, [optimizedId, setMsg]);
+  const naOr = (v: number | null) => (v === null ? <span className="text-slate-400">N/A</span> : num(v));
+  return (
+    <Modal title="So sánh Current Process vs Optimized Current Technology" onClose={onClose}>
+      {!c && <p className="text-xs text-slate-400">Đang tải...</p>}
+      {c && (
+        <div className="space-y-2 text-sm">
+          <p>Số công đoạn thay đổi: <b>{c.operation_changed_count}</b></p>
+          <p>Thay máy (machine substitution): <b>{c.machine_substitution_count}</b></p>
+          <p>Nâng cấp tự động hóa: <b>{c.automation_change_count}</b></p>
+          <p>Total SAM: {naOr(c.total_sam_minutes.a)} → {naOr(c.total_sam_minutes.b)} ({c.sam_status.a} → {c.sam_status.b})</p>
+          <p>Required labor: {naOr(c.required_labor.a)} → {naOr(c.required_labor.b)}</p>
+          <p>Expected output/day: {naOr(c.expected_output_per_day.a)} → {naOr(c.expected_output_per_day.b)}</p>
+        </div>
       )}
     </Modal>
   );
