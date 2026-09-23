@@ -135,6 +135,16 @@ def test_resolve_machine_unmapped_is_soft_exception():
     assert code is None and cat == "UNMAPPED_MACHINE_TYPE"
 
 
+# ------------------------------------------------------------------ PR #6 review vòng 2 mục 2 — crosswalk phải lọc đúng source_system + match_type
+def test_crosswalk_map_ignores_other_source_system_and_invalid_match_type(db):
+    db.add(MachineCrosswalk(source_system="OTHER_SOURCE", source_equipment_code="TB0011", machine_type_code="1", match_type="EXACT"))
+    db.add(MachineCrosswalk(source_system="ERP_QTCN", source_equipment_code="TB0099", machine_type_code="9", match_type="POSSIBLE"))  # match_type không hợp lệ để auto-map
+    db.commit()
+    cw = svc._crosswalk_map(db)
+    assert "TB0011" not in cw  # nguồn khác ERP_QTCN không được dùng
+    assert "TB0099" not in cw  # match_type POSSIBLE không được tự map
+
+
 # ------------------------------------------------------------------ AC-201/202 — preview & apply đúng luồng chính (NEW)
 def test_preview_does_not_write_anything(db, monkeypatch):
     source = _source([_master(1, "A100")], [_op(1, 1, 1, 100)])
@@ -308,26 +318,46 @@ def test_fingerprint_changes_when_master_sam_sot_labor_changes_even_if_operation
 
 
 # ------------------------------------------------------------------ PR #6 review mục 2 — atomic khi TechnologyProcess chưa tồn tại
-def test_apply_one_failure_after_process_created_leaves_no_orphan_process(db, monkeypatch):
+def test_apply_one_only_flushes_never_commits(db, monkeypatch):
+    """_apply_one() không được tự commit (PR #6 review vòng 2 mục 1) — atomicity của cả item (Process+Version+
+    Operation+SyncRunItem+soft-exception) là trách nhiệm của apply(), không phải _apply_one()."""
     source = _source([_master(1, "L300")], [_op(1, 1, 1, 100)])
     _patch_source(monkeypatch, source)
     items = svc.classify_all(db, source)
     item = next(it for it in items if it["status"] == "NEW")
+
+    committed = {"n": 0}
+    real_commit = db.commit
+    monkeypatch.setattr(db, "commit", lambda: committed.update(n=committed["n"] + 1))
+    svc._apply_one(db, ADMIN, 0, item, source["congdoan_catalog"], source["thietbi_catalog"], svc.utcnow())
+    assert committed["n"] == 0  # _apply_one không gọi commit
+    monkeypatch.setattr(db, "commit", real_commit)
+    db.rollback()  # dọn phần đã flush (chưa commit) trong test này
+
+
+def test_apply_item_failure_after_version_flushed_rolls_back_process_version_operation_together(db, monkeypatch):
+    """PR #6 review vòng 2 mục 1 — nếu commit của MỘT item (gồm Process/Version/Operation + SyncRunItem +
+    soft-exception) lỗi, phải rollback SẠCH toàn bộ item đó, không để business data commit dở dang rồi mới biết lỗi."""
+    source = _source([_master(1, "L400")], [_op(1, 1, 1, 100)])
+    _patch_source(monkeypatch, source)
 
     real_commit = db.commit
     calls = {"n": 0}
 
     def flaky_commit():
         calls["n"] += 1
-        raise RuntimeError("boom-after-process-created")
+        if calls["n"] == 2:  # call #1 = start_run(); call #2 = commit của item NEW (Process+Version+Operation+SyncRunItem)
+            raise RuntimeError("boom-mid-item-commit")
+        return real_commit()
 
     monkeypatch.setattr(db, "commit", flaky_commit)
-    with pytest.raises(RuntimeError):
-        svc._apply_one(db, ADMIN, 0, item, source["congdoan_catalog"], source["thietbi_catalog"], svc.utcnow())
-    monkeypatch.setattr(db, "commit", real_commit)
-    db.rollback()
-    assert db.query(TechnologyProcess).count() == 0  # process vừa add+flush (chưa commit) phải rollback sạch, không mồ côi
+    r = svc.apply(db, ADMIN)
+    assert r["failed"] == 1 and r["created"] == 0
+    assert db.query(TechnologyProcess).count() == 0  # rollback sạch — không còn process/version dở dang
     assert db.query(TechnologyProcessVersion).count() == 0
+    assert db.query(TechnologyProcessOperation).count() == 0
+    failed_items = db.query(SyncRunItem).filter_by(run_id=r["run"].id, kind="FAILED").all()
+    assert len(failed_items) == 1 and "L400" in failed_items[0].source_key
 
 
 # ------------------------------------------------------------------ PR #6 review mục 3 — orphan Detail khác -1 -> INVALID_SOURCE_RELATION

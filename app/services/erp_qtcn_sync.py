@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 from app.db.session import utcnow
 from app.models.core import User
 from app.models.data import SyncRunItem
-from app.models.erp_sync import MachineCrosswalk, TechProcessSyncException
+from app.models.erp_sync import MACHINE_MATCH_TYPES, MachineCrosswalk, TechProcessSyncException
 from app.models.technology_process import TechnologyProcess, TechnologyProcessOperation, TechnologyProcessVersion
 from app.services import technology_process_service as tps
 from app.services.audit import write_audit
@@ -194,7 +194,13 @@ def compute_fingerprint(style_cc: str, mua: str, master: dict, phienban: int, op
 
 # ------------------------------------------------------------------ machine crosswalk (chỉ EXACT/MANUAL_CONFIRMED được tự map)
 def _crosswalk_map(db: Session) -> dict[str, str]:
-    rows = db.query(MachineCrosswalk).filter(MachineCrosswalk.machine_type_code.isnot(None)).all()
+    """PR #6 review vòng 2 mục 2: bảng crosswalk là multi-source, phải lọc đúng `source_system=ERP_QTCN` và
+    `match_type IN (EXACT, MANUAL_CONFIRMED)` — không lấy mọi row có machine_type_code bất kể nguồn/trạng thái."""
+    rows = (
+        db.query(MachineCrosswalk)
+        .filter(MachineCrosswalk.source_system == SOURCE, MachineCrosswalk.machine_type_code.isnot(None), MachineCrosswalk.match_type.in_(MACHINE_MATCH_TYPES))
+        .all()
+    )
     return {r.source_equipment_code: r.machine_type_code for r in rows}
 
 
@@ -346,8 +352,9 @@ def _get_or_build_process(db: Session, user: User, style_cc: str) -> TechnologyP
 # ------------------------------------------------------------------ Apply (ghi thật, atomic theo từng style — BR-216/217)
 def _apply_one(db: Session, user: User, run_id: int, item: dict, congdoan_catalog: dict[int, str], thietbi_catalog: dict[int, str], snapshot_at: datetime) -> tuple[int, int]:
     """Trả (version_id, process_id). CHỈ gọi khi item không phải NO_CHANGE/EXCEPTION (caller — apply() — đã lọc).
-    Toàn bộ Process(nếu mới)+Version+Operation chỉ commit MỘT LẦN ở cuối — lỗi bất kỳ trước đó (kể cả process vừa
-    tạo) sẽ được caller rollback() sạch, không để lại process rỗng (BR-216, PR #6 mục 2)."""
+    CHỈ flush(), KHÔNG commit (PR #6 review vòng 2 mục 1): commit phải là MỘT LẦN DUY NHẤT ở caller, sau khi đã add
+    cả SyncRunItem + soft exception của item này vào cùng transaction — nếu bất kỳ phần nào (kể cả ghi SyncRunItem)
+    lỗi, toàn bộ Process/Version/Operation phải rollback theo, không được commit dở dang."""
     m = item["master"]
     style_cc = tps._canon_key(m["MaHang"])
 
@@ -391,8 +398,7 @@ def _apply_one(db: Session, user: User, run_id: int, item: dict, congdoan_catalo
             )
         )
     v.total_sam_minutes, v.sam_status = None, "INCOMPLETE"
-    db.commit()
-    write_audit("TECH_PROCESS_ERP_SYNC_VERSION_CREATE", user=user, object_type="TechnologyProcessVersion", object_id=str(v.id), detail=f"{p.process_code} CURRENT_PROCESS from ERP QTCN#{m['Id']}")
+    db.flush()
     return v.id, p.id
 
 
@@ -432,11 +438,19 @@ def apply(db: Session, user: User, trigger: str = "MANUAL") -> dict:
                 db.commit()
                 continue
 
+            # NEW/CHANGED: Process(nếu mới)+Version+Operation+SyncRunItem+soft-exception của ĐÚNG item này chỉ commit
+            # MỘT LẦN DUY NHẤT (PR #6 review vòng 2 mục 1) — lỗi ở bất kỳ phần nào (kể cả ghi SyncRunItem) rollback
+            # toàn bộ, không để business data commit trước rồi mới biết item thất bại.
             try:
                 v_id, p_id = _apply_one(db, user, run.id, it, source["congdoan_catalog"], source["thietbi_catalog"], snapshot_at)
-                created += 1
                 db.add(_run_item(run.id, it["status"], source_key, f"Tạo Current Process Version mới ({it['status']})", {"style_cc": style_cc, "process_id": p_id, "version_id": v_id}))
+                soft = it.get("exceptions_soft", [])
+                for se in soft:
+                    db.add(TechProcessSyncException(sync_run_id=run.id, category=se["category"], source_key=se["source_key"], source_snapshot={}, reason=se["reason"]))
                 db.commit()
+                created += 1
+                exception_count += len(soft)
+                write_audit("TECH_PROCESS_ERP_SYNC_VERSION_CREATE", user=user, object_type="TechnologyProcessVersion", object_id=str(v_id), detail=f"process_id={p_id} CURRENT_PROCESS from ERP MaHang={m.get('MaHang')}")
             except Exception as exc:  # noqa: BLE001 — cô lập lỗi 1 style, không hỏng cả run (BR-217)
                 db.rollback()
                 failed += 1
@@ -444,11 +458,6 @@ def apply(db: Session, user: User, trigger: str = "MANUAL") -> dict:
                 db.add(TechProcessSyncException(sync_run_id=run.id, category="OTHER", source_key=source_key, source_snapshot={"MaHang": m.get("MaHang")}, reason=f"{type(exc).__name__}: {str(exc)[:300]}"))
                 db.add(_run_item(run.id, "FAILED", source_key, f"{type(exc).__name__}: {str(exc)[:300]}", {"style_cc": style_cc}))
                 db.commit()
-
-            for se in it.get("exceptions_soft", []):
-                exception_count += 1
-                db.add(TechProcessSyncException(sync_run_id=run.id, category=se["category"], source_key=se["source_key"], source_snapshot={}, reason=se["reason"]))
-            db.commit()
 
         run.total_records = len(source["master"])
         run.matched = created + no_change
