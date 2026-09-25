@@ -266,6 +266,9 @@ def derive_version(db: Session, user: User, source_version_id: int, target_layer
     src = get_version(db, source_version_id)
     if target_layer not in LAYERS:
         raise _bad(f"layer phải là một trong {LAYERS}")
+    if target_layer == "FUTURE_TECHNOLOGY":
+        # Task 4 (Issue #9 review mục 6): Future phải đi qua generator/scouting flow (candidate + evidence + fingerprint), không copy thuần.
+        raise _bad("Không derive trực tiếp sang FUTURE_TECHNOLOGY — dùng 'Tạo đề xuất Future Technology' (generator/scouting flow)")
     p = get_process(db, src.technology_process_id)
     new_d = {
         "layer": target_layer, "source_type": d.get("source_type") or "ENGINEERING", "source_ref": d.get("source_ref") or f"Derived from version #{src.id}",

@@ -58,6 +58,7 @@ export default function TechnologyProcessPanel({ perm }: { perm: Perm }) {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [compareIds, setCompareIds] = useState<number[] | null>(null);
   const [machineModels, setMachineModels] = useState(false);
+  const [futureOpen, setFutureOpen] = useState(false);
   const [erpSync, setErpSync] = useState(false);
 
   const load = useCallback(async () => {
@@ -92,6 +93,7 @@ export default function TechnologyProcessPanel({ perm }: { perm: Perm }) {
         <span className="flex-1" />
         {selected.size > 0 && <button onClick={() => setCompareIds([...selected])} className={btn} data-testid="compare-btn">So sánh ({selected.size})</button>}
         {perm.syncView && <button onClick={() => setErpSync(true)} className={btn} data-testid="erp-sync-open">Đồng bộ ERP QTCN</button>}
+        <button onClick={() => setFutureOpen(true)} className={btn} data-testid="future-open">Future Technology (scouting)</button>
         {perm.manage && <button onClick={() => setMachineModels(true)} className={btn}>Máy (model/candidate)</button>}
         {perm.manage && <button onClick={() => setBootstrapping(true)} className={btn} data-testid="bootstrap-open">Bootstrap Current Process</button>}
         {perm.manage && <button onClick={() => setCreating(true)} className={primary} data-testid="process-add">+ Process / Version mới</button>}
@@ -124,6 +126,7 @@ export default function TechnologyProcessPanel({ perm }: { perm: Perm }) {
       )}
       {compareIds && <CompareModal versionIds={compareIds} onClose={() => setCompareIds(null)} setMsg={setMsg} />}
       {machineModels && perm.manage && <MachineModelsModal machineTypes={machineTypes} onClose={() => setMachineModels(false)} setMsg={setMsg} />}
+      {futureOpen && <FutureCandidatesModal perm={perm} machineTypes={machineTypes} onClose={() => setFutureOpen(false)} setMsg={setMsg} />}
       {erpSync && perm.syncView && <ErpSyncModal perm={perm} onClose={() => setErpSync(false)} onApplied={load} setMsg={setMsg} />}
     </div>
   );
@@ -310,6 +313,7 @@ function DetailModal({ versionId, perm, opts, machineTypes, onClose, onChanged, 
   const [generating, setGenerating] = useState(false);
   const [showEvidence, setShowEvidence] = useState(false);
   const [comparing, setComparing] = useState(false);
+  const [generatingFuture, setGeneratingFuture] = useState(false);
 
   const load = useCallback(async () => {
     const [vd, mm] = await Promise.all([api.get<VersionDetail>(`${RES}/versions/${versionId}`), api.get<MachineModel[]>(`${RES}/machine-models`)]);
@@ -363,10 +367,14 @@ function DetailModal({ versionId, perm, opts, machineTypes, onClose, onChanged, 
           {v.layer === "CURRENT_PROCESS" && <button onClick={() => setGenerating(true)} className={btn} data-testid="generate-optimized-open">Tạo đề xuất Optimized Current Technology</button>}
         </div>
       )}
-      {v.source_type === "AUTO_GENERATED" && (
+      {perm.manage && v.status !== "RETIRED" && (v.layer === "CURRENT_PROCESS" || v.layer === "OPTIMIZED_CURRENT_TECHNOLOGY") && (
+        <div className="mt-2"><button onClick={() => setGeneratingFuture(true)} className={btn} data-testid="generate-future-open">Tạo đề xuất Future Technology</button></div>
+      )}
+      {(v.source_type === "AUTO_GENERATED" || v.source_type === "TECHNOLOGY_SCOUTING") && (
         <div className="mt-2 flex flex-wrap gap-2">
           <button onClick={() => setShowEvidence(true)} className={btn}>Generation Evidence</button>
-          {v.derived_from_version_id && <button onClick={() => setComparing(true)} className={btn}>So sánh với Current gốc</button>}
+          {v.derived_from_version_id && v.source_type === "AUTO_GENERATED" && <button onClick={() => setComparing(true)} className={btn}>So sánh với Current gốc</button>}
+          {v.derived_from_version_id && v.source_type === "TECHNOLOGY_SCOUTING" && <button onClick={() => setComparing(true)} className={btn} data-testid="compare-future-open">So sánh với baseline</button>}
         </div>
       )}
       <div className="mt-2 flex flex-wrap gap-2">
@@ -420,7 +428,11 @@ function DetailModal({ versionId, perm, opts, machineTypes, onClose, onChanged, 
         <GenerateOptimizedModal versionId={versionId} onClose={() => setGenerating(false)} onDone={() => { setGenerating(false); onChanged(); setMsg({ ok: true, text: "Đã tạo đề xuất Optimized Current Technology." }); window.setTimeout(() => { onClose(); }, 0); }} setMsg={setMsg} />
       )}
       {showEvidence && <GenerationEvidenceModal assumptions={v.assumptions_json ?? {}} onClose={() => setShowEvidence(false)} />}
-      {comparing && v.derived_from_version_id && <CompareCurrentOptimizedModal optimizedId={v.id} onClose={() => setComparing(false)} setMsg={setMsg} />}
+      {comparing && v.derived_from_version_id && v.source_type === "AUTO_GENERATED" && <CompareCurrentOptimizedModal optimizedId={v.id} onClose={() => setComparing(false)} setMsg={setMsg} />}
+      {comparing && v.derived_from_version_id && v.source_type === "TECHNOLOGY_SCOUTING" && <CompareFutureModal futureId={v.id} onClose={() => setComparing(false)} setMsg={setMsg} />}
+      {generatingFuture && (
+        <GenerateFutureModal versionId={versionId} onClose={() => setGeneratingFuture(false)} onDone={() => { setGeneratingFuture(false); onChanged(); setMsg({ ok: true, text: "Đã tạo đề xuất Future Technology." }); window.setTimeout(() => { onClose(); }, 0); }} setMsg={setMsg} />
+      )}
     </Modal>
   );
 }
@@ -534,9 +546,9 @@ function DeriveModal({ versionId, opts, onClose, onDone, setMsg }: { versionId: 
   };
   return (
     <Modal title="Derive sang layer khác" onClose={onClose}>
-      <p className="text-xs text-slate-500">Tạo version Draft mới, copy các công đoạn đang active của version hiện tại. Không tự đồng bộ về sau — sửa version nguồn sẽ không ảnh hưởng bản derive này.</p>
+      <p className="text-xs text-slate-500">Tạo version Draft mới, copy các công đoạn đang active của version hiện tại. Không tự đồng bộ về sau — sửa version nguồn sẽ không ảnh hưởng bản derive này. Layer Future Technology chỉ tạo qua "Tạo đề xuất Future Technology" (cần candidate + evidence).</p>
       <div className="mt-3 grid grid-cols-1 gap-3">
-        <F label="Layer đích"><select className={inp} value={layer} onChange={(e) => setLayer(e.target.value)}>{opts.layers.map((l) => <option key={l} value={l}>{LAYER_LABEL[l] ?? l}</option>)}</select></F>
+        <F label="Layer đích"><select className={inp} value={layer} onChange={(e) => setLayer(e.target.value)}>{opts.layers.filter((l) => l !== "FUTURE_TECHNOLOGY").map((l) => <option key={l} value={l}>{LAYER_LABEL[l] ?? l}</option>)}</select></F>
         <F label="Ghi chú"><input className={inp} value={note} onChange={(e) => setNote(e.target.value)} /></F>
       </div>
       <div className="mt-5 flex justify-end gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-4 py-2 text-sm">Hủy</button>
@@ -614,6 +626,250 @@ function MachineModelsModal({ machineTypes, onClose, setMsg }: { machineTypes: M
           <div className="mt-5 flex justify-end gap-2"><button onClick={() => setEdit(null)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm">Hủy</button>
             <button onClick={save} disabled={!edit.machine_type_code} className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white disabled:opacity-40" data-testid="mm-save">Lưu</button></div>
         </Modal>
+      )}
+    </Modal>
+  );
+}
+
+// ================================================================ Task 4 — Future Technology & Technology Scouting (Issue #9)
+interface FCandidate {
+  id: number; candidate_code: string; machine_type_code: string; machine_model_id: number | null; brand: string; model_name: string; technology_name: string; automation_level: string;
+  status: string; status_reason: string; identity_editable: boolean; allowed_transitions: string[]; reviewed_by: string; approved_by: string;
+}
+interface FEvidence { id: number; source_ref: string; source_kind: string; basis: string; metric_code: string; value: number | null; unit: string; evidence_date: string | null; note: string; added_by: string }
+interface FHistory { id: number; from_status: string | null; to_status: string; reason: string; actor: string; at: string }
+interface FCompat { id: number; candidate_id: number; operation_code: string; source_machine_type_code: string | null; compatibility_status: string; evidence_ref: string | null; evidence_note: string }
+interface FOptions { statuses: string[]; evidence_source_kinds: string[]; evidence_bases: string[]; evidence_metric_codes: string[]; compatibility_statuses: string[] }
+const FSTATUS_LABEL: Record<string, string> = { DISCOVERED: "Discovered", UNDER_REVIEW: "Under review", TRIAL: "Trial", APPROVED_FOR_FUTURE: "Approved for future", REJECTED: "Rejected", INACTIVE: "Inactive" };
+const FSTATUS_CLS: Record<string, string> = { DISCOVERED: "bg-slate-500/20 text-slate-500", UNDER_REVIEW: "pg-known", TRIAL: "pg-adv", APPROVED_FOR_FUTURE: "pg-ok", REJECTED: "bg-red-500/20 text-red-600", INACTIVE: "bg-slate-500/20 text-slate-400" };
+
+function FutureCandidatesModal({ perm, machineTypes, onClose, setMsg }: { perm: Perm; machineTypes: MachineType[]; onClose: () => void; setMsg: (m: Msg) => void }) {
+  const [opts, setOpts] = useState<FOptions | null>(null);
+  const [rows, setRows] = useState<FCandidate[]>([]);
+  const [status, setStatus] = useState("");
+  const [detailId, setDetailId] = useState<number | null>(null);
+  const [creating, setCreating] = useState(false);
+  const load = useCallback(async () => setRows((await api.get<FCandidate[]>(`${RES}/future/candidates`, { params: status ? { status } : {} })).data), [status]);
+  useEffect(() => { api.get<FOptions>(`${RES}/future/options`).then((r) => setOpts(r.data)).catch((e) => setMsg({ ok: false, text: errorMessage(e) })); }, [setMsg]);
+  useEffect(() => { load().catch((e) => setMsg({ ok: false, text: errorMessage(e) })); }, [load, setMsg]);
+  return (
+    <Modal title="Future Technology — Scouting / Candidate" onClose={onClose} wide>
+      <p className="text-xs text-slate-500">Candidate công nghệ/máy thế hệ mới có nguồn evidence rõ. Discovered/Under review chỉ để xem (chưa chọn được khi tạo đề xuất); Trial chọn tay (đánh dấu chưa kiểm chứng); chỉ Approved for future mới có thể tự áp khi là candidate duy nhất.</p>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <select value={status} onChange={(e) => setStatus(e.target.value)} className={inp} aria-label="Lọc trạng thái"><option value="">Mọi trạng thái</option>{(opts?.statuses ?? []).map((s) => <option key={s} value={s}>{FSTATUS_LABEL[s] ?? s}</option>)}</select>
+        <span className="flex-1" />
+        {perm.manage && <button onClick={() => setCreating(true)} className={primary} data-testid="future-candidate-add">+ Candidate</button>}
+      </div>
+      <div className="mt-3 max-h-96 overflow-y-auto rounded-xl border border-slate-200">
+        <table className="w-full text-xs" data-testid="future-candidate-table">
+          <thead><tr><th className={th}>Mã</th><th className={th}>Loại máy</th><th className={th}>Brand / Model / Technology</th><th className={th}>Tự động hóa</th><th className={th}>Trạng thái</th></tr></thead>
+          <tbody>
+            {rows.map((c) => (
+              <tr key={c.id} className="cursor-pointer border-t border-slate-100 hover:bg-slate-500/5" onClick={() => setDetailId(c.id)} data-testid={`future-candidate-row-${c.id}`}>
+                <td className="px-3 py-1.5 font-mono">{c.candidate_code}</td><td className="px-3">{c.machine_type_code}</td>
+                <td className="px-3">{[c.brand, c.model_name, c.technology_name].filter(Boolean).join(" · ")}</td><td className="px-3">{c.automation_level || "—"}</td>
+                <td className="px-3"><span className={`pg-chip ${FSTATUS_CLS[c.status] ?? ""}`}>{FSTATUS_LABEL[c.status] ?? c.status}</span></td>
+              </tr>
+            ))}
+            {rows.length === 0 && <tr><td colSpan={5} className="py-4 text-center text-slate-400">Chưa có candidate nào.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+      {creating && opts && <FutureCandidateForm machineTypes={machineTypes} onClose={() => setCreating(false)} onDone={(id) => { setCreating(false); void load(); setDetailId(id); }} setMsg={setMsg} />}
+      {detailId !== null && opts && <FutureCandidateDetail id={detailId} opts={opts} perm={perm} machineTypes={machineTypes} onClose={() => setDetailId(null)} onChanged={() => void load()} setMsg={setMsg} />}
+    </Modal>
+  );
+}
+
+function FutureCandidateForm({ machineTypes, initial, onClose, onDone, setMsg }: { machineTypes: MachineType[]; initial?: FCandidate; onClose: () => void; onDone: (id: number) => void; setMsg: (m: Msg) => void }) {
+  const [d, setD] = useState({ machine_type_code: initial?.machine_type_code ?? "", brand: initial?.brand ?? "", model_name: initial?.model_name ?? "", technology_name: initial?.technology_name ?? "", automation_level: initial?.automation_level ?? "" });
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    setBusy(true);
+    try {
+      const r = initial ? await api.put<FCandidate>(`${RES}/future/candidates/${initial.id}`, d) : await api.post<FCandidate>(`${RES}/future/candidates`, d);
+      setMsg({ ok: true, text: initial ? "Đã cập nhật candidate." : `Đã tạo candidate ${r.data.candidate_code}.` });
+      onDone(r.data.id);
+    } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); } finally { setBusy(false); }
+  };
+  return (
+    <Modal title={initial ? `Sửa candidate ${initial.candidate_code}` : "Candidate Future Technology mới"} onClose={onClose}>
+      <div className="grid grid-cols-2 gap-3">
+        <F label="Loại máy (bắt buộc — phải có trong danh mục)"><select className={inp} value={d.machine_type_code} onChange={(e) => setD({ ...d, machine_type_code: e.target.value })}><option value="">—</option>{machineTypes.map((t) => <option key={t.code} value={t.code}>{t.code} · {t.name}</option>)}</select></F>
+        <F label="Automation level (mô tả)"><input className={inp} value={d.automation_level} onChange={(e) => setD({ ...d, automation_level: e.target.value })} /></F>
+        <F label="Brand"><input className={inp} value={d.brand} onChange={(e) => setD({ ...d, brand: e.target.value })} /></F>
+        <F label="Model"><input className={inp} value={d.model_name} onChange={(e) => setD({ ...d, model_name: e.target.value })} /></F>
+        <div className="col-span-2"><F label="Technology name"><input className={inp} value={d.technology_name} onChange={(e) => setD({ ...d, technology_name: e.target.value })} /></F></div>
+      </div>
+      <div className="mt-5 flex justify-end gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-4 py-2 text-sm">Hủy</button>
+        <button onClick={submit} disabled={busy || !d.machine_type_code} className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white disabled:opacity-40" data-testid="future-candidate-save">Lưu</button></div>
+    </Modal>
+  );
+}
+
+function FutureCandidateDetail({ id, opts, perm, machineTypes, onClose, onChanged, setMsg }: { id: number; opts: FOptions; perm: Perm; machineTypes: MachineType[]; onClose: () => void; onChanged: () => void; setMsg: (m: Msg) => void }) {
+  const [c, setC] = useState<(FCandidate & { evidence: FEvidence[]; history: FHistory[] }) | null>(null);
+  const [compat, setCompat] = useState<FCompat[]>([]);
+  const [editing, setEditing] = useState(false);
+  const [ev, setEv] = useState({ source_ref: "", source_kind: "OTHER", basis: "CLAIMED", metric_code: "OTHER", value: "", unit: "", evidence_date: "", note: "" });
+  const [cp, setCp] = useState({ operation_code: "", source_machine_type_code: "", compatibility_status: "PROPOSED" });
+  const load = useCallback(async () => {
+    const [cd, cm] = await Promise.all([api.get<FCandidate & { evidence: FEvidence[]; history: FHistory[] }>(`${RES}/future/candidates/${id}`), api.get<FCompat[]>(`${RES}/future/compatibility`, { params: { candidate_id: id } })]);
+    setC(cd.data); setCompat(cm.data);
+  }, [id]);
+  useEffect(() => { load().catch((e) => setMsg({ ok: false, text: errorMessage(e) })); }, [load, setMsg]);
+  const run = async (fn: () => Promise<unknown>, ok: string) => { try { await fn(); setMsg({ ok: true, text: ok }); await load(); onChanged(); } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); } };
+  if (!c) return <Modal title="Đang tải..." onClose={onClose}><p className="text-sm text-slate-400">Đang tải...</p></Modal>;
+  const needsApprove = (to: string) => to === "APPROVED_FOR_FUTURE" || c.status === "APPROVED_FOR_FUTURE";
+  const transition = (to: string) => {
+    let reason = "";
+    if (to === "REJECTED" || to === "INACTIVE" || c.status === "INACTIVE") { reason = window.prompt(`Lý do chuyển sang ${FSTATUS_LABEL[to] ?? to}? (bắt buộc)`) ?? ""; if (!reason.trim()) return; }
+    void run(() => api.post(`${RES}/future/candidates/${id}/transition`, { to_status: to, reason }), `Đã chuyển ${FSTATUS_LABEL[to] ?? to}.`);
+  };
+  return (
+    <Modal title={`${c.candidate_code} · ${[c.brand, c.model_name, c.technology_name].filter(Boolean).join(" ")}`} onClose={onClose} wide>
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className={`pg-chip ${FSTATUS_CLS[c.status] ?? ""}`}>{FSTATUS_LABEL[c.status] ?? c.status}</span>
+        <span className="text-slate-400">Loại máy {c.machine_type_code}{c.automation_level ? ` · ${c.automation_level}` : ""}{c.approved_by ? ` · approved bởi ${c.approved_by}` : ""}{c.status_reason ? ` · lý do: ${c.status_reason}` : ""}</span>
+        <span className="flex-1" />
+        {perm.manage && c.identity_editable && <button onClick={() => setEditing(true)} className={btn}>Sửa định danh</button>}
+      </div>
+      {perm.manage && c.allowed_transitions.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2" data-testid="future-transitions">
+          {c.allowed_transitions.map((to) => {
+            const blocked = needsApprove(to) && !perm.approve;
+            return <button key={to} onClick={() => transition(to)} disabled={blocked} title={blocked ? "Cần quyền approve" : ""} className={`${btn} disabled:opacity-40`} data-testid={`future-to-${to}`}>→ {FSTATUS_LABEL[to] ?? to}</button>;
+          })}
+        </div>
+      )}
+      {!c.identity_editable && <p className="mt-2 text-[11px] text-amber-700">Định danh candidate chỉ sửa được khi Discovered/Under review. Evidence luôn chỉ thêm, không sửa/xóa.</p>}
+
+      <h4 className="mt-4 text-sm font-bold">Evidence</h4>
+      <table className="w-full text-xs"><thead><tr className="text-[11px] uppercase text-slate-400"><th className="text-left">Nguồn</th><th className="text-left">Loại</th><th className="text-left">Cơ sở</th><th className="text-left">Chỉ số</th><th className="text-right">Giá trị</th><th className="text-left">Ngày</th><th className="text-left">Ghi chú</th></tr></thead>
+        <tbody>{c.evidence.map((e) => <tr key={e.id} className="border-t border-slate-100"><td className="py-1">{e.source_ref}</td><td>{e.source_kind}</td><td>{e.basis}</td><td>{e.metric_code}</td><td className="text-right">{e.value === null ? "—" : `${e.value} ${e.unit}`}</td><td>{e.evidence_date ?? "—"}</td><td className="max-w-[180px] truncate" title={e.note}>{e.note}</td></tr>)}
+          {c.evidence.length === 0 && <tr><td colSpan={7} className="py-3 text-center text-slate-400">Chưa có evidence — candidate chưa đủ căn cứ để duyệt.</td></tr>}</tbody></table>
+      {perm.manage && (
+        <div className="mt-2 grid grid-cols-4 gap-2 rounded-xl border border-slate-200 p-3">
+          <F label="Nguồn / tham chiếu (bắt buộc)"><input className={inp} value={ev.source_ref} onChange={(e) => setEv({ ...ev, source_ref: e.target.value })} data-testid="future-ev-source" /></F>
+          <F label="Loại nguồn"><select className={inp} value={ev.source_kind} onChange={(e) => setEv({ ...ev, source_kind: e.target.value })}>{opts.evidence_source_kinds.map((k) => <option key={k}>{k}</option>)}</select></F>
+          <F label="Cơ sở"><select className={inp} value={ev.basis} onChange={(e) => setEv({ ...ev, basis: e.target.value })}>{opts.evidence_bases.map((k) => <option key={k}>{k}</option>)}</select></F>
+          <F label="Chỉ số"><select className={inp} value={ev.metric_code} onChange={(e) => setEv({ ...ev, metric_code: e.target.value })}>{opts.evidence_metric_codes.map((k) => <option key={k}>{k}</option>)}</select></F>
+          <F label="Giá trị"><input type="number" className={inp} value={ev.value} onChange={(e) => setEv({ ...ev, value: e.target.value })} /></F>
+          <F label="Đơn vị (bắt buộc nếu có giá trị)"><input className={inp} value={ev.unit} onChange={(e) => setEv({ ...ev, unit: e.target.value })} /></F>
+          <F label="Ngày"><input type="date" className={inp} value={ev.evidence_date} onChange={(e) => setEv({ ...ev, evidence_date: e.target.value })} /></F>
+          <F label="Ghi chú"><input className={inp} value={ev.note} onChange={(e) => setEv({ ...ev, note: e.target.value })} /></F>
+          <div className="col-span-4 text-right"><button disabled={!ev.source_ref.trim()} className={primary} data-testid="future-ev-add"
+            onClick={() => void run(async () => { await api.post(`${RES}/future/candidates/${id}/evidence`, { ...ev, value: ev.value === "" ? undefined : Number(ev.value), evidence_date: ev.evidence_date || undefined }); setEv({ ...ev, source_ref: "", value: "", note: "" }); }, "Đã thêm evidence.")}>+ Thêm evidence</button></div>
+        </div>
+      )}
+
+      <h4 className="mt-4 text-sm font-bold">Compatibility (operation ↔ candidate)</h4>
+      <table className="w-full text-xs"><thead><tr className="text-[11px] uppercase text-slate-400"><th className="text-left">Operation code</th><th className="text-left">Máy nguồn</th><th className="text-left">Trạng thái</th></tr></thead>
+        <tbody>{compat.map((r) => <tr key={r.id} className="border-t border-slate-100"><td className="py-1 font-mono">{r.operation_code}</td><td>{r.source_machine_type_code ?? "mọi loại"}</td>
+          <td>{perm.manage ? <select className={inp} value={r.compatibility_status} onChange={(e) => void run(() => api.put(`${RES}/future/compatibility/${r.id}`, { compatibility_status: e.target.value }), "Đã cập nhật compatibility.")}>{opts.compatibility_statuses.map((s) => <option key={s}>{s}</option>)}</select> : r.compatibility_status}</td></tr>)}
+          {compat.length === 0 && <tr><td colSpan={3} className="py-3 text-center text-slate-400">Chưa có mapping — candidate không được đề xuất cho công đoạn nào.</td></tr>}</tbody></table>
+      {perm.manage && (
+        <div className="mt-2 grid grid-cols-4 gap-2 rounded-xl border border-slate-200 p-3">
+          <F label="Operation code (bắt buộc)"><input className={inp} value={cp.operation_code} onChange={(e) => setCp({ ...cp, operation_code: e.target.value })} data-testid="future-compat-op" /></F>
+          <F label="Máy nguồn (trống = mọi loại)"><select className={inp} value={cp.source_machine_type_code} onChange={(e) => setCp({ ...cp, source_machine_type_code: e.target.value })}><option value="">—</option>{machineTypes.map((t) => <option key={t.code} value={t.code}>{t.code}</option>)}</select></F>
+          <F label="Trạng thái"><select className={inp} value={cp.compatibility_status} onChange={(e) => setCp({ ...cp, compatibility_status: e.target.value })}>{opts.compatibility_statuses.map((s) => <option key={s}>{s}</option>)}</select></F>
+          <div className="flex items-end justify-end"><button disabled={!cp.operation_code.trim()} className={primary} data-testid="future-compat-add"
+            onClick={() => void run(async () => { await api.post(`${RES}/future/compatibility`, { candidate_id: id, operation_code: cp.operation_code, source_machine_type_code: cp.source_machine_type_code || undefined, compatibility_status: cp.compatibility_status }); setCp({ ...cp, operation_code: "" }); }, "Đã thêm compatibility.")}>+ Thêm mapping</button></div>
+        </div>
+      )}
+
+      <h4 className="mt-4 text-sm font-bold">Lịch sử trạng thái</h4>
+      <ul className="text-xs text-slate-600">{c.history.map((h) => <li key={h.id} className="border-t border-slate-100 py-1">{dateVi(h.at.slice(0, 10))} · {h.from_status ?? "∅"} → <b>{h.to_status}</b> · {h.actor}{h.reason ? ` · ${h.reason}` : ""}</li>)}</ul>
+      {editing && <FutureCandidateForm machineTypes={machineTypes} initial={c} onClose={() => setEditing(false)} onDone={() => { setEditing(false); void load(); onChanged(); }} setMsg={setMsg} />}
+    </Modal>
+  );
+}
+
+interface FEntry {
+  compatibility_id: number; compatibility_status: string; candidate_code: string; candidate_status: string; machine_type_code: string; machine_model_id: number | null;
+  brand: string; model_name: string; technology_name: string; automation_level: string; selectable: boolean; auto_eligible: boolean; evidence_count: number;
+}
+interface FPreviewOp { sequence_no: number; operation_code: string; operation_name: string; current_machine_type_code: string | null; current_automation_level: string; decision: string; auto_compatibility_id: number | null; candidates: FEntry[] }
+
+function GenerateFutureModal({ versionId, onClose, onDone, setMsg }: { versionId: number; onClose: () => void; onDone: () => void; setMsg: (m: Msg) => void }) {
+  const [ops, setOps] = useState<FPreviewOp[] | null>(null);
+  const [selections, setSelections] = useState<Record<string, number>>({});
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { api.get<{ operations: FPreviewOp[] }>(`${RES}/versions/${versionId}/future-preview`).then((r) => setOps(r.data.operations)).catch((e) => setMsg({ ok: false, text: errorMessage(e) })); }, [versionId, setMsg]);
+  const submit = async () => {
+    setBusy(true);
+    try {
+      const r = await api.post<{ created: boolean }>(`${RES}/versions/${versionId}/generate-future`, { selections });
+      if (!r.data.created) setMsg({ ok: true, text: "Không có gì thay đổi so với đề xuất Future đã có — dùng lại proposal cũ." });
+      onDone();
+    } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); } finally { setBusy(false); }
+  };
+  const label = (e: FEntry) => `${e.candidate_code} ${[e.brand, e.model_name, e.technology_name].filter(Boolean).join(" ")} → ${e.machine_type_code} [${FSTATUS_LABEL[e.candidate_status] ?? e.candidate_status} / compat ${e.compatibility_status} / ${e.evidence_count} evidence]${e.auto_eligible ? "" : " — chưa kiểm chứng"}`;
+  return (
+    <Modal title="Tạo đề xuất Future Technology" onClose={onClose} wide>
+      <p className="text-xs text-slate-500">Copy toàn bộ công đoạn từ version nguồn; chỉ thay máy/công nghệ ở công đoạn có candidate hợp lệ. Không tự thay SAM/cycle/output/lao động/số lượng máy — evidence hiệu năng chỉ để tham chiếu. Candidate Discovered/Under review chỉ hiển thị, chưa chọn được. Kết quả luôn là Draft.</p>
+      {!ops && <p className="mt-3 text-xs text-slate-400">Đang tải...</p>}
+      {ops && (
+        <div className="mt-3 max-h-96 overflow-y-auto rounded-xl border border-slate-200">
+          <table className="w-full text-xs" data-testid="future-preview-table">
+            <thead><tr><th className={th}>#</th><th className={th}>Công đoạn</th><th className={th}>Máy hiện tại</th><th className={th}>Quyết định</th><th className={th}>Candidate</th></tr></thead>
+            <tbody>
+              {ops.map((o) => {
+                const selectable = o.candidates.filter((c) => c.selectable);
+                return (
+                  <tr key={o.sequence_no} className="border-t border-slate-100 align-top">
+                    <td className="px-3 py-1.5">{o.sequence_no}</td><td className="px-3">{o.operation_name}</td><td className="px-3">{o.current_machine_type_code ?? "—"}</td>
+                    <td className="px-3">{DECISION_LABEL[o.decision] ?? o.decision}</td>
+                    <td className="px-3">
+                      {selectable.length > 0 && (o.decision === "MULTIPLE_CANDIDATES" || o.decision === "UNVERIFIED_CANDIDATE_AVAILABLE") ? (
+                        <select className={inp} value={selections[String(o.sequence_no)] ?? ""} onChange={(e) => setSelections((s) => { const n = { ...s }; if (e.target.value) n[String(o.sequence_no)] = Number(e.target.value); else delete n[String(o.sequence_no)]; return n; })}>
+                          <option value="">Giữ nguyên</option>{selectable.map((e) => <option key={e.compatibility_id} value={e.compatibility_id}>{label(e)}</option>)}
+                        </select>
+                      ) : (o.auto_compatibility_id ? "Tự động (candidate duy nhất đã duyệt)" : "—")}
+                      {o.candidates.filter((c) => !c.selectable).map((e) => <div key={e.compatibility_id} className="text-[11px] text-slate-400">Chỉ xem: {e.candidate_code} ({FSTATUS_LABEL[e.candidate_status] ?? e.candidate_status})</div>)}
+                    </td>
+                  </tr>
+                );
+              })}
+              {ops.length === 0 && <tr><td colSpan={5} className="py-4 text-center text-slate-400">Version nguồn chưa có công đoạn nào.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div className="mt-5 flex justify-end gap-2"><button onClick={onClose} className="rounded-lg border border-slate-200 px-4 py-2 text-sm">Hủy</button>
+        <button onClick={submit} disabled={busy || !ops} className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white disabled:opacity-40" data-testid="generate-future-submit">Generate</button></div>
+    </Modal>
+  );
+}
+
+function CompareFutureModal({ futureId, onClose, setMsg }: { futureId: number; onClose: () => void; setMsg: (m: Msg) => void }) {
+  interface Out {
+    baseline_layer: string; operation_changed_count: number; machine_substitution_count: number; automation_change_count: number;
+    machine_config_changes: { sequence_no: number; before: { machine_type_code: string | null }; after: { machine_type_code: string | null } }[];
+    total_sam_minutes: { a: number | null; b: number | null }; sam_status: { a: string; b: string }; required_labor: { a: number | null; b: number | null }; expected_output_per_day: { a: number | null; b: number | null };
+    machine_count: string; bottleneck: string; utilization: string; unknown_or_incomplete_metrics: string[];
+    evidence_completeness: { substituted_operations: { sequence_no: number; candidate_code: string; candidate_status: string; evidence_count: number; bases: string[]; approved_for_future: boolean; user_selected: boolean }[]; all_substitutions_have_evidence: boolean | null };
+  }
+  const [c, setC] = useState<Out | null>(null);
+  useEffect(() => { api.get<Out>(`${RES}/versions/${futureId}/compare-with-baseline`).then((r) => setC(r.data)).catch((e) => setMsg({ ok: false, text: errorMessage(e) })); }, [futureId, setMsg]);
+  const naOr = (v: number | null) => (v === null ? <span className="text-slate-400">N/A</span> : num(v));
+  return (
+    <Modal title="So sánh baseline vs Future Technology" onClose={onClose} wide>
+      {!c && <p className="text-xs text-slate-400">Đang tải...</p>}
+      {c && (
+        <div className="space-y-2 text-sm" data-testid="future-compare">
+          <p className="text-xs text-slate-500">Baseline: {LAYER_LABEL[c.baseline_layer] ?? c.baseline_layer}. Không có điểm tổng &quot;best option&quot;; thiếu dữ liệu hiển thị N/A.</p>
+          <p>Số công đoạn thay đổi: <b>{c.operation_changed_count}</b> · Thay máy/công nghệ: <b>{c.machine_substitution_count}</b> · Thay đổi tự động hóa (theo field): <b>{c.automation_change_count}</b></p>
+          {c.machine_config_changes.length > 0 && <ul className="text-xs text-slate-600">{c.machine_config_changes.map((m) => <li key={m.sequence_no}>Công đoạn #{m.sequence_no}: {m.before.machine_type_code ?? "—"} → {m.after.machine_type_code ?? "—"}</li>)}</ul>}
+          <p>Total SAM: {naOr(c.total_sam_minutes.a)} → {naOr(c.total_sam_minutes.b)} ({c.sam_status.a} → {c.sam_status.b})</p>
+          <p>Required labor: {naOr(c.required_labor.a)} → {naOr(c.required_labor.b)} · Expected output/day: {naOr(c.expected_output_per_day.a)} → {naOr(c.expected_output_per_day.b)}</p>
+          <p>Số lượng máy: {c.machine_count} · Bottleneck: {c.bottleneck} · Utilization: {c.utilization}</p>
+          <p>Metric chưa biết/chưa đủ: {c.unknown_or_incomplete_metrics.length ? c.unknown_or_incomplete_metrics.join(", ") : "không"}</p>
+          <h4 className="pt-2 text-sm font-bold">Evidence của candidate được dùng (tại thời điểm generate)</h4>
+          <table className="w-full text-xs"><thead><tr className="text-[11px] uppercase text-slate-400"><th className="text-left">#</th><th className="text-left">Candidate</th><th className="text-left">Trạng thái</th><th className="text-right">Evidence</th><th className="text-left">Cơ sở</th><th className="text-left">Chọn tay</th></tr></thead>
+            <tbody>{c.evidence_completeness.substituted_operations.map((e) => <tr key={e.sequence_no} className="border-t border-slate-100"><td className="py-1">{e.sequence_no}</td><td>{e.candidate_code}</td><td>{FSTATUS_LABEL[e.candidate_status] ?? e.candidate_status}</td><td className="text-right">{e.evidence_count}</td><td>{e.bases.join(", ") || "—"}</td><td>{e.user_selected ? "có" : "không"}</td></tr>)}
+              {c.evidence_completeness.substituted_operations.length === 0 && <tr><td colSpan={6} className="py-3 text-center text-slate-400">Không có công đoạn nào được thay.</td></tr>}</tbody></table>
+        </div>
       )}
     </Modal>
   );
