@@ -42,7 +42,6 @@ RULE_PROPOSAL_TYPES = ("LABOR_RECRUITMENT", "MACHINE_PURCHASE")  # CAPACITY/TECH
 PROPOSAL_CALC_STATUSES = ("CALCULATED", "NEEDS_INPUT", "NOT_APPLICABLE")
 PROPOSAL_DECISIONS = ("SELECTED", "REJECTED")
 RULE_STATUSES = ("DRAFT", "APPROVED", "RETIRED")
-RULE_PERIODS = PERIOD_TYPES
 TECH_LINK_TYPES = ("FUTURE_CANDIDATE", "PROCESS_VERSION")
 
 
@@ -133,8 +132,9 @@ class RoadmapTechnologyLink(Base):
 
 
 class RoadmapRule(Base):
-    """Registry công thức (BR-514/515). Versioned; APPROVED bất biến (sửa = version mới); KHÔNG seed rule APPROVED nào.
-    Engine chung `GAP_PER_UNIT_RATE`: quantity = ceil(gap / rate_value) — mọi con số nằm TRONG rule đã duyệt, không có trong code."""
+    """Registry rule — CHỈ METADATA (GPT review PR #12): lưu rule/evidence/version/status/approval, KHÔNG có logic thực thi số trong Task 5.
+    `formula_type`/`parameters_json` chỉ là mô tả khai báo; engine Task 5 không đọc chúng để tính quantity (không có allowlist thực thi nào).
+    Versioned; APPROVED bất biến; KHÔNG seed rule nào."""
 
     __tablename__ = "roadmap_rules"
     __table_args__ = (UniqueConstraint("rule_code", "rule_version", name="uq_roadmap_rule_version"), Index("ix_roadmap_rule_type_status", "proposal_type", "approval_status"))
@@ -144,12 +144,11 @@ class RoadmapRule(Base):
     rule_version: Mapped[int] = mapped_column(Integer, default=1)
     proposal_type: Mapped[str] = mapped_column(String(20))
     title: Mapped[str] = mapped_column(String(200), default="")
-    formula_type: Mapped[str] = mapped_column(String(30), default="GAP_PER_UNIT_RATE")
-    rate_value: Mapped[float] = mapped_column(Float)  # sp / (worker|machine) / kỳ
-    rate_unit: Mapped[str] = mapped_column(String(40), default="")
-    rate_period: Mapped[str] = mapped_column(String(6), default="MONTH")  # phải khớp period_type của target, không convert
-    machine_type_code: Mapped[str | None] = mapped_column(ForeignKey("machine_types.code"), nullable=True)  # bắt buộc cho MACHINE_PURCHASE
-    basis_note: Mapped[str] = mapped_column(String(300), default="")  # nguồn/căn cứ của rate — bắt buộc để APPROVE
+    formula_type: Mapped[str] = mapped_column(String(40), default="UNSPECIFIED")  # explicit metadata; KHÔNG được thực thi trong Task 5
+    formula_description: Mapped[str] = mapped_column(String(500), default="")  # mô tả rule bằng lời (business-owned)
+    parameters_json: Mapped[dict] = mapped_column(JSON, default=dict)  # tham số khai báo (metadata), không được engine đọc để tính
+    machine_type_code: Mapped[str | None] = mapped_column(ForeignKey("machine_types.code"), nullable=True)  # metadata cho MACHINE_PURCHASE
+    basis_note: Mapped[str] = mapped_column(String(300), default="")  # nguồn/căn cứ (evidence) — bắt buộc để APPROVE
     approval_status: Mapped[str] = mapped_column(String(10), default="DRAFT", index=True)
     approved_by: Mapped[str] = mapped_column(String(100), default="")
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -129,8 +129,10 @@ def _result(run, i=0):
     return run["run"]["results"][i]
 
 
-def _rule(db, code="LAB1", ptype="LABOR_RECRUITMENT", rate=100.0, period="MONTH", machine=None, approve=True, **kw):
-    r = rm.create_rule(db, ADMIN, {"rule_code": code, "proposal_type": ptype, "rate_value": rate, "rate_unit": "sp/unit/month", "rate_period": period,
+def _rule(db, code="LAB1", ptype="LABOR_RECRUITMENT", machine=None, approve=True, parameters=None, **kw):
+    """Rule registry chỉ là METADATA trong Task 5 (không thực thi số). Fixture approved metadata rule."""
+    r = rm.create_rule(db, ADMIN, {"rule_code": code, "proposal_type": ptype, "formula_type": kw.get("formula_type", "UNSPECIFIED"),
+                                    "formula_description": kw.get("formula_description", "fixture description"), "parameters": parameters or {},
                                     "machine_type_code": machine, "basis_note": kw.get("basis_note", "fixture basis"), "title": code})
     return rm.approve_rule(db, ADMIN, r.id) if approve else r
 
@@ -546,9 +548,9 @@ def test_target_change_via_new_version_creates_new_run(db):
 def test_rule_change_creates_new_run(db):
     _s, v, r1 = _output_run(db)
     assert r1["created"] is True
-    _rule(db, "LAB1", rate=100)
+    _rule(db, "LAB1")
     r2 = _run(db, v)
-    assert r2["created"] is True  # rule APPROVED mới => run mới
+    assert r2["created"] is True  # rule APPROVED (metadata) mới => fingerprint đổi => run mới
     assert _run(db, v)["created"] is False
 
 
@@ -578,60 +580,64 @@ def test_without_approved_rules_all_quantity_proposals_needs_input_not_invented(
     assert r["run"]["summary"]["proposal_status_counts"] == {"NEEDS_INPUT": 4}
 
 
-def test_labor_proposal_calculated_with_approved_rule_and_baseline(db):
+def test_approved_metadata_rule_never_calculates_labor_quantity(db):
+    """GPT review PR #12: Task 5 không thực thi công thức nghiệp vụ nào — kể cả khi rule APPROVED khai formula_type/parameters giống 'gap/rate'."""
     _labor(db, "XN1", 50)
     _labor(db, "XN2", 30)
-    _rule(db, "LAB1", "LABOR_RECRUITMENT", rate=100, period="MONTH")
-    _s, _v, r = _output_run(db, target_value=2000)  # gap 500 sp
+    _rule(db, "LAB1", "LABOR_RECRUITMENT", formula_type="GAP_PER_UNIT_RATE", parameters={"rate_value": 100, "rate_period": "MONTH"})
+    _s, _v, r = _output_run(db, target_value=2000)  # gap 500 sp, có labor baseline, có rule APPROVED
     (p,) = _by_type(r, "LABOR_RECRUITMENT")
-    assert p["calc_status"] == "CALCULATED" and p["quantity"] == 5.0 and p["unit"] == "worker" and p["completeness"] == "COMPLETE"
-    assert p["calculation_rule_version"] == "LAB1@v1" and p["input_snapshot"]["gap"] == 500.0 and p["input_snapshot"]["available_baseline"]["total_labor"] == 80
-    assert p["input_snapshot"]["formula"] == "ceil(gap / rate_value)" and p["evidence_refs"][0]["rule_code"] == "LAB1"
-    assert r["run"]["snapshot"]["approved_rules"][0]["rate_value"] == 100
+    assert p["calc_status"] == "NEEDS_INPUT" and p["quantity"] is None and p["unit"] == ""
+    assert p["calculation_rule_version"] == "LAB1@v1" and p["completeness"] == "PARTIAL"
+    assert any("executable calculation adapter" in m for m in p["missing_inputs"])
+    assert p["input_snapshot"]["available_baseline"]["total_labor"] == 80 and p["input_snapshot"]["rule"]["parameters"] == {"rate_value": 100, "rate_period": "MONTH"}
+    assert p["input_snapshot"]["rule"]["executable"] is False and p["evidence_refs"][0]["rule_code"] == "LAB1"
+    assert r["run"]["snapshot"]["approved_rules"][0]["formula_type"] == "GAP_PER_UNIT_RATE"  # metadata được snapshot nhưng không thực thi
 
 
-def test_labor_ceil_rounding(db):
+def test_no_code_path_derives_quantity_from_gap_and_rate(db):
+    import inspect
+
+    for mod in (eng, rm, rb):  # không còn code path production nào tính quantity từ gap/rate
+        src = inspect.getsource(mod)
+        assert "math.ceil" not in src and "ceil(" not in src and "rate_value" not in src and "GAP_PER_UNIT_RATE" not in src, mod.__name__
     _labor(db)
-    _rule(db, "LAB1", rate=300)
-    _s, _v, r = _output_run(db, target_value=2000)  # gap 500 / 300 -> 2
-    assert _by_type(r, "LABOR_RECRUITMENT")[0]["quantity"] == 2.0
+    _machines(db, "XN1", "2K", 10)
+    _rule(db, "LAB1", parameters={"rate_value": 300})
+    _rule(db, "MCH1", "MACHINE_PURCHASE", machine="2K", parameters={"rate_value": 250})
+    _s, _v, r = _output_run(db, target_value=2000)
+    for pt in ("LABOR_RECRUITMENT", "MACHINE_PURCHASE", "CAPACITY_CHANGE", "TECHNOLOGY_ADOPTION"):
+        assert all(p["quantity"] is None and p["calc_status"] == "NEEDS_INPUT" for p in _by_type(r, pt)), pt
+    assert all(p["quantity"] is None for p in r["run"]["proposals"]) and r["run"]["summary"]["proposal_status_counts"] == {"NEEDS_INPUT": 4}
 
 
-def test_labor_needs_input_when_baseline_or_period_missing(db):
-    _rule(db, "LAB1", rate=100, period="YEAR")  # rate theo YEAR, target theo MONTH
-    _s, _v, r = _output_run(db)  # không có labor baseline
-    (p,) = _by_type(r, "LABOR_RECRUITMENT")
-    assert p["calc_status"] == "NEEDS_INPUT" and p["quantity"] is None
-    assert any("rate_period" in m for m in p["missing_inputs"]) and any("labor_standards" in m for m in p["missing_inputs"])
-
-
-def test_machine_proposal_calculated_vs_needs_input(db):
-    _rule(db, "MCH1", "MACHINE_PURCHASE", rate=250, machine="2K")
-    _machines(db, "XN1", "1K", 10)  # inventory chỉ có 1K, rule cần 2K
-    _s, v, r = _output_run(db, target_value=2000)
+def test_machine_rule_is_metadata_only_needs_input_with_or_without_inventory(db):
+    _rule(db, "MCH1", "MACHINE_PURCHASE", machine="2K", parameters={"rate_value": 250})
+    _s, v, r = _output_run(db, target_value=2000)  # chưa có inventory
     (p,) = _by_type(r, "MACHINE_PURCHASE")
-    assert p["calc_status"] == "NEEDS_INPUT" and any("2K" in m for m in p["missing_inputs"])
-    _machines(db, "XN2", "2K", 4)
+    assert p["calc_status"] == "NEEDS_INPUT" and p["quantity"] is None
+    _machines(db, "XN2", "2K", 4)  # có inventory đúng loại máy của rule
     r2 = _run(db, v)
     (p2,) = _by_type(r2, "MACHINE_PURCHASE")
-    assert r2["created"] is True and p2["calc_status"] == "CALCULATED" and p2["quantity"] == 2.0 and p2["unit"] == "machine"  # ceil(500/250)
+    assert r2["created"] is True and p2["calc_status"] == "NEEDS_INPUT" and p2["quantity"] is None  # vẫn không tính số
+    assert p2["input_snapshot"]["available_baseline"]["by_machine_type"] == {"2K": 4}
 
 
 def test_multiple_approved_rules_yield_separate_lines_no_ranking(db):
     _labor(db)
-    _rule(db, "LAB1", rate=100)
-    _rule(db, "LAB2", rate=50)
+    _rule(db, "LAB1")
+    _rule(db, "LAB2")
     _s, _v, r = _output_run(db, target_value=2000)
     lines = _by_type(r, "LABOR_RECRUITMENT")
-    assert sorted(p["quantity"] for p in lines) == [5.0, 10.0] and len(lines) == 2  # không chọn "best"
+    assert sorted(p["calculation_rule_version"] for p in lines) == ["LAB1@v1", "LAB2@v1"]  # mỗi rule một dòng, không chọn "best"
     forbidden = {"rank", "score", "best", "priority"}
     assert not forbidden & set(lines[0]) and not forbidden & set(r["run"]["results"][0]) and not forbidden & set(r["run"]["summary"])
-    assert all(p["decision_status"] is None and p["status"] == "CALCULATED" for p in lines)  # không auto SELECTED
+    assert all(p["decision_status"] is None and p["status"] == "NEEDS_INPUT" and p["quantity"] is None for p in lines)  # không auto SELECTED
 
 
 def test_revenue_gap_does_not_imply_labor_machine_capacity(db):
     _labor(db)
-    _rule(db, "LAB1", rate=100)
+    _rule(db, "LAB1")
     _s, _v, _m, _t, r = _rev_run(db, target_value=1000)
     for pt in ("LABOR_RECRUITMENT", "MACHINE_PURCHASE", "CAPACITY_CHANGE"):
         (p,) = _by_type(r, pt)
@@ -641,7 +647,7 @@ def test_revenue_gap_does_not_imply_labor_machine_capacity(db):
 
 def test_capacity_change_always_needs_input_even_with_rules(db):
     _labor(db)
-    _rule(db, "LAB1", rate=100)
+    _rule(db, "LAB1")
     _s, _v, r = _output_run(db)
     (p,) = _by_type(r, "CAPACITY_CHANGE")
     assert p["calc_status"] == "NEEDS_INPUT" and p["quantity"] is None and any("capacity-change" in m for m in p["missing_inputs"])
@@ -731,32 +737,33 @@ def test_process_version_link_snapshots_status(db):
 # =================================================================== rule registry
 def test_rule_registry_validation_approval_immutability_versioning(db):
     with pytest.raises(HTTPException):
-        rm.create_rule(db, ADMIN, {"rule_code": "R", "proposal_type": "CAPACITY_CHANGE", "rate_value": 1})  # không tính số ở Task 5
+        rm.create_rule(db, ADMIN, {"rule_code": "R", "proposal_type": "CAPACITY_CHANGE"})  # chưa có rule cho loại này
     with pytest.raises(HTTPException):
-        rm.create_rule(db, ADMIN, {"rule_code": "R", "proposal_type": "LABOR_RECRUITMENT", "rate_value": 0})
+        rm.create_rule(db, ADMIN, {"rule_code": "R", "proposal_type": "MACHINE_PURCHASE"})  # thiếu machine_type_code
     with pytest.raises(HTTPException):
-        rm.create_rule(db, ADMIN, {"rule_code": "R", "proposal_type": "MACHINE_PURCHASE", "rate_value": 5})  # thiếu machine_type_code
+        rm.create_rule(db, ADMIN, {"rule_code": "R", "proposal_type": "MACHINE_PURCHASE", "machine_type_code": "NOPE"})
     with pytest.raises(HTTPException):
-        rm.create_rule(db, ADMIN, {"rule_code": "R", "proposal_type": "MACHINE_PURCHASE", "rate_value": 5, "machine_type_code": "NOPE"})
-    r = rm.create_rule(db, ADMIN, {"rule_code": "lab1", "proposal_type": "LABOR_RECRUITMENT", "rate_value": 100, "rate_period": "MONTH"})
-    assert r.rule_code == "LAB1" and r.approval_status == "DRAFT"
+        rm.create_rule(db, ADMIN, {"rule_code": "R", "proposal_type": "LABOR_RECRUITMENT", "parameters": [1, 2]})  # parameters phải là object
+    r = rm.create_rule(db, ADMIN, {"rule_code": "lab1", "proposal_type": "LABOR_RECRUITMENT", "parameters": {"note": "v1"}})
+    assert r.rule_code == "LAB1" and r.approval_status == "DRAFT" and r.formula_type == "UNSPECIFIED"
+    assert rm.rule_view(r)["executable"] is False
     with pytest.raises(HTTPException):
-        rm.approve_rule(db, ADMIN, r.id)  # thiếu basis_note/rate_unit
-    rm.update_rule(db, ADMIN, r.id, {"basis_note": "IE study 2026", "rate_unit": "sp/worker/month"})
+        rm.approve_rule(db, ADMIN, r.id)  # thiếu basis_note/formula_description
+    rm.update_rule(db, ADMIN, r.id, {"basis_note": "IE study 2026", "formula_description": "mô tả rule do business sở hữu"})
     rm.approve_rule(db, ADMIN, r.id)
     db.refresh(r)
     assert r.approval_status == "APPROVED" and r.approved_by == "admin"
     with pytest.raises(HTTPException) as e:
-        rm.update_rule(db, ADMIN, r.id, {"rate_value": 1})  # APPROVED bất biến
+        rm.update_rule(db, ADMIN, r.id, {"parameters": {"note": "đổi"}})  # APPROVED bất biến
     assert e.value.status_code == 409
     r2 = rm.new_rule_version(db, ADMIN, r.id)
-    assert r2.rule_version == 2 and r2.approval_status == "DRAFT" and r2.rate_value == 100
+    assert r2.rule_version == 2 and r2.approval_status == "DRAFT" and r2.parameters_json == {"note": "v1"}
     with pytest.raises(HTTPException):
         rm.new_rule_version(db, ADMIN, r.id)  # đã có DRAFT
-    rm.update_rule(db, ADMIN, r2.id, {"rate_value": 120})
+    rm.update_rule(db, ADMIN, r2.id, {"parameters": {"note": "v2"}})
     rm.approve_rule(db, ADMIN, r2.id)
     db.refresh(r)
-    assert r.approval_status == "RETIRED" and r.rate_value == 100  # v1 bị thay, giữ nguyên nội dung lịch sử
+    assert r.approval_status == "RETIRED" and r.parameters_json == {"note": "v1"}  # v1 bị thay, giữ nguyên nội dung lịch sử
     with pytest.raises(HTTPException):
         rm.retire_rule(db, ADMIN, r2.id, "")
     rm.retire_rule(db, ADMIN, r2.id, "hết hiệu lực")
@@ -764,24 +771,23 @@ def test_rule_registry_validation_approval_immutability_versioning(db):
     assert [h["to_status"] for h in rm.list_history(db, "RULE", r.id)] == ["DRAFT", "APPROVED", "RETIRED"]
 
 
-def test_run_keeps_rule_snapshot_after_rule_replaced(db):
+def test_run_keeps_rule_snapshot_after_rule_replaced_and_fingerprint_reflects_metadata(db):
     _labor(db)
-    r1 = _rule(db, "LAB1", rate=100)
+    r1 = _rule(db, "LAB1", parameters={"note": "a"})
     _s, v, run1 = _output_run(db)
+    assert _run(db, v)["created"] is False  # cùng rule metadata => idempotent
     v2 = rm.new_rule_version(db, ADMIN, r1.id)
-    rm.update_rule(db, ADMIN, v2.id, {"rate_value": 250})
+    rm.update_rule(db, ADMIN, v2.id, {"parameters": {"note": "b"}})
     rm.approve_rule(db, ADMIN, v2.id)
     run2 = _run(db, v)
-    assert run2["created"] is True
-    assert _by_type(run1, "LABOR_RECRUITMENT")[0]["quantity"] == 5.0 and _by_type(run2, "LABOR_RECRUITMENT")[0]["quantity"] == 2.0
+    assert run2["created"] is True  # metadata/version đổi => run mới
     stored = eng.run_view(db, eng.get_run(db, run1["run"]["id"]))
-    assert stored["snapshot"]["approved_rules"][0]["rate_value"] == 100 and _by_type({"run": stored}, "LABOR_RECRUITMENT")[0]["calculation_rule_version"] == "LAB1@v1"
+    assert stored["snapshot"]["approved_rules"][0]["parameters"] == {"note": "a"} and run2["run"]["snapshot"]["approved_rules"][0]["parameters"] == {"note": "b"}
+    assert _by_type({"run": stored}, "LABOR_RECRUITMENT")[0]["calculation_rule_version"] == "LAB1@v1" and _by_type(run2, "LABOR_RECRUITMENT")[0]["calculation_rule_version"] == "LAB1@v2"
 
 
 # =================================================================== proposal decision
 def test_proposal_decision_manual_with_reason_and_append_only_history(db):
-    _labor(db)
-    _rule(db, "LAB1", rate=100)
     _s, _v, r = _output_run(db)
     p = _by_type(r, "LABOR_RECRUITMENT")[0]
     assert p["decision_status"] is None
@@ -789,15 +795,15 @@ def test_proposal_decision_manual_with_reason_and_append_only_history(db):
         eng.decide_proposal(db, ADMIN, p["id"], "SELECTED", "")  # thiếu reason
     with pytest.raises(HTTPException):
         eng.decide_proposal(db, ADMIN, p["id"], "EXECUTED", "x")
-    eng.decide_proposal(db, ADMIN, p["id"], "SELECTED", "phương án khả thi")
+    eng.decide_proposal(db, ADMIN, p["id"], "SELECTED", "ghi nhận để theo dõi")
     with pytest.raises(HTTPException) as e:
         eng.decide_proposal(db, ADMIN, p["id"], "SELECTED", "lần nữa")
     assert e.value.status_code == 409
     eng.decide_proposal(db, ADMIN, p["id"], "REJECTED", "đổi ý")
     hist = eng.proposal_history(db, p["id"])
-    assert [(h["from_status"], h["to_status"]) for h in hist] == [("CALCULATED", "SELECTED"), ("SELECTED", "REJECTED")]
+    assert [(h["from_status"], h["to_status"]) for h in hist] == [("NEEDS_INPUT", "SELECTED"), ("SELECTED", "REJECTED")]
     stored = next(x for x in eng.run_view(db, eng.get_run(db, r["run"]["id"]))["proposals"] if x["id"] == p["id"])
-    assert stored["status"] == "REJECTED" and stored["calc_status"] == "CALCULATED" and stored["quantity"] == 5.0  # nội dung không đổi
+    assert stored["status"] == "REJECTED" and stored["calc_status"] == "NEEDS_INPUT" and stored["quantity"] is None  # nội dung không đổi
     assert "ROADMAP_PROPOSAL_DECISION" in db.audit  # type: ignore[attr-defined]
 
 
@@ -851,7 +857,7 @@ def test_approve_gates_in_api_layer(db):
         rm_api.transition_version(v.id, rm_api.TransitionBody(to_status="APPROVED"), db, PLANNER)  # thiếu roadmap.approve
     assert e.value.status_code == 403 and rm.get_version(db, v.id).status == "REVIEWED"
     assert rm_api.transition_version(v.id, rm_api.TransitionBody(to_status="APPROVED"), db, ADMIN)["status"] == "APPROVED"
-    r = rm.create_rule(db, ADMIN, {"rule_code": "L", "proposal_type": "LABOR_RECRUITMENT", "rate_value": 10, "rate_unit": "u", "basis_note": "b"})
+    r = rm.create_rule(db, ADMIN, {"rule_code": "L", "proposal_type": "LABOR_RECRUITMENT", "formula_description": "d", "basis_note": "b"})
     with pytest.raises(HTTPException) as e:
         rm_api.approve_rule(r.id, db, PLANNER)
     assert e.value.status_code == 403 and rm.get_rule(db, r.id).approval_status == "DRAFT"

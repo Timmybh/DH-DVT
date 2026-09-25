@@ -25,7 +25,6 @@ from app.models.roadmap import (
     LIFECYCLE_TRANSITIONS,
     METRIC_CODES,
     PERIOD_TYPES,
-    RULE_PERIODS,
     RULE_PROPOSAL_TYPES,
     SCOPE_TYPES,
     TARGET_KINDS,
@@ -508,9 +507,9 @@ def remove_link(db: Session, user: User, link_id: int) -> None:
 def rule_view(r: RoadmapRule) -> dict:
     return {
         "id": r.id, "rule_code": r.rule_code, "rule_version": r.rule_version, "proposal_type": r.proposal_type, "title": r.title, "formula_type": r.formula_type,
-        "formula_text": f"quantity = ceil(gap / rate_value)  (rate_value = {r.rate_value} {r.rate_unit} / {r.rate_period})", "rate_value": r.rate_value, "rate_unit": r.rate_unit,
-        "rate_period": r.rate_period, "machine_type_code": r.machine_type_code, "basis_note": r.basis_note, "approval_status": r.approval_status,
-        "approved_by": r.approved_by, "approved_at": _iso(r.approved_at), "created_by": r.created_by, "created_at": _iso(r.created_at),
+        "formula_description": r.formula_description, "parameters": r.parameters_json or {}, "machine_type_code": r.machine_type_code, "basis_note": r.basis_note,
+        "approval_status": r.approval_status, "approved_by": r.approved_by, "approved_at": _iso(r.approved_at), "created_by": r.created_by, "created_at": _iso(r.created_at),
+        "executable": False,  # Task 5: registry metadata-only, chưa có executable calculation adapter được duyệt
     }
 
 
@@ -536,23 +535,25 @@ def _validate_rule(db: Session, d: dict, existing: RoadmapRule | None) -> dict:
 
     ptype = pick("proposal_type")
     if ptype not in RULE_PROPOSAL_TYPES:
-        raise _bad(f"proposal_type của rule phải là một trong {RULE_PROPOSAL_TYPES} (CAPACITY_CHANGE/TECHNOLOGY_ADOPTION không tính số trong Task 5)")
-    rate = _num(pick("rate_value"), "rate_value")
-    if rate <= 0:
-        raise _bad("rate_value phải > 0")
-    period = pick("rate_period", "MONTH") or "MONTH"
-    if period not in RULE_PERIODS:
-        raise _bad(f"rate_period phải là một trong {RULE_PERIODS}")
+        raise _bad(f"proposal_type của rule phải là một trong {RULE_PROPOSAL_TYPES} (CAPACITY_CHANGE/TECHNOLOGY_ADOPTION chưa có rule trong Task 5)")
+    params = d["parameters"] if "parameters" in d else (dict(existing.parameters_json or {}) if existing is not None else {})
+    if params is None:
+        params = {}
+    if not isinstance(params, dict):
+        raise _bad("parameters phải là JSON object (metadata khai báo)")
+    if len(str(params)) > 4000:
+        raise _bad("parameters quá lớn (tối đa ~4000 ký tự)")
     mt = (pick("machine_type_code") or None)
     if ptype == "MACHINE_PURCHASE":
         if not mt:
-            raise _bad("Rule MACHINE_PURCHASE bắt buộc machine_type_code")
+            raise _bad("Rule MACHINE_PURCHASE bắt buộc machine_type_code (metadata)")
         if db.get(MachineType, mt) is None:
             raise _bad(f"Loại máy '{mt}' không tồn tại")
     else:
         mt = None
-    return {"proposal_type": ptype, "title": (pick("title", "") or "")[:200], "rate_value": rate, "rate_unit": (pick("rate_unit", "") or "")[:40], "rate_period": period,
-            "machine_type_code": mt, "basis_note": (pick("basis_note", "") or "")[:300]}
+    ftype = ((pick("formula_type", "UNSPECIFIED") or "UNSPECIFIED").strip().upper() or "UNSPECIFIED")[:40]
+    return {"proposal_type": ptype, "title": (pick("title", "") or "")[:200], "formula_type": ftype, "formula_description": (pick("formula_description", "") or "")[:500],
+            "parameters_json": params, "machine_type_code": mt, "basis_note": (pick("basis_note", "") or "")[:300]}
 
 
 def create_rule(db: Session, user: User, d: dict) -> RoadmapRule:
@@ -566,7 +567,7 @@ def create_rule(db: Session, user: User, d: dict) -> RoadmapRule:
     db.flush()
     _hist(db, "RULE", r.id, None, "DRAFT", "created", user.username)
     db.commit()
-    write_audit("ROADMAP_RULE_CREATE", user=user, object_type="RoadmapRule", object_id=f"{r.rule_code} v{r.rule_version}", detail=f"{r.proposal_type} rate={r.rate_value}")
+    write_audit("ROADMAP_RULE_CREATE", user=user, object_type="RoadmapRule", object_id=f"{r.rule_code} v{r.rule_version}", detail=f"{r.proposal_type} {r.formula_type}")
     return r
 
 
@@ -579,7 +580,7 @@ def update_rule(db: Session, user: User, rule_id: int, d: dict) -> RoadmapRule:
     for k, val in _validate_rule(db, d, r).items():
         setattr(r, k, val)
     db.commit()
-    write_audit("ROADMAP_RULE_UPDATE", user=user, object_type="RoadmapRule", object_id=f"{r.rule_code} v{r.rule_version}", detail=f"rate={r.rate_value}")
+    write_audit("ROADMAP_RULE_UPDATE", user=user, object_type="RoadmapRule", object_id=f"{r.rule_code} v{r.rule_version}", detail=f"{r.proposal_type} {r.formula_type}")
     return r
 
 
@@ -589,7 +590,7 @@ def new_rule_version(db: Session, user: User, rule_id: int) -> RoadmapRule:
     if latest.approval_status == "DRAFT":
         raise _bad("Đã có version DRAFT của rule này — sửa/duyệt version đó", 409)
     r = RoadmapRule(rule_code=src.rule_code, rule_version=latest.rule_version + 1, proposal_type=src.proposal_type, title=src.title, formula_type=src.formula_type,
-                    rate_value=src.rate_value, rate_unit=src.rate_unit, rate_period=src.rate_period, machine_type_code=src.machine_type_code, basis_note=src.basis_note,
+                    formula_description=src.formula_description, parameters_json=dict(src.parameters_json or {}), machine_type_code=src.machine_type_code, basis_note=src.basis_note,
                     approval_status="DRAFT", created_by=user.username)
     db.add(r)
     db.flush()
@@ -604,8 +605,8 @@ def approve_rule(db: Session, user: User, rule_id: int) -> RoadmapRule:
     r = get_rule(db, rule_id)
     if r.approval_status != "DRAFT":
         raise _bad(f"Chỉ duyệt được rule DRAFT (hiện {r.approval_status})", 409)
-    if not (r.basis_note or "").strip() or not (r.rate_unit or "").strip():
-        raise _bad("Duyệt rule bắt buộc có rate_unit và basis_note (nguồn/căn cứ của rate)")
+    if not (r.basis_note or "").strip() or not (r.formula_description or "").strip():
+        raise _bad("Duyệt rule bắt buộc có formula_description và basis_note (nguồn/căn cứ). Lưu ý: duyệt = ghi nhận metadata, KHÔNG làm rule tự thực thi trong Task 5")
     now = utcnow()
     for old in db.query(RoadmapRule).filter(RoadmapRule.rule_code == r.rule_code, RoadmapRule.approval_status == "APPROVED", RoadmapRule.id != r.id).all():
         old.approval_status = "RETIRED"
@@ -613,7 +614,7 @@ def approve_rule(db: Session, user: User, rule_id: int) -> RoadmapRule:
     r.approval_status, r.approved_by, r.approved_at = "APPROVED", user.username, now
     _hist(db, "RULE", r.id, "DRAFT", "APPROVED", "", user.username)
     db.commit()
-    write_audit("ROADMAP_RULE_APPROVE", user=user, object_type="RoadmapRule", object_id=f"{r.rule_code} v{r.rule_version}", detail=f"{r.proposal_type} rate={r.rate_value}")
+    write_audit("ROADMAP_RULE_APPROVE", user=user, object_type="RoadmapRule", object_id=f"{r.rule_code} v{r.rule_version}", detail=f"{r.proposal_type} {r.formula_type}")
     return r
 
 

@@ -36,8 +36,8 @@ interface Proposal {
 }
 interface RunDetail extends RunRow { engine_version: string; snapshot: Record<string, unknown>; results: Result[]; proposals: Proposal[] }
 interface Rule {
-  id: number; rule_code: string; rule_version: number; proposal_type: string; title: string; formula_text: string; rate_value: number; rate_unit: string; rate_period: string;
-  machine_type_code: string | null; basis_note: string; approval_status: string; approved_by: string;
+  id: number; rule_code: string; rule_version: number; proposal_type: string; title: string; formula_type: string; formula_description: string; parameters: Record<string, unknown>;
+  machine_type_code: string | null; basis_note: string; approval_status: string; approved_by: string; executable: boolean;
 }
 
 const STATUS_CLS: Record<string, string> = {
@@ -418,20 +418,27 @@ function CompareModal({ a, b, onClose, setMsg }: { a: number; b: number; onClose
 
 function RulesModal({ opts, perm, onClose, setMsg }: { opts: Options; perm: { manage: boolean; approve: boolean }; onClose: () => void; setMsg: (m: Msg) => void }) {
   const [rules, setRules] = useState<Rule[]>([]);
-  const [d, setD] = useState({ rule_code: "", proposal_type: "LABOR_RECRUITMENT", rate_value: "", rate_unit: "", rate_period: "MONTH", machine_type_code: "", basis_note: "" });
+  const [d, setD] = useState({ rule_code: "", proposal_type: "LABOR_RECRUITMENT", formula_type: "", formula_description: "", parameters: "", machine_type_code: "", basis_note: "" });
   const load = useCallback(async () => setRules((await api.get<Rule[]>(`${RES}/rules`)).data), []);
   useEffect(() => { load().catch((e) => setMsg({ ok: false, text: errorMessage(e) })); }, [load, setMsg]);
   const act = async (fn: () => Promise<unknown>, ok: string) => { try { await fn(); setMsg({ ok: true, text: ok }); await load(); } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); } };
+  const create = async () => {
+    let parameters: Record<string, unknown> | undefined;
+    if (d.parameters.trim()) { try { parameters = JSON.parse(d.parameters); } catch { setMsg({ ok: false, text: "parameters phải là JSON object hợp lệ" }); return; } }
+    await act(async () => { await api.post(`${RES}/rules`, { rule_code: d.rule_code, proposal_type: d.proposal_type, formula_type: d.formula_type || undefined, formula_description: d.formula_description, parameters, machine_type_code: d.machine_type_code || undefined, basis_note: d.basis_note }); setD({ ...d, rule_code: "", parameters: "" }); }, "Đã tạo rule (Draft).");
+  };
   return (
-    <Modal title="Rule registry — công thức đã duyệt cho proposal" onClose={onClose} wide>
-      <p className="text-xs text-slate-500">Không có rule nào được cấu hình sẵn: khi chưa có rule APPROVED, mọi proposal số lượng là NEEDS_INPUT. Công thức chung: <b>quantity = ceil(gap / rate_value)</b> với rate do rule đã duyệt quy định (cùng kỳ với target, không quy đổi). Rule APPROVED bất biến — sửa = version mới. Chỉ có Labor và Machine; Capacity/Technology chưa tính số.</p>
+    <Modal title="Rule registry — metadata & phê duyệt (chưa thực thi)" onClose={onClose} wide>
+      <p className="text-xs text-slate-500">Task 5 chỉ lưu <b>metadata, evidence, version và trạng thái duyệt</b> của rule. Rule KHÔNG được thực thi: chưa có công thức/adapter tính toán nào được business duyệt, nên proposal Labor/Machine luôn ở trạng thái NEEDS_INPUT dù rule đã APPROVED. Rule APPROVED bất biến — sửa = version mới. Không có rule nào được cấu hình sẵn.</p>
       <div className="mt-3 max-h-72 overflow-y-auto rounded-xl border border-slate-200">
-        <table className="w-full text-xs" data-testid="roadmap-rule-table"><thead><tr><th className={th}>Rule</th><th className={th}>Loại</th><th className={th}>Công thức</th><th className={th}>Căn cứ</th><th className={th}>Trạng thái</th><th /></tr></thead>
+        <table className="w-full text-xs" data-testid="roadmap-rule-table"><thead><tr><th className={th}>Rule</th><th className={th}>Loại</th><th className={th}>Mô tả (metadata)</th><th className={th}>Căn cứ</th><th className={th}>Trạng thái</th><th /></tr></thead>
           <tbody>{rules.map((r) => (
-            <tr key={r.id} className="border-t border-slate-100 align-top"><td className="px-3 py-1.5 font-mono">{r.rule_code}@v{r.rule_version}</td><td className="px-3">{PTYPE_LABEL[r.proposal_type]}{r.machine_type_code ? ` (${r.machine_type_code})` : ""}</td><td className="px-3">{r.formula_text}</td><td className="px-3">{r.basis_note || <span className="text-amber-600">chưa có</span>}</td>
+            <tr key={r.id} className="border-t border-slate-100 align-top"><td className="px-3 py-1.5 font-mono">{r.rule_code}@v{r.rule_version}<div className="text-[10px] text-slate-400">{r.formula_type}</div></td><td className="px-3">{PTYPE_LABEL[r.proposal_type]}{r.machine_type_code ? ` (${r.machine_type_code})` : ""}</td>
+              <td className="px-3">{r.formula_description || <span className="text-amber-600">chưa có</span>}{Object.keys(r.parameters).length > 0 && <div className="font-mono text-[10px] text-slate-400">{JSON.stringify(r.parameters)}</div>}<div className="text-[10px] text-amber-700">không thực thi</div></td>
+              <td className="px-3">{r.basis_note || <span className="text-amber-600">chưa có</span>}</td>
               <td className="px-3"><Chip s={r.approval_status} />{r.approved_by && <div className="text-[10px] text-slate-400">{r.approved_by}</div>}</td>
               <td className="whitespace-nowrap px-3 text-right">
-                {perm.approve && r.approval_status === "DRAFT" && <button onClick={() => void act(() => api.post(`${RES}/rules/${r.id}/approve`), "Đã duyệt rule.")} className="text-green-700 hover:underline" data-testid={`roadmap-rule-approve-${r.id}`}>Duyệt</button>}
+                {perm.approve && r.approval_status === "DRAFT" && <button onClick={() => void act(() => api.post(`${RES}/rules/${r.id}/approve`), "Đã duyệt rule (metadata).")} className="text-green-700 hover:underline" data-testid={`roadmap-rule-approve-${r.id}`}>Duyệt</button>}
                 {perm.approve && r.approval_status === "APPROVED" && <button onClick={() => { const reason = window.prompt("Lý do retire rule? (bắt buộc)") ?? ""; if (reason.trim()) void act(() => api.post(`${RES}/rules/${r.id}/retire`, { reason }), "Đã retire rule."); }} className="ml-2 text-red-600 hover:underline">Retire</button>}
                 {perm.manage && r.approval_status !== "DRAFT" && <button onClick={() => void act(() => api.post(`${RES}/rules/${r.id}/new-version`), "Đã tạo version mới (Draft).")} className="ml-2 text-brand hover:underline">Version mới</button>}
               </td></tr>
@@ -441,13 +448,12 @@ function RulesModal({ opts, perm, onClose, setMsg }: { opts: Options; perm: { ma
         <div className="mt-3 grid grid-cols-4 gap-2 rounded-xl border border-slate-200 p-3">
           <F label="Mã rule"><input className={inp} value={d.rule_code} onChange={(e) => setD({ ...d, rule_code: e.target.value })} data-testid="roadmap-rule-code" /></F>
           <F label="Loại"><select className={inp} value={d.proposal_type} onChange={(e) => setD({ ...d, proposal_type: e.target.value })}>{opts.rule_proposal_types.map((t) => <option key={t} value={t}>{PTYPE_LABEL[t]}</option>)}</select></F>
-          <F label="Rate (sp / đơn vị / kỳ)"><input type="number" className={inp} value={d.rate_value} onChange={(e) => setD({ ...d, rate_value: e.target.value })} data-testid="roadmap-rule-rate" /></F>
-          <F label="Đơn vị rate"><input className={inp} value={d.rate_unit} onChange={(e) => setD({ ...d, rate_unit: e.target.value })} /></F>
-          <F label="Kỳ của rate"><select className={inp} value={d.rate_period} onChange={(e) => setD({ ...d, rate_period: e.target.value })}>{opts.period_types.map((p) => <option key={p}>{p}</option>)}</select></F>
+          <F label="Formula type (metadata)"><input className={inp} value={d.formula_type} placeholder="UNSPECIFIED" onChange={(e) => setD({ ...d, formula_type: e.target.value })} /></F>
           <F label="Loại máy (chỉ Machine)"><input className={inp} value={d.machine_type_code} onChange={(e) => setD({ ...d, machine_type_code: e.target.value })} disabled={d.proposal_type !== "MACHINE_PURCHASE"} /></F>
-          <div className="col-span-2"><F label="Căn cứ / nguồn của rate (bắt buộc để duyệt)"><input className={inp} value={d.basis_note} onChange={(e) => setD({ ...d, basis_note: e.target.value })} /></F></div>
-          <div className="col-span-4 text-right"><button disabled={!d.rule_code.trim() || d.rate_value === ""} className={primary} data-testid="roadmap-rule-save"
-            onClick={() => void act(async () => { await api.post(`${RES}/rules`, { ...d, rate_value: Number(d.rate_value), machine_type_code: d.machine_type_code || undefined }); setD({ ...d, rule_code: "", rate_value: "" }); }, "Đã tạo rule (Draft).")}>+ Tạo rule Draft</button></div>
+          <div className="col-span-2"><F label="Mô tả rule (business sở hữu — bắt buộc để duyệt)"><input className={inp} value={d.formula_description} onChange={(e) => setD({ ...d, formula_description: e.target.value })} data-testid="roadmap-rule-desc" /></F></div>
+          <div className="col-span-2"><F label="Căn cứ / nguồn (bắt buộc để duyệt)"><input className={inp} value={d.basis_note} onChange={(e) => setD({ ...d, basis_note: e.target.value })} /></F></div>
+          <div className="col-span-4"><F label="Parameters (JSON object, metadata — không được tính toán)"><input className={inp} value={d.parameters} onChange={(e) => setD({ ...d, parameters: e.target.value })} placeholder='{"note": "..."}' /></F></div>
+          <div className="col-span-4 text-right"><button disabled={!d.rule_code.trim()} className={primary} data-testid="roadmap-rule-save" onClick={() => void create()}>+ Tạo rule Draft</button></div>
         </div>
       )}
     </Modal>

@@ -4,8 +4,9 @@ Nguyên tắc đã chốt (GPT Issue #11):
 - Run CHỈ trên version READY/REVIEWED (khóa từ READY); Run IMMUTABLE, snapshot đầy đủ; cùng input => trả run cũ (no-op).
 - gap = effective_target - baseline (không clamp). INCREMENT: effective_target = baseline + increment. Không đổi unit ngầm.
 - Thiếu/không khớp => trạng thái minh bạch (NEEDS_INPUT / MISSING_BASELINE / UNIT_MISMATCH / SCOPE_MISMATCH / PARTIAL_SOURCE), KHÔNG fallback.
-- Proposal: quantity chỉ CALCULATED khi có rule APPROVED + đủ input; CAPACITY_CHANGE luôn NEEDS_INPUT; TECHNOLOGY_ADOPTION chỉ link/snapshot
-  evidence, numeric NEEDS_INPUT; revenue gap KHÔNG suy ra labor/machine/capacity; không rank/score, không auto SELECTED.
+- Proposal: Task 5 KHÔNG thực thi công thức nghiệp vụ nào (rule registry chỉ metadata, chưa có executable calculation adapter được duyệt):
+  LABOR_RECRUITMENT / MACHINE_PURCHASE / CAPACITY_CHANGE luôn NEEDS_INPUT (không quantity); TECHNOLOGY_ADOPTION chỉ link/snapshot evidence;
+  revenue gap KHÔNG suy ra labor/machine/capacity; không rank/score, không auto SELECTED.
 - Fingerprint = version inputs + baseline VALUES + source identity + rule versions + tech/evidence + resource baselines; timestamp/sync_run_id
   chỉ là evidence (không vào hash).
 """
@@ -14,7 +15,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 from datetime import date, datetime
 
 from fastapi import HTTPException
@@ -128,8 +128,9 @@ def _approved_rules(db: Session) -> list[RoadmapRule]:
 
 
 def _rule_snapshot(r: RoadmapRule) -> dict:
-    return {"rule_code": r.rule_code, "rule_version": r.rule_version, "proposal_type": r.proposal_type, "formula_type": r.formula_type, "rate_value": r.rate_value,
-            "rate_unit": r.rate_unit, "rate_period": r.rate_period, "machine_type_code": r.machine_type_code, "basis_note": r.basis_note}
+    """Snapshot metadata của rule APPROVED (đi vào fingerprint + snapshot run). KHÔNG dùng để tính số."""
+    return {"rule_code": r.rule_code, "rule_version": r.rule_version, "proposal_type": r.proposal_type, "formula_type": r.formula_type, "formula_description": r.formula_description,
+            "parameters": r.parameters_json or {}, "machine_type_code": r.machine_type_code, "basis_note": r.basis_note, "executable": False}
 
 
 # ------------------------------------------------------------------ proposals
@@ -172,30 +173,19 @@ def build_proposals(r: dict, tech: list[dict], rules: list[RoadmapRule], labor: 
         out.append(tech_prop())
         return out
 
-    # OUTPUT_QTY, gap dương
+    # OUTPUT_QTY, gap dương — Task 5 KHÔNG có executable calculation adapter nào: LABOR/MACHINE luôn NEEDS_INPUT, không quantity
     for pt, baseline, bname in (("LABOR_RECRUITMENT", labor, "labor_standards"), ("MACHINE_PURCHASE", machine, "machine_capacities")):
         cand = [x for x in rules if x.proposal_type == pt]
+        base_inputs = {"gap": r["gap"], "gap_unit": "sp", "available_baseline": baseline}
         if not cand:
             out.append(_proposal(r, pt, "NEEDS_INPUT", f"Chưa có rule {pt} nào được APPROVED trong registry — không tự bịa công thức.",
-                                 missing=["approved calculation rule", "capacity/output relationship", "productivity basis"], inputs={"gap": r["gap"], "unit": "sp", "available_baseline": baseline}))
+                                 missing=["approved calculation rule", "approved executable calculation adapter/formula", "capacity/output relationship", "productivity basis"], inputs=base_inputs))
             continue
-        for rule in cand:  # mỗi rule APPROVED = một proposal line; KHÔNG chọn/rank
-            missing = []
-            if rule.rate_period != r["period_type"]:
-                missing.append(f"rule rate_period={rule.rate_period} khác kỳ target {r['period_type']} — không quy đổi")
-            if baseline is None:
-                missing.append(f"available baseline từ {bname} (không có dữ liệu ACTIVE cho scope)")
-            elif pt == "MACHINE_PURCHASE" and rule.machine_type_code not in baseline["by_machine_type"]:
-                missing.append(f"inventory máy loại {rule.machine_type_code} trong {bname} cho scope")
-            inputs = {"gap": r["gap"], "gap_unit": "sp", "rule": _rule_snapshot(rule), "available_baseline": baseline}
-            if missing:
-                out.append(_proposal(r, pt, "NEEDS_INPUT", f"Rule {rule.rule_code}@v{rule.rule_version} chưa đủ input để tính.", rule=rule, inputs=inputs, missing=missing, completeness="PARTIAL"))
-                continue
-            qty = float(math.ceil(round(r["gap"] / rule.rate_value, 9)))
-            unit = "worker" if pt == "LABOR_RECRUITMENT" else "machine"
-            refs = [{"type": "RULE", "rule_code": rule.rule_code, "rule_version": rule.rule_version, "basis_note": rule.basis_note}, {"type": "BASELINE", "source": bname}]
-            out.append(_proposal(r, pt, "CALCULATED", f"quantity = ceil(gap / rate) = ceil({r['gap']:g} / {rule.rate_value:g}) theo rule {rule.rule_code}@v{rule.rule_version} (approved).",
-                                 quantity=qty, unit=unit, rule=rule, inputs={**inputs, "formula": "ceil(gap / rate_value)", "result": qty}, refs=refs, completeness="COMPLETE"))
+        for rule in cand:  # mỗi rule APPROVED (metadata) = một dòng, KHÔNG thực thi, KHÔNG chọn/rank
+            out.append(_proposal(r, pt, "NEEDS_INPUT",
+                                 f"Rule {rule.rule_code}@v{rule.rule_version} đã APPROVED ở mức metadata nhưng chưa có executable calculation adapter/formula được duyệt — Task 5 không tính quantity.",
+                                 rule=rule, inputs={**base_inputs, "rule": _rule_snapshot(rule)}, refs=[{"type": "RULE", "rule_code": rule.rule_code, "rule_version": rule.rule_version, "basis_note": rule.basis_note}],
+                                 missing=[f"approved executable calculation adapter/formula cho rule {rule.rule_code}@v{rule.rule_version} (Task 5 chỉ lưu metadata)"], completeness="PARTIAL"))
     out.append(_proposal(r, "CAPACITY_CHANGE", "NEEDS_INPUT", "Chưa có approved capacity-change rule; không diễn giải thành đổi ca/OT/tuyển người/mua máy.",
                          missing=["approved capacity-change rule"], inputs={"gap": r["gap"], "unit": "sp"}))
     out.append(tech_prop())

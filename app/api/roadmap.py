@@ -242,9 +242,9 @@ class RuleBody(BaseModel):
     rule_code: str | None = Field(None, max_length=40)
     proposal_type: str | None = None
     title: str | None = Field(None, max_length=200)
-    rate_value: float | None = None
-    rate_unit: str | None = Field(None, max_length=40)
-    rate_period: str | None = None
+    formula_type: str | None = Field(None, max_length=40)
+    formula_description: str | None = Field(None, max_length=500)
+    parameters: dict | None = None
     machine_type_code: str | None = Field(None, max_length=20)
     basis_note: str | None = Field(None, max_length=300)
 
