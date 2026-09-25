@@ -24,6 +24,10 @@ VERSION_STATUSES = ("DRAFT", "SIMULATED", "REVIEWED", "APPROVED", "RETIRED")
 SOURCE_TYPES = ("ERP", "ENGINEERING", "AUTO_GENERATED", "MANUAL", "IMPORT", "TECHNOLOGY_SCOUTING")
 SAM_STATUSES = ("EMPTY", "COMPLETE", "INCOMPLETE")  # BR-017: thiếu SAM của operation bắt buộc -> INCOMPLETE, không lấy default/median chỗ khác
 
+# Task 3 (Issue #7 §BR-311, review mục 6) — generator Task 3 chỉ tự set UNCHANGED/MACHINE_SUBSTITUTION; các giá trị
+# còn lại forward-compatible cho thay đổi thủ công sau này.
+OPERATION_CHANGE_TYPES = ("UNCHANGED", "MACHINE_SUBSTITUTION", "AUTOMATION_UPGRADE", "MANPOWER_CHANGE", "TIME_CHANGE", "OTHER_ENGINEERING_CHANGE")
+
 
 class TechnologyProcess(Base):
     """§6.1 — family logic cho một cặp (style_cc, model_code); chứa cả 3 layer bên trong (mỗi layer có chuỗi version riêng)."""
@@ -82,7 +86,12 @@ class TechnologyProcessVersion(Base):
     retired_by: Mapped[str] = mapped_column(String(100), default="")
     retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    bootstrap_fingerprint: Mapped[str] = mapped_column(String(120), default="", index=True)  # BR-015 idempotency — kiểm tra ở service, không unique-constraint cứng (nhiều DRAFT được phép)
+    bootstrap_fingerprint: Mapped[str] = mapped_column(String(120), default="", index=True)  # BR-015 idempotency (Task 2, Current Process import) — kiểm tra ở service, không unique-constraint cứng (nhiều DRAFT được phép)
+    # Task 3 (Issue #7 review mục 5): KHÔNG dùng chung bootstrap_fingerprint cho Layer 2 — ngữ nghĩa khác nhau
+    # (bootstrap_fingerprint = snapshot nguồn ERP lúc import; generation_fingerprint = snapshot THỰC TẾ của source
+    # version + rule + compatibility mapping + lựa chọn người dùng TẠI THỜI ĐIỂM generate, vì Current Process DRAFT
+    # có thể bị sửa sau import nên chỉ hash lại bootstrap_fingerprint/id của nguồn là chưa đủ).
+    generation_fingerprint: Mapped[str] = mapped_column(String(120), default="", index=True)
 
     operations: Mapped[list["TechnologyProcessOperation"]] = relationship(cascade="all, delete-orphan", lazy="selectin", order_by="TechnologyProcessOperation.sequence_no")
 
@@ -122,6 +131,11 @@ class TechnologyProcessOperation(Base):
     evidence_note: Mapped[str] = mapped_column(String(300), default="")  # §6.4 evidence
     evidence_ref: Mapped[str | None] = mapped_column(String(200), nullable=True)  # §6.4 evidence
     source_date: Mapped[date | None] = mapped_column(Date, nullable=True)  # §6.4 evidence
+
+    # Task 3 (Issue #7 review mục 6) — chỉ có ý nghĩa với operation thuộc Layer 2 trở lên; Layer 1 (Current Process)
+    # luôn null. Generator Task 3 CHỈ tự set UNCHANGED/MACHINE_SUBSTITUTION; các giá trị còn lại (AUTOMATION_UPGRADE,
+    # MANPOWER_CHANGE, TIME_CHANGE, OTHER_ENGINEERING_CHANGE) để dành cho thay đổi thủ công sau này, không tự set.
+    change_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)  # gỡ operation = soft (giữ lịch sử/audit); version APPROVED thì không đổi được nữa (V-007)
 

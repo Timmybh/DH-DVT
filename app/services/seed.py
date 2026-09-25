@@ -74,6 +74,9 @@ def _upgrade_schema() -> None:
             "ALTER TABLE actual_mappings ADD COLUMN IF NOT EXISTS mapped_so_id INTEGER",
             "ALTER TABLE actual_mappings ALTER COLUMN method TYPE VARCHAR(24)",
             "ALTER TABLE technology_process_operations ALTER COLUMN operator_count DROP NOT NULL",  # Task 2: 0 != "không biết" (ERP import)
+            "ALTER TABLE technology_process_operations ADD COLUMN IF NOT EXISTS change_type VARCHAR(30)",  # Task 3
+            "ALTER TABLE technology_process_versions ADD COLUMN IF NOT EXISTS generation_fingerprint VARCHAR(120) NOT NULL DEFAULT ''",  # Task 3
+            "CREATE INDEX IF NOT EXISTS ix_tpv_generation_fingerprint ON technology_process_versions (generation_fingerprint)",
         ):
             try:
                 conn.execute(text(ddl))

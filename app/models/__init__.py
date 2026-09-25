@@ -28,6 +28,7 @@ from app.models.resources import CapacityDefinition, LaborDaily, MachineCapacity
 from app.models.planning import CalendarDayType, FormulaDefinition, PlanColumn, PlanningEditSession, PlanningVersion, PlanningVersionRow, WorkingCalendarRule
 from app.models.technology_process import TechnologyProcess, TechnologyProcessOperation, TechnologyProcessVersion
 from app.models.erp_sync import MachineCrosswalk, TechProcessSyncException
+from app.models.tech_compatibility import OperationMachineCompatibility
 
 __all__ = [
     "PlanningSO",
@@ -80,4 +81,5 @@ __all__ = [
     "TechnologyProcessVersion",
     "MachineCrosswalk",
     "TechProcessSyncException",
+    "OperationMachineCompatibility",
 ]

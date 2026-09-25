@@ -444,30 +444,37 @@ def test_bootstrap_uses_same_canonical_business_key_as_create_process(db):
 
 # ------------------------------------------------------------------ GPT review vòng 2 mục 2 — version_no race condition, không lộ 500
 def test_create_draft_version_retries_on_version_no_race_and_does_not_500(db, monkeypatch):
+    """Task 3 (Issue #7 review mục 7): retry giờ bắt ở flush() — điểm INSERT thật sự chạy — thay vì commit(),
+    chính xác hơn với cách Postgres báo lỗi unique constraint. Chỉ làm hỏng flush khi có TechnologyProcessVersion
+    đang chờ ghi (không phải mọi autoflush của SQLAlchemy, VD lúc query _next_version_no)."""
     p = svc.create_process(db, ADMIN, {"style_cc": "RACE1", "model_code": ""})
-    real_commit = db.commit
-    calls = {"n": 0}
+    real_flush = db.flush
+    state = {"failed_once": False, "fail_count": 0}
 
-    def flaky_commit():
-        calls["n"] += 1
-        if calls["n"] == 1:
+    def flaky_flush(*a, **kw):
+        if any(isinstance(o, TechnologyProcessVersion) for o in db.new) and not state["failed_once"]:
+            state["failed_once"] = True
+            state["fail_count"] += 1
             raise IntegrityError("stmt", {}, Exception("uq_tpv_process_layer_version"))  # mô phỏng request khác vừa chiếm version_no=1
-        return real_commit()
+        return real_flush(*a, **kw)
 
-    monkeypatch.setattr(db, "commit", flaky_commit)
+    monkeypatch.setattr(db, "flush", flaky_flush)
     v = svc.create_draft_version(db, ADMIN, p.id, {"layer": "CURRENT_PROCESS"})
     assert v.version_no == 1  # sau rollback + tính lại, version_no vẫn hợp lệ (không phải 500, không bỏ trống version_no=1)
-    assert calls["n"] == 2  # đúng 1 lần retry
-    assert db.query(TechnologyProcessVersion).filter_by(technology_process_id=p.id).count() == 1  # không để lại row dở dang từ lần commit lỗi
+    assert state["fail_count"] == 1  # đúng 1 lần retry
+    assert db.query(TechnologyProcessVersion).filter_by(technology_process_id=p.id).count() == 1  # không để lại row dở dang từ lần flush lỗi
 
 
 def test_create_draft_version_gives_up_after_max_retries_as_409_not_500(db, monkeypatch):
     p = svc.create_process(db, ADMIN, {"style_cc": "RACE2", "model_code": ""})
+    real_flush = db.flush
 
-    def always_fails():
-        raise IntegrityError("stmt", {}, Exception("uq_tpv_process_layer_version"))
+    def always_fails(*a, **kw):
+        if any(isinstance(o, TechnologyProcessVersion) for o in db.new):
+            raise IntegrityError("stmt", {}, Exception("uq_tpv_process_layer_version"))
+        return real_flush(*a, **kw)
 
-    monkeypatch.setattr(db, "commit", always_fails)
+    monkeypatch.setattr(db, "flush", always_fails)
     with pytest.raises(HTTPException) as e:
         svc.create_draft_version(db, ADMIN, p.id, {"layer": "CURRENT_PROCESS"})
     assert e.value.status_code == 409  # hết lượt retry -> business error, không phải 500
