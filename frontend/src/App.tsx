@@ -13,6 +13,7 @@ import ColumnConfig from "./pages/planning/ColumnConfig";
 import Actual from "./pages/planning/Actual";
 import Resources from "./pages/planning/Resources";
 import SalesOrders from "./pages/planning/SalesOrders";
+import Roadmap from "./pages/planning/Roadmap";
 import SyncDetail from "./pages/SyncDetail";
 import SyncLog from "./pages/SyncLog";
 import Alerts from "./pages/admin/Alerts";
@@ -62,6 +63,7 @@ export default function App() {
       <Route path="/planning/resources/:section" element={<Protected perm="planning.view"><SubTabs tabs={PLANNING_TABS}><Resources /></SubTabs></Protected>} />
       <Route path="/planning/actual" element={<Navigate to="/planning/actual/plan-vs-actual" replace />} />
       <Route path="/planning/actual/:section" element={<Protected perm="mapping.view"><SubTabs tabs={PLANNING_TABS}><Actual /></SubTabs></Protected>} />
+      <Route path="/planning/roadmap" element={<Protected perm="roadmap.view"><SubTabs tabs={PLANNING_TABS}><Roadmap /></SubTabs></Protected>} />
       <Route path="/planning/so" element={<Protected perm="planning.view"><SubTabs tabs={PLANNING_TABS}><SalesOrders /></SubTabs></Protected>} />
       <Route path="/planning/columns" element={<Protected perm="planning.view"><SubTabs tabs={PLANNING_TABS}><ColumnConfig /></SubTabs></Protected>} />
       <Route path="/admin" element={<AdminIndex />} />
