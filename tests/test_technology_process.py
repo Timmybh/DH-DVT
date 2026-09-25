@@ -181,10 +181,18 @@ def test_derive_rejects_invalid_target_layer(db):
         svc.derive_version(db, ADMIN, v.id, "NOT_A_LAYER")
 
 
+def _future_fixture_draft(db, process, source_type="MANUAL"):
+    """Task 4 (PR #10 review): create_draft_version() không còn tạo Future thủ công (bypass governance). Fixture của Task 1
+    dùng đúng helper nội bộ mà generator Future dùng."""
+    v = svc._build_draft_version_flush(db, ADMIN, process, {"layer": "FUTURE_TECHNOLOGY", "source_type": source_type})
+    db.commit()
+    return v
+
+
 # ------------------------------------------------------------------ BR-008 / AC-006 generated không tự approved
 def test_no_code_path_auto_approves_generated_version(db):
     p = svc.create_process(db, ADMIN, {"style_cc": "D400", "model_code": ""})
-    v = svc.create_draft_version(db, ADMIN, p.id, {"layer": "FUTURE_TECHNOLOGY", "source_type": "AUTO_GENERATED"})
+    v = _future_fixture_draft(db, p, "AUTO_GENERATED")
     assert v.status == "DRAFT"  # tạo AUTO_GENERATED chỉ ở DRAFT, không có API/service nào set thẳng APPROVED
     svc.simulate_version(db, ADMIN, v.id)
     db.refresh(v)
@@ -238,7 +246,7 @@ def test_machine_model_is_independent_master_not_owned_by_process(db):
     op1 = v1.operations[0]
     svc.update_operation(db, ADMIN, op1.id, {"machine_type_code": "1K", "machine_model_id": mm.id})
     p2 = svc.create_process(db, ADMIN, {"style_cc": "G700", "model_code": ""})
-    v2 = svc.create_draft_version(db, ADMIN, p2.id, {"layer": "FUTURE_TECHNOLOGY"})
+    v2 = _future_fixture_draft(db, p2)
     op2 = svc.add_operation(db, ADMIN, v2.id, {"operation_name": "OPx", "machine_type_code": "1K", "machine_model_id": mm.id})
     assert op1.machine_model_id == op2.machine_model_id == mm.id  # cùng model, hai process khác nhau — không có ownership ràng buộc
 
@@ -259,7 +267,7 @@ def test_sam_lives_on_version_not_a_separate_three_tier_model(db):
     p = svc.create_process(db, ADMIN, {"style_cc": "I900", "model_code": ""})
     vs = {}
     for layer, sams in (("CURRENT_PROCESS", (1.0, 1.0)), ("OPTIMIZED_CURRENT_TECHNOLOGY", (0.6,)), ("FUTURE_TECHNOLOGY", (0.4,))):
-        v = svc.create_draft_version(db, ADMIN, p.id, {"layer": layer})
+        v = _future_fixture_draft(db, p) if layer == "FUTURE_TECHNOLOGY" else svc.create_draft_version(db, ADMIN, p.id, {"layer": layer})
         svc.add_operation(db, ADMIN, v.id, {"operation_name": "op", "sam_minutes": sams[0]})
         for extra in sams[1:]:
             svc.add_operation(db, ADMIN, v.id, {"operation_name": "op2", "sam_minutes": extra})

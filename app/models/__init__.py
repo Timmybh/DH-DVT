@@ -29,6 +29,7 @@ from app.models.planning import CalendarDayType, FormulaDefinition, PlanColumn, 
 from app.models.technology_process import TechnologyProcess, TechnologyProcessOperation, TechnologyProcessVersion
 from app.models.erp_sync import MachineCrosswalk, TechProcessSyncException
 from app.models.tech_compatibility import OperationMachineCompatibility
+from app.models.future_technology import FutureTechnologyCandidate, FutureTechnologyCompatibility, FutureTechnologyEvidence, FutureTechnologyStatusHistory
 
 __all__ = [
     "PlanningSO",
@@ -82,4 +83,8 @@ __all__ = [
     "MachineCrosswalk",
     "TechProcessSyncException",
     "OperationMachineCompatibility",
+    "FutureTechnologyCandidate",
+    "FutureTechnologyCompatibility",
+    "FutureTechnologyEvidence",
+    "FutureTechnologyStatusHistory",
 ]
