@@ -33,6 +33,9 @@ from app.models.future_technology import (
 from app.models.resources import MachineModel, MachineType
 from app.services.audit import write_audit
 
+# Rời DISCOVERED (vào UNDER_REVIEW, gồm reactivate từ INACTIVE) và APPROVED_FOR_FUTURE đều bắt buộc đã có evidence.
+EVIDENCE_REQUIRED_TARGETS = ("UNDER_REVIEW", "APPROVED_FOR_FUTURE")
+
 
 def _bad(msg: str, code: int = 422) -> HTTPException:
     return HTTPException(code, msg)
@@ -155,6 +158,9 @@ def transition_candidate(db: Session, user: User, candidate_id: int, to_status: 
         raise _bad(f"status phải là một trong {FUTURE_CANDIDATE_STATUSES}")
     if to_status not in FUTURE_CANDIDATE_TRANSITIONS.get(c.status, ()):
         raise _bad(f"Không cho chuyển {c.status} -> {to_status} (cho phép: {list(FUTURE_CANDIDATE_TRANSITIONS.get(c.status, ())) or 'không có'})", 409)
+    if to_status in EVIDENCE_REQUIRED_TARGETS and db.query(FutureTechnologyEvidence.id).filter_by(candidate_id=c.id).first() is None:
+        # BR-401/403 (PR #10 review mục 1): candidate vào review/được duyệt phải truy được source/evidence — service enforce, không chỉ UI.
+        raise _bad(f"Không thể chuyển sang {to_status}: candidate chưa có evidence nào (cần ít nhất 1 evidence có source_ref)", 422)
     reason = (reason or "").strip()
     if (to_status in REASON_REQUIRED_TARGETS or c.status == "INACTIVE") and not reason:
         raise _bad(f"Chuyển sang {to_status} (hoặc kích hoạt lại từ INACTIVE) bắt buộc có reason")

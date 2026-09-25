@@ -246,7 +246,7 @@ function CreateModal({ opts, onClose, onDone, setMsg }: { opts: Options; onClose
         <F label="Model (không bắt buộc)"><input className={inp} value={d.model_code} onChange={(e) => setD({ ...d, model_code: e.target.value })} /></F>
         <F label="Product family"><input className={inp} value={d.product_family} onChange={(e) => setD({ ...d, product_family: e.target.value })} /></F>
         <F label="Mô tả"><input className={inp} value={d.description} onChange={(e) => setD({ ...d, description: e.target.value })} /></F>
-        <F label="Layer"><select className={inp} value={d.layer} onChange={(e) => setD({ ...d, layer: e.target.value })}>{opts.layers.map((l) => <option key={l} value={l}>{LAYER_LABEL[l] ?? l}</option>)}</select></F>
+        <F label="Layer"><select className={inp} value={d.layer} onChange={(e) => setD({ ...d, layer: e.target.value })}>{opts.layers.filter((l) => l !== "FUTURE_TECHNOLOGY").map((l) => <option key={l} value={l}>{LAYER_LABEL[l] ?? l}</option>)}</select></F>
         <F label="Nguồn (source_type)"><select className={inp} value={d.source_type} onChange={(e) => setD({ ...d, source_type: e.target.value })}>{opts.source_types.map((s) => <option key={s} value={s}>{s}</option>)}</select></F>
         <div className="col-span-2"><F label="source_ref (bằng chứng nguồn)"><input className={inp} value={d.source_ref} onChange={(e) => setD({ ...d, source_ref: e.target.value })} placeholder="VD: QTCN routing #123, IE standard 2026-09..." /></F></div>
         <div className="col-span-2"><F label="Ghi chú"><input className={inp} value={d.note} onChange={(e) => setD({ ...d, note: e.target.value })} /></F></div>

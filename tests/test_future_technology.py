@@ -59,8 +59,14 @@ def _current(db, style="F100", ops=None):
     return p, v
 
 
-def _cand(db, status="APPROVED_FOR_FUTURE", mt="2K", model_id=None, automation="", brand="Acme", model_name="X1"):
+def _ev(db, c, source_ref="fixture brochure", **kw):
+    return ft.add_evidence(db, ADMIN, c.id, {"source_ref": source_ref, "basis": "CLAIMED", "metric_code": "OTHER", **kw})
+
+
+def _cand(db, status="APPROVED_FOR_FUTURE", mt="2K", model_id=None, automation="", brand="Acme", model_name="X1", evidence=True):
     c = ft.create_candidate(db, ADMIN, {"machine_type_code": mt, "machine_model_id": model_id, "brand": brand, "model_name": model_name, "automation_level": automation})
+    if evidence:
+        _ev(db, c)  # BR-401/403: candidate hợp lệ có ít nhất 1 evidence
     c.status = status  # đặt trực tiếp trạng thái fixture (transition được test riêng)
     db.commit()
     return c
@@ -102,6 +108,7 @@ def test_create_candidate_model_type_integrity_and_identity(db):
 
 def test_transition_valid_path_writes_history_and_audit_fields(db):
     c = ft.create_candidate(db, ADMIN, {"machine_type_code": "2K", "brand": "X"})
+    _ev(db, c)
     ft.transition_candidate(db, ADMIN, c.id, "UNDER_REVIEW")
     ft.transition_candidate(db, ADMIN, c.id, "TRIAL")
     ft.transition_candidate(db, ADMIN, c.id, "APPROVED_FOR_FUTURE")
@@ -119,6 +126,7 @@ def test_transition_rejects_invalid_paths(db):
     with pytest.raises(HTTPException) as e:
         ft.transition_candidate(db, ADMIN, c.id, "APPROVED_FOR_FUTURE")
     assert e.value.status_code == 409
+    _ev(db, c)
     ft.transition_candidate(db, ADMIN, c.id, "UNDER_REVIEW")
     ft.transition_candidate(db, ADMIN, c.id, "REJECTED", "không đạt")
     with pytest.raises(HTTPException) as e:
@@ -132,6 +140,7 @@ def test_transition_reason_required_and_reactivate_from_inactive(db):
         ft.transition_candidate(db, ADMIN, c.id, "INACTIVE")  # thiếu reason
     assert e.value.status_code == 422
     ft.transition_candidate(db, ADMIN, c.id, "INACTIVE", "ngưng theo dõi")
+    _ev(db, c)
     with pytest.raises(HTTPException):
         ft.transition_candidate(db, ADMIN, c.id, "UNDER_REVIEW")  # reactivate cũng bắt buộc reason
     ft.transition_candidate(db, ADMIN, c.id, "UNDER_REVIEW", "theo dõi lại")
@@ -142,6 +151,7 @@ def test_transition_reason_required_and_reactivate_from_inactive(db):
 def test_identity_edit_only_in_discovered_or_under_review(db):
     c = ft.create_candidate(db, ADMIN, {"machine_type_code": "2K", "brand": "X"})
     ft.update_candidate(db, ADMIN, c.id, {"brand": "Y"})
+    _ev(db, c)
     ft.transition_candidate(db, ADMIN, c.id, "UNDER_REVIEW")
     ft.update_candidate(db, ADMIN, c.id, {"model_name": "Z"})
     ft.transition_candidate(db, ADMIN, c.id, "TRIAL")
@@ -304,7 +314,7 @@ def test_valid_future_substitution_auto_applies_only_machine(db):
 
 
 def test_no_invented_numeric_even_with_numeric_evidence(db):
-    c = _cand(db)
+    c = _cand(db, evidence=False)
     _fc(db, c)
     ft.add_evidence(db, ADMIN, c.id, {"source_ref": "spec", "basis": "CLAIMED", "metric_code": "CYCLE_TIME", "value": 5, "unit": "s"})
     ft.add_evidence(db, ADMIN, c.id, {"source_ref": "spec", "basis": "CLAIMED", "metric_code": "OUTPUT", "value": 9999, "unit": "pcs/day"})
@@ -556,7 +566,7 @@ def test_task3_generator_unaffected_by_future_catalog(db):
 
 # =================================================================== evidence lịch sử
 def test_generation_evidence_survives_later_candidate_edit(db):
-    c = _cand(db, automation="Auto")
+    c = _cand(db, automation="Auto", evidence=False)
     _fc(db, c)
     ft.add_evidence(db, ADMIN, c.id, {"source_ref": "spec", "basis": "CLAIMED", "metric_code": "OUTPUT", "value": 500, "unit": "pcs/day"})
     _p, v = _current(db)
@@ -574,7 +584,7 @@ def test_generation_evidence_survives_later_candidate_edit(db):
 
 # =================================================================== compare
 def test_compare_counts_na_and_evidence_completeness(db):
-    c = _cand(db)
+    c = _cand(db, evidence=False)
     _fc(db, c)
     ft.add_evidence(db, ADMIN, c.id, {"source_ref": "trial#1", "basis": "TRIALED", "metric_code": "CYCLE_TIME", "value": 10, "unit": "s"})
     _p, v = _current(db, ops=[{"operation_name": "Vắt sổ", "operation_code": "OP1", "machine_type_code": "1K"}, {"operation_name": "Ủi", "operation_code": "OP2"}])
@@ -622,3 +632,100 @@ def test_generate_is_audited(db):
     _p, v = _current(db)
     gen.generate_future_proposal(db, ADMIN, v.id)
     assert "FUTURE_PROPOSAL_GENERATE" in db.audit  # type: ignore[attr-defined]
+
+
+# =================================================================== PR #10 review round 1 — mục 1: evidence bắt buộc
+def test_cannot_enter_review_or_approval_without_evidence(db):
+    c = ft.create_candidate(db, ADMIN, {"machine_type_code": "2K", "brand": "X"})
+    with pytest.raises(HTTPException) as e:
+        ft.transition_candidate(db, ADMIN, c.id, "UNDER_REVIEW")  # rời DISCOVERED phải có provenance
+    assert e.value.status_code == 422
+    assert ft.get_candidate(db, c.id).status == "DISCOVERED" and len(ft.list_history(db, c.id)) == 1  # không đổi, không ghi history
+    c.status = "TRIAL"  # fixture dữ liệu lỗi: TRIAL mà 0 evidence
+    db.commit()
+    with pytest.raises(HTTPException) as e:
+        ft.transition_candidate(db, ADMIN, c.id, "APPROVED_FOR_FUTURE")  # defense-in-depth ở bước duyệt
+    assert e.value.status_code == 422 and ft.get_candidate(db, c.id).status == "TRIAL"
+
+
+def test_adding_evidence_unblocks_transitions(db):
+    c = ft.create_candidate(db, ADMIN, {"machine_type_code": "2K", "brand": "X"})
+    _ev(db, c)
+    for to in ("UNDER_REVIEW", "TRIAL", "APPROVED_FOR_FUTURE"):
+        ft.transition_candidate(db, ADMIN, c.id, to)
+    assert ft.get_candidate(db, c.id).status == "APPROVED_FOR_FUTURE"
+
+
+def test_reactivate_from_inactive_also_requires_evidence(db):
+    c = ft.create_candidate(db, ADMIN, {"machine_type_code": "2K", "brand": "X"})
+    ft.transition_candidate(db, ADMIN, c.id, "INACTIVE", "ngưng")  # INACTIVE không cần evidence
+    with pytest.raises(HTTPException) as e:
+        ft.transition_candidate(db, ADMIN, c.id, "UNDER_REVIEW", "mở lại")
+    assert e.value.status_code == 422
+
+
+def test_approved_candidate_without_evidence_never_auto_applies(db):
+    c = _cand(db, evidence=False)  # APPROVED_FOR_FUTURE nhưng 0 evidence (dữ liệu lỗi/legacy)
+    row = _fc(db, c)
+    _p, v = _current(db)
+    entry = gen.preview_future_proposal(db, v.id)["operations"][0]
+    assert entry["decision"] == "UNVERIFIED_CANDIDATE_AVAILABLE" and entry["candidates"][0]["auto_eligible"] is False and entry["candidates"][0]["evidence_count"] == 0
+    assert gen.generate_future_proposal(db, ADMIN, v.id)["version"]["operations"][0]["change_type"] == "UNCHANGED"  # không auto
+    r = gen.generate_future_proposal(db, ADMIN, v.id, selections={"1": row.id})["version"]["operations"][0]
+    assert r["change_type"] == "MACHINE_SUBSTITUTION" and "UNVERIFIED" in r["evidence_note"]  # chỉ user chọn tay, đánh dấu unverified
+    _ev(db, c)  # thêm evidence hợp lệ -> auto đúng
+    auto = gen.generate_future_proposal(db, ADMIN, v.id)
+    assert auto["created"] is True and auto["version"]["operations"][0]["change_type"] == "MACHINE_SUBSTITUTION"
+    assert "UNVERIFIED" not in auto["version"]["operations"][0]["evidence_note"]
+
+
+def test_evidence_snapshot_and_history_behaviour_unchanged(db):
+    c = _cand(db, evidence=False)
+    _ev(db, c, "spec-1", metric_code="OUTPUT", value=100, unit="pcs/day")
+    _fc(db, c)
+    _p, v = _current(db)
+    r = gen.generate_future_proposal(db, ADMIN, v.id)["version"]
+    assert r["assumptions_json"]["decisions"][0]["candidates_considered"][0]["evidence_count"] == 1
+    _ev(db, c, "spec-2")
+    assert tps.get_version(db, r["id"]).assumptions_json["decisions"][0]["candidates_considered"][0]["evidence_count"] == 1  # snapshot lịch sử không đổi
+
+
+# =================================================================== PR #10 review round 1 — mục 2: không bypass bằng create Draft
+def test_direct_create_draft_future_rejected_no_row_created(db):
+    p = tps.create_process(db, ADMIN, {"style_cc": "NOFUT", "model_code": ""})
+    with pytest.raises(HTTPException) as e:
+        tps.create_draft_version(db, ADMIN, p.id, {"layer": "FUTURE_TECHNOLOGY"})
+    assert e.value.status_code == 422
+    assert db.query(TechnologyProcessVersion).filter_by(technology_process_id=p.id).count() == 0
+
+
+def test_generic_derive_future_still_rejected_and_generator_and_other_layers_still_work(db):
+    p, v = _current(db)
+    with pytest.raises(HTTPException) as e:
+        tps.derive_version(db, ADMIN, v.id, "FUTURE_TECHNOLOGY")
+    assert e.value.status_code == 422
+    assert gen.generate_future_proposal(db, ADMIN, v.id)["version"]["status"] == "DRAFT"  # generator vẫn tạo Future bình thường
+    for layer in ("CURRENT_PROCESS", "OPTIMIZED_CURRENT_TECHNOLOGY"):  # Task 1–3 không regression
+        assert tps.create_draft_version(db, ADMIN, p.id, {"layer": layer}).layer == layer
+    assert db.query(TechnologyProcessVersion).filter_by(layer=FUTURE).count() == 1
+
+
+def test_create_draft_future_rejected_via_http_api(db):
+    from fastapi.testclient import TestClient
+
+    from app.api.deps import get_current_user
+    from app.db.session import get_db
+    from app.main import app
+
+    p, _v = _current(db)
+    fake_admin = SimpleNamespace(username="admin", role="ADMIN", id=1, is_active=True, must_change_password=False)
+    app.dependency_overrides[get_current_user] = lambda: fake_admin
+    app.dependency_overrides[get_db] = lambda: db
+    try:
+        client = TestClient(app)
+        r = client.post(f"/api/planning/technology-process/processes/{p.id}/versions", json={"layer": "FUTURE_TECHNOLOGY"})
+        assert r.status_code == 422
+        assert client.post(f"/api/planning/technology-process/processes/{p.id}/versions", json={"layer": "OPTIMIZED_CURRENT_TECHNOLOGY"}).status_code == 200
+    finally:
+        app.dependency_overrides.clear()
+    assert db.query(TechnologyProcessVersion).filter_by(layer=FUTURE).count() == 0

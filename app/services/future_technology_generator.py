@@ -86,7 +86,7 @@ def _entry(db: Session, comp: FutureTechnologyCompatibility, cand: FutureTechnol
         "machine_type_code": cand.machine_type_code, "machine_type_status": mt.status if mt else None,
         "machine_model_id": cand.machine_model_id, "machine_model_status": mm.status if mm else None,
         "brand": cand.brand, "model_name": cand.model_name, "technology_name": cand.technology_name, "automation_level": cand.automation_level,
-        "selectable": selectable, "auto_eligible": selectable and cand.status == "APPROVED_FOR_FUTURE" and comp.compatibility_status == "APPROVED",
+        "selectable": selectable, "auto_eligible": selectable and cand.status == "APPROVED_FOR_FUTURE" and comp.compatibility_status == "APPROVED" and len(ev) > 0,  # cần evidence (PR #10 review mục 1)
         "evidence_count": len(ev),
         "evidence": [{"id": e.id, "source_kind": e.source_kind, "basis": e.basis, "metric_code": e.metric_code, "value": e.value, "unit": e.unit,
                       "evidence_date": _canon_val(e.evidence_date), "source_ref": e.source_ref} for e in ev],

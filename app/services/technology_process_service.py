@@ -234,6 +234,10 @@ def create_draft_version(db: Session, user: User, process_id: int, d: dict) -> T
     p = get_process(db, process_id)
     d = {**d, "layer": d.get("layer")}
     _validate_version_fields(d)
+    if d["layer"] == "FUTURE_TECHNOLOGY":
+        # Task 4 (Issue #9 PR #10 review mục 2): không cho tạo Draft Future thủ công — sẽ bypass candidate/evidence/fingerprint governance.
+        # Generator Future dùng trực tiếp _build_draft_version_flush() nội bộ nên không bị ảnh hưởng.
+        raise _bad("Không tạo trực tiếp version FUTURE_TECHNOLOGY — dùng 'Tạo đề xuất Future Technology' (generator/scouting flow)")
     v = _build_draft_version_flush(db, user, p, d)
     db.commit()
     write_audit("TECH_PROCESS_VERSION_CREATE", user=user, object_type="TechnologyProcessVersion", object_id=str(v.id), detail=f"{p.process_code} {v.layer} v{v.version_no}")
