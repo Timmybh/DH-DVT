@@ -29,6 +29,19 @@ from app.models.planning import CalendarDayType, FormulaDefinition, PlanColumn, 
 from app.models.technology_process import TechnologyProcess, TechnologyProcessOperation, TechnologyProcessVersion
 from app.models.erp_sync import MachineCrosswalk, TechProcessSyncException
 from app.models.tech_compatibility import OperationMachineCompatibility
+from app.models.roadmap import (
+    RoadmapMilestone,
+    RoadmapProposal,
+    RoadmapProposalDecisionHistory,
+    RoadmapRule,
+    RoadmapRun,
+    RoadmapRunTargetResult,
+    RoadmapScenario,
+    RoadmapScenarioVersion,
+    RoadmapStatusHistory,
+    RoadmapTarget,
+    RoadmapTechnologyLink,
+)
 from app.models.future_technology import FutureTechnologyCandidate, FutureTechnologyCompatibility, FutureTechnologyEvidence, FutureTechnologyStatusHistory
 
 __all__ = [
@@ -87,4 +100,15 @@ __all__ = [
     "FutureTechnologyCompatibility",
     "FutureTechnologyEvidence",
     "FutureTechnologyStatusHistory",
+    "RoadmapMilestone",
+    "RoadmapProposal",
+    "RoadmapProposalDecisionHistory",
+    "RoadmapRule",
+    "RoadmapRun",
+    "RoadmapRunTargetResult",
+    "RoadmapScenario",
+    "RoadmapScenarioVersion",
+    "RoadmapStatusHistory",
+    "RoadmapTarget",
+    "RoadmapTechnologyLink",
 ]

@@ -14,6 +14,7 @@ export const PLANNING_TABS: TabDef[] = [
   { to: "/planning/versions", label: "Phiên bản", perm: "planning.view" },
   { to: "/planning/calendar", label: "Lịch làm việc", perm: "calendar.view" },
   { to: "/planning/resources", label: "Năng suất & nguồn lực", perm: "planning.view" },
+  { to: "/planning/roadmap", label: "Roadmap Simulation", perm: "roadmap.view" },
   { to: "/planning/so", label: "Số SO", perm: "planning.view" },
   { to: "/planning/actual", label: "Thực tế & Đối soát", perm: "mapping.view" },
   { to: "/planning/columns", label: "Cấu hình cột & công thức", perm: "planning.view" },

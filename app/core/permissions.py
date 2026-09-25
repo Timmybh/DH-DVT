@@ -27,6 +27,10 @@ ALL_PERMISSIONS = [
     "technology_process.manage",
     "technology_process.review",
     "technology_process.approve",
+    "roadmap.view",
+    "roadmap.manage",
+    "roadmap.run",
+    "roadmap.approve",
     "theme.manage",
     "sync.view",
     "sync.run",
@@ -52,8 +56,11 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "mapping.manage",
         "calendar.view",
         "sync.view",
+        "roadmap.view",
+        "roadmap.manage",
+        "roadmap.run",
     },
-    "VIEWER": {"dashboard.view", "planning.view", "sync.view"},
+    "VIEWER": {"dashboard.view", "planning.view", "sync.view", "roadmap.view"},
 }
 
 
