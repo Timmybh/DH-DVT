@@ -231,6 +231,8 @@ def _validate_selections(active_ops: list, selections: dict) -> dict[str, int]:
             raise HTTPException(422, f"Selection key '{k}' không khớp sequence_no nào đang active trong source")
         if not isinstance(v, int) or isinstance(v, bool):
             raise HTTPException(422, f"Giá trị selection cho sequence_no {seq} phải là compatibility id dạng số nguyên")
+        if str(seq) in validated:
+            raise HTTPException(422, f"Selection trùng sequence_no {seq} (nhiều key khác dạng cùng chỉ một operation, vd '1' và '01')")
         validated[str(seq)] = v
     return validated
 

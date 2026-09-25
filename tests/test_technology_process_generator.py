@@ -415,6 +415,19 @@ def test_selection_key_not_matching_active_sequence_no_is_rejected(db):
     assert db.query(TechnologyProcessVersion).filter_by(layer="OPTIMIZED_CURRENT_TECHNOLOGY").count() == 0  # không tạo version dở dang
 
 
+def test_duplicate_semantic_selection_keys_rejected(db):
+    """'1' và '01' cùng là sequence_no 1 — không được để giá trị sau ghi đè giá trị trước."""
+    a = _compat(db, "OP1", candidate_type="2K", status="APPROVED")
+    db.add(MachineType(code="3K", name="3 kim", status="ACTIVE"))
+    db.commit()
+    b = _compat(db, "OP1", candidate_type="3K", status="APPROVED")
+    p, v = _current_process(db, "S28B", [{"operation_name": "Vắt sổ", "operation_code": "OP1", "machine_type_code": "1K"}])
+    with pytest.raises(HTTPException) as e:
+        gen.generate_optimized_proposal(db, ADMIN, v.id, selections={"1": a.id, "01": b.id})
+    assert e.value.status_code == 422
+    assert db.query(TechnologyProcessVersion).filter_by(layer="OPTIMIZED_CURRENT_TECHNOLOGY").count() == 0
+
+
 def test_selection_key_non_numeric_is_rejected(db):
     p, v = _current_process(db, "S29", [{"operation_name": "Vắt sổ", "operation_code": "OP1", "machine_type_code": "1K"}])
     with pytest.raises(HTTPException) as e:
