@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import date, datetime
 
 from fastapi import HTTPException
@@ -45,6 +46,7 @@ from app.services import roadmap_baseline as rb
 from app.services import roadmap_exec_rules as xr
 from app.services.audit import write_audit
 
+log = logging.getLogger("dvt.roadmap")
 ENGINE_VERSION = "RM_ENGINE_V2"  # V2 (Task 6): executable adapter LABOR/MACHINE_GAP_REQUIREMENT_V1 (incremental gap)
 
 
@@ -318,6 +320,8 @@ def run_simulation(db: Session, user: User, version_id: int) -> dict:
         return {"created": False, "run": run_view(db, existing)}
 
     flags = sorted({f for r in results for f in r["data_quality_flags_json"]})
+    if flags:
+        log.warning("ROADMAP_RUN_SOURCE_WARNINGS version=%s user=%s flags=%s", v.id, user.username, ",".join(flags))
     counts: dict[str, int] = {}
     for r in results:
         counts[r["result_status"]] = counts.get(r["result_status"], 0) + 1
@@ -363,6 +367,7 @@ def run_simulation(db: Session, user: User, version_id: int) -> dict:
         raise HTTPException(409, "Trùng run do request đồng thời — thử lại") from None
     except Exception:
         db.rollback()
+        log.exception("ROADMAP_RUN_FAILED version=%s user=%s", v.id, user.username)
         raise
     write_audit("ROADMAP_RUN", user=user, object_type="RoadmapRun", object_id=str(run.id), detail=f"{s.scenario_code} v{v.version_no} run#{run.run_no} {completeness}")
     return {"created": True, "run": run_view(db, run)}

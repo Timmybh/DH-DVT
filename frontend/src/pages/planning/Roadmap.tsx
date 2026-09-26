@@ -57,6 +57,14 @@ const STATUS_CLS: Record<string, string> = {
   PRICED: "pg-ok", UNPRICED: "pg-adv", COMPLETE_PRICING: "pg-ok", PARTIAL_PRICING: "pg-adv",
   NOT_COVERED: "bg-slate-500/20 text-slate-500", PARTIALLY_COVERED: "pg-adv", COVERED: "pg-ok", OVER_COVERED: "pg-known", NOT_COMBINABLE: "pg-adv",
 };
+/** UX-1: người đã đưa vào review không được duyệt (backend vẫn là source of truth). Trả lý do (chuỗi rỗng = được phép). */
+const fourEyesWhy = (me: string, reviewer: string) => (reviewer && me && reviewer === me ? "Four-eyes: bạn là người đã đưa vào review — cần người khác (có quyền roadmap.approve) duyệt." : "");
+const ApproveBtn = ({ why, onClick, testid, cls }: { why: string; onClick: () => void; testid: string; cls: string }) => (
+  <>
+    <button className={`${cls} disabled:cursor-not-allowed disabled:opacity-40`} disabled={!!why} title={why || undefined} onClick={onClick} data-testid={testid}>Duyệt</button>
+    {why && <div className="max-w-[240px] whitespace-normal text-[10px] text-amber-700" data-testid={`${testid}-why`}>{why}</div>}
+  </>
+);
 const Chip = ({ s }: { s: string }) => <span className={`pg-chip ${STATUS_CLS[s] ?? ""}`}>{s}</span>;
 const PTYPE_LABEL: Record<string, string> = { LABOR_RECRUITMENT: "Tuyển lao động", MACHINE_PURCHASE: "Mua máy", TECHNOLOGY_ADOPTION: "Áp dụng công nghệ", CAPACITY_CHANGE: "Đổi năng lực" };
 
@@ -86,6 +94,8 @@ export default function Roadmap() {
   const [rulesOpen, setRulesOpen] = useState(false);
   const [execOpen, setExecOpen] = useState(false);
   const [costOpen, setCostOpen] = useState(false);
+  const [healthOpen, setHealthOpen] = useState(false);
+  const [readyOpen, setReadyOpen] = useState(false);
   const load = useCallback(async () => setRows((await api.get<Scenario[]>(`${RES}/scenarios`)).data), []);
   useEffect(() => { api.get<Options>(`${RES}/options`).then((r) => setOpts(r.data)).catch((e) => setMsg({ ok: false, text: errorMessage(e) })); load().catch((e) => setMsg({ ok: false, text: errorMessage(e) })); }, [load]);
   return (
@@ -97,6 +107,8 @@ export default function Roadmap() {
       <Notice msg={msg} />
       <div className="flex flex-wrap items-center gap-2">
         <span className="flex-1" />
+        <button onClick={() => setReadyOpen(true)} className={btn} data-testid="roadmap-readiness-open">Production Readiness</button>
+        <button onClick={() => setHealthOpen(true)} className={btn} data-testid="roadmap-health-open">Source Data Health</button>
         <button onClick={() => setCostOpen(true)} className={btn} data-testid="roadmap-cost-open">Cost Evidence</button>
         <button onClick={() => setExecOpen(true)} className={btn} data-testid="roadmap-exec-open">Rule thực thi</button>
         <button onClick={() => setRulesOpen(true)} className={btn} data-testid="roadmap-rules-open">Rule registry (metadata)</button>
@@ -116,6 +128,8 @@ export default function Roadmap() {
         <div>{sel !== null && opts ? <ScenarioDetail key={sel} id={sel} opts={opts} perm={perm} onChanged={() => void load()} setMsg={setMsg} /> : <p className="rounded-2xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400">Chọn một scenario để xem version, milestone và kết quả mô phỏng.</p>}</div>
       </div>
       {creating && opts && <ScenarioForm opts={opts} onClose={() => setCreating(false)} onDone={(id) => { setCreating(false); void load(); setSel(id); }} setMsg={setMsg} />}
+      {healthOpen && <SourceHealthModal onClose={() => setHealthOpen(false)} setMsg={setMsg} />}
+      {readyOpen && <ReadinessModal onClose={() => setReadyOpen(false)} setMsg={setMsg} />}
       {costOpen && opts && <CostEvidenceModal opts={opts} perm={perm} onClose={() => setCostOpen(false)} setMsg={setMsg} />}
       {execOpen && opts && <ExecRulesModal opts={opts} perm={perm} onClose={() => setExecOpen(false)} setMsg={setMsg} />}
       {rulesOpen && opts && <RulesModal opts={opts} perm={perm} onClose={() => setRulesOpen(false)} setMsg={setMsg} />}
@@ -484,6 +498,8 @@ const EXEC_EMPTY = { rule_code: "", adapter_code: "", scope_type: "TOTAL", scope
 
 /** Task 6 (Issue #13): executable rule — adapter allowlist (LABOR/MACHINE_GAP_REQUIREMENT_V1), productivity do business khai báo, four-eyes. */
 function ExecRulesModal({ opts, perm, onClose, setMsg }: { opts: Options; perm: { manage: boolean; approve: boolean }; onClose: () => void; setMsg: (m: Msg) => void }) {
+  const { user } = useAuth();
+  const me = user?.username ?? "";
   const [rules, setRules] = useState<ExecRule[]>([]);
   const [d, setD] = useState({ ...EXEC_EMPTY, adapter_code: opts.adapters[0]?.adapter_code ?? "" });
   const [drawer, setDrawer] = useState<{ title: string; data: unknown } | null>(null);
@@ -527,7 +543,7 @@ function ExecRulesModal({ opts, perm, onClose, setMsg }: { opts: Options; perm: 
                 <button onClick={() => void verify(r)} className="text-brand hover:underline">Sample</button>
                 <button onClick={() => void showHistory(r)} className="ml-2 text-brand hover:underline">Lịch sử</button>
                 {perm.manage && r.status === "DRAFT" && <button onClick={() => void act(() => api.post(`${RES}/executable-rules/${r.id}/submit-review`), "Đã chuyển UNDER_REVIEW (bạn là reviewer).")} className="ml-2 text-amber-700 hover:underline" data-testid={`roadmap-exec-review-${r.id}`}>Gửi review</button>}
-                {perm.approve && r.status === "UNDER_REVIEW" && <button onClick={() => void act(() => api.post(`${RES}/executable-rules/${r.id}/approve`), "Đã duyệt rule thực thi.")} className="ml-2 text-green-700 hover:underline" data-testid={`roadmap-exec-approve-${r.id}`}>Duyệt</button>}
+                {perm.approve && r.status === "UNDER_REVIEW" && <div className="ml-2 inline-block align-top"><ApproveBtn cls="text-green-700 hover:underline" testid={`roadmap-exec-approve-${r.id}`} why={fourEyesWhy(me, r.reviewed_by) || (opts.exec_approvable_source_kinds.includes(r.source_kind.toUpperCase()) ? "" : `source_kind '${r.source_kind || "—"}' không thuộc allowlist được duyệt (${opts.exec_approvable_source_kinds.join(", ")}).`)} onClick={() => void act(() => api.post(`${RES}/executable-rules/${r.id}/approve`), "Đã duyệt rule thực thi.")} /></div>}
                 {perm.approve && r.status === "APPROVED" && <button onClick={() => { const reason = window.prompt("Lý do retire rule? (bắt buộc)") ?? ""; if (reason.trim()) void act(() => api.post(`${RES}/executable-rules/${r.id}/retire`, { reason }), "Đã retire rule."); }} className="ml-2 text-red-600 hover:underline">Retire</button>}
                 {perm.manage && (r.status === "APPROVED" || r.status === "RETIRED") && <button onClick={() => void act(() => api.post(`${RES}/executable-rules/${r.id}/new-version`), "Đã tạo version mới (Draft).")} className="ml-2 text-brand hover:underline">Version mới</button>}
               </td></tr>
@@ -575,11 +591,13 @@ interface ApTarget {
   coverage_by_proposal_type: Record<string, ApCov>; mixed_resource_types: boolean; overall_combined_status: string; planned_increment: number | null; remaining_gap_after_plan: number | null; has_unresolved_actions: boolean;
 }
 interface ApDetail extends ApVersionRow {
-  editable: boolean; coverage_frozen: boolean; reviewed_by: string; approved_by: string; source_run_fingerprint: string; items: ApItem[]; coverage: { targets: ApTarget[]; unresolved_items: { item_id: number; proposal_type: string; source_milestone_code: string }[] };
+  editable: boolean; coverage_frozen: boolean; reviewed_by: string; approved_by: string; archive_reason: string; source_run_fingerprint: string; items: ApItem[]; coverage: { targets: ApTarget[]; unresolved_items: { item_id: number; proposal_type: string; source_milestone_code: string }[] };
 }
 
 /** Task 7 (Issue #15): Action Plan theo milestone — user chọn thủ công; coverage OUTPUT_QTY tách theo proposal_type (không cộng chéo labor+machine). Không optimizer/ranking, không thực thi mua/tuyển. */
 function ActionPlanPanel({ runId, proposals, perm, setMsg }: { runId: number; proposals: Proposal[]; perm: { manage: boolean; approve: boolean; archived?: boolean }; setMsg: (m: Msg) => void }) {
+  const { user } = useAuth();
+  const me = user?.username ?? "";
   const [plans, setPlans] = useState<ApPlan[]>([]);
   const [sel, setSel] = useState<number | null>(null);
   const [det, setDet] = useState<ApDetail | null>(null);
@@ -613,11 +631,12 @@ function ActionPlanPanel({ runId, proposals, perm, setMsg }: { runId: number; pr
       {det && (
         <div className="space-y-3" data-testid="roadmap-ap-detail">
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <b>{det.action_plan_code} v{det.version_no}</b><Chip s={det.status} /><span className="text-slate-400">{det.reviewed_by && `review: ${det.reviewed_by}`} {det.approved_by && `· duyệt: ${det.approved_by}`} · coverage {det.coverage_frozen ? "đã đóng băng" : "preview (tính từ snapshot)"}</span><span className="flex-1" />
+            <b>{det.action_plan_code} v{det.version_no}</b><Chip s={det.status} /><span className="text-slate-400">{det.reviewed_by && `review: ${det.reviewed_by}`} {det.approved_by && `· duyệt: ${det.approved_by}`} · coverage {det.coverage_frozen ? "đã đóng băng" : "preview (tính từ snapshot)"}</span>{det.archive_reason && <span className="text-red-600" data-testid="roadmap-ap-archive-reason">· lý do archive: {det.archive_reason}</span>}<span className="flex-1" />
+            <button className={btn} onClick={() => void (async () => { try { setDrawer({ title: `Lịch sử — ${det.action_plan_code} v${det.version_no}`, data: (await api.get(`${RES}/action-plan-versions/${det.id}/history`)).data }); } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); } })()} data-testid="roadmap-ap-history">Lịch sử</button>
             {perm.manage && det.status === "DRAFT" && <button className={btn} onClick={() => void act(() => api.post(`${RES}/action-plan-versions/${det.id}/submit-review`), "Đã chuyển UNDER_REVIEW (bạn là reviewer).")} data-testid="roadmap-ap-review">Gửi review</button>}
-            {perm.approve && !perm.archived && det.status === "UNDER_REVIEW" && <button className={primary} onClick={() => void act(() => api.post(`${RES}/action-plan-versions/${det.id}/approve`), "Đã duyệt Action Plan (không thực thi mua/tuyển).")} data-testid="roadmap-ap-approve">Duyệt</button>}
+            {perm.approve && !perm.archived && det.status === "UNDER_REVIEW" && <div><ApproveBtn cls={primary} testid="roadmap-ap-approve" why={fourEyesWhy(me, det.reviewed_by)} onClick={() => void act(() => api.post(`${RES}/action-plan-versions/${det.id}/approve`), "Đã duyệt Action Plan (không thực thi mua/tuyển).")} /></div>}
             {perm.approve && det.status === "APPROVED" && <button className={btn} onClick={() => { const reason = window.prompt("Lý do archive? (bắt buộc)") ?? ""; if (reason.trim()) void act(() => api.post(`${RES}/action-plan-versions/${det.id}/archive`, { reason }), "Đã archive."); }}>Archive</button>}
-            {perm.manage && (det.status === "APPROVED" || det.status === "ARCHIVED") && <button className={btn} onClick={() => void act(async () => { const v = (await api.post<ApDetail>(`${RES}/action-plan-versions/${det.id}/new-version`)).data; setSel(v.id); }, "Đã tạo version mới (Draft, giữ nguyên source run).")}>Version mới</button>}
+            {perm.manage && det.status === "APPROVED" && <button className={btn} onClick={() => void act(async () => { const v = (await api.post<ApDetail>(`${RES}/action-plan-versions/${det.id}/new-version`)).data; setSel(v.id); }, "Đã tạo version mới (Draft, giữ nguyên source run).")}>Version mới</button>}
             <select className={`${inp} !w-44`} value="" onChange={(e) => { if (e.target.value) void compare(Number(e.target.value)); }}><option value="">So sánh với…</option>{allVersions.filter((v) => v.id !== det.id).map((v) => <option key={v.id} value={v.id}>{v.action_plan_code} v{v.version_no}</option>)}</select>
           </div>
           {det.editable && perm.manage && (
@@ -655,7 +674,7 @@ function ActionPlanPanel({ runId, proposals, perm, setMsg }: { runId: number; pr
                 <td className="px-3">{t.mixed_resource_types ? <><Chip s="NOT_COMBINABLE" /><div className="text-[10px] text-amber-700">MIXED_RESOURCE_TYPES — không có tổng remaining gap</div></> : <Chip s={t.overall_combined_status} />}{t.has_unresolved_actions && <div className="text-[10px] text-amber-700">có action chưa giải quyết (UNRESOLVED)</div>}</td>
               </tr>
             ))}{det.coverage.targets.length === 0 && <tr><td colSpan={6} className="py-3 text-center text-slate-400">Run không có target OUTPUT_QTY với gap &gt; 0.</td></tr>}</tbody></table></div>
-          {det.status === "APPROVED" && <DecisionPackagePanel apVersionId={det.id} items={det.items} perm={perm} setMsg={setMsg} />}
+          {(det.status === "APPROVED" || det.status === "ARCHIVED") && <DecisionPackagePanel apVersionId={det.id} items={det.items} perm={det.status === "ARCHIVED" ? { ...perm, manage: false, archived: true } : perm} setMsg={setMsg} />}
           {det.coverage.unresolved_items.length > 0 && <p className="text-xs text-amber-700" data-testid="roadmap-ap-unresolved">Unresolved (không tính coverage): {det.coverage.unresolved_items.map((u) => `${PTYPE_LABEL[u.proposal_type] ?? u.proposal_type} @${u.source_milestone_code}`).join(", ")}</p>}
         </div>
       )}
@@ -668,12 +687,15 @@ function ActionPlanPanel({ runId, proposals, perm, setMsg }: { runId: number; pr
 interface CostEv {
   id: number; evidence_code: string; evidence_version: number; cost_family: string; machine_type_code: string | null; machine_model_id: number | null; future_candidate_id: number | null;
   scope_type: string; scope_value: string; cost_period: string; amount: string; currency: string; price_basis: string; vendor: string; source_kind: string; source_ref: string;
-  effective_from: string | null; effective_to: string | null; quote_valid_until: string | null; status: string; reviewed_by: string; approved_by: string;
+  effective_from: string | null; effective_to: string | null; quote_valid_until: string | null; status: string; reviewed_by: string; approved_by: string; retire_reason: string;
 }
 const EV_EMPTY = { evidence_code: "", cost_family: "MACHINE_UNIT_PRICE", machine_type_code: "", machine_model_id: "", future_candidate_id: "", scope_type: "TOTAL", scope_value: "", cost_period: "MONTH", amount: "", currency: "USD", price_basis: "", vendor: "", source_kind: "", source_ref: "", evidence_date: "", quote_valid_until: "", effective_from: "", effective_to: "" };
 
 /** Task 8 (Issue #17): cost evidence versioned/effective-dated — machine unit price / labor cost per worker per period. Không seed; APPROVED mới được dùng; four-eyes. */
 function CostEvidenceModal({ opts, perm, onClose, setMsg }: { opts: Options; perm: { manage: boolean; approve: boolean }; onClose: () => void; setMsg: (m: Msg) => void }) {
+  const { user } = useAuth();
+  const me = user?.username ?? "";
+  const [drawer, setDrawer] = useState<{ title: string; data: unknown } | null>(null);
   const [rows, setRows] = useState<CostEv[]>([]);
   const [d, setD] = useState(EV_EMPTY);
   const [asset, setAsset] = useState({ subject_type: "MACHINE_TYPE", subject_ref: "", asset_kind: "IMAGE", uri: "", asset_ref: "" });
@@ -692,6 +714,7 @@ function CostEvidenceModal({ opts, perm, onClose, setMsg }: { opts: Options; per
     });
     setD({ ...EV_EMPTY, cost_family: d.cost_family });
   }, "Đã tạo cost evidence (Draft).");
+  const showHistory = async (r: CostEv) => { try { setDrawer({ title: `Lịch sử — ${r.evidence_code}@v${r.evidence_version}`, data: (await api.get(`${RES}/cost-evidence/${r.id}/history`)).data }); } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); } };
   const addAsset = () => act(async () => { await api.post(`${RES}/asset-refs`, { ...asset, uri: asset.uri || undefined, asset_ref: asset.asset_ref || undefined }); setAsset({ ...asset, uri: "", asset_ref: "" }); }, "Đã thêm asset ref (chỉ tham chiếu).");
   return (
     <Modal title="Cost Evidence — giá máy / chi phí lao động (versioned, evidence-only)" onClose={onClose} wide>
@@ -705,10 +728,12 @@ function CostEvidenceModal({ opts, perm, onClose, setMsg }: { opts: Options; per
               <td className="px-3 text-right font-mono">{r.amount} {r.currency}</td>
               <td className="px-3">{r.effective_from ?? "—"} → {r.effective_to ?? "mở"}{r.quote_valid_until && <div className="text-[10px] text-slate-400">quote đến {r.quote_valid_until}</div>}</td>
               <td className="px-3">{r.source_kind}<div className="text-[10px] text-slate-400">{r.vendor} {r.source_ref}</div></td>
-              <td className="px-3"><Chip s={r.status} />{r.reviewed_by && <div className="text-[10px] text-slate-400">review: {r.reviewed_by}</div>}{r.approved_by && <div className="text-[10px] text-slate-400">duyệt: {r.approved_by}</div>}</td>
+              <td className="px-3"><Chip s={r.status} />{r.reviewed_by && <div className="text-[10px] text-slate-400">review: {r.reviewed_by}</div>}{r.approved_by && <div className="text-[10px] text-slate-400">duyệt: {r.approved_by}</div>}{r.status === "RETIRED" && r.retire_reason && <div className="max-w-[200px] whitespace-normal text-[10px] text-red-600" data-testid={`roadmap-cost-retire-reason-${r.id}`}>lý do retire: {r.retire_reason}</div>}
+                {!(opts.cost_approvable_source_kinds[r.cost_family] ?? []).includes(r.source_kind) && r.status !== "APPROVED" && r.status !== "RETIRED" && <div className="max-w-[220px] whitespace-normal text-[10px] text-amber-700" data-testid={`roadmap-cost-kind-warning-${r.id}`}>source_kind '{r.source_kind || "—"}' không được APPROVE cho {r.cost_family} (chỉ: {(opts.cost_approvable_source_kinds[r.cost_family] ?? []).join(", ")}).</div>}</td>
               <td className="whitespace-nowrap px-3 text-right">
-                {perm.manage && r.status === "DRAFT" && <button className="text-amber-700 hover:underline" onClick={() => void act(() => api.post(`${RES}/cost-evidence/${r.id}/submit-review`), "Đã chuyển UNDER_REVIEW (bạn là reviewer).")}>Gửi review</button>}
-                {perm.approve && r.status === "UNDER_REVIEW" && <button className="ml-2 text-green-700 hover:underline" onClick={() => void act(() => api.post(`${RES}/cost-evidence/${r.id}/approve`), "Đã duyệt evidence.")} data-testid={`roadmap-cost-approve-${r.id}`}>Duyệt</button>}
+                <button className="text-brand hover:underline" onClick={() => void showHistory(r)}>Lịch sử</button>
+                {perm.manage && r.status === "DRAFT" && <button className="ml-2 text-amber-700 hover:underline" onClick={() => void act(() => api.post(`${RES}/cost-evidence/${r.id}/submit-review`), "Đã chuyển UNDER_REVIEW (bạn là reviewer).")}>Gửi review</button>}
+                {perm.approve && r.status === "UNDER_REVIEW" && <div className="ml-2 inline-block align-top"><ApproveBtn cls="text-green-700 hover:underline" testid={`roadmap-cost-approve-${r.id}`} why={fourEyesWhy(me, r.reviewed_by) || ((opts.cost_approvable_source_kinds[r.cost_family] ?? []).includes(r.source_kind) ? "" : `source_kind '${r.source_kind || "—"}' bị chặn khi APPROVE.`)} onClick={() => void act(() => api.post(`${RES}/cost-evidence/${r.id}/approve`), "Đã duyệt evidence.")} /></div>}
                 {perm.approve && r.status === "APPROVED" && <button className="ml-2 text-red-600 hover:underline" onClick={() => { const reason = window.prompt("Lý do retire evidence? (bắt buộc)") ?? ""; if (reason.trim()) void act(() => api.post(`${RES}/cost-evidence/${r.id}/retire`, { reason }), "Đã retire evidence."); }}>Retire</button>}
                 {perm.manage && (r.status === "APPROVED" || r.status === "RETIRED") && <button className="ml-2 text-brand hover:underline" onClick={() => void act(() => api.post(`${RES}/cost-evidence/${r.id}/new-version`), "Đã tạo version mới (Draft).")}>Version mới</button>}
               </td></tr>
@@ -751,6 +776,7 @@ function CostEvidenceModal({ opts, perm, onClose, setMsg }: { opts: Options; per
           <div className="col-span-6 text-right"><button className={btn} disabled={!asset.subject_ref || (!asset.uri && !asset.asset_ref)} onClick={() => void addAsset()}>+ Thêm asset ref</button></div>
         </div>
       )}
+      {drawer && <Modal title={drawer.title} onClose={() => setDrawer(null)} wide><J v={drawer.data} /></Modal>}
     </Modal>
   );
 }
@@ -758,7 +784,7 @@ function CostEvidenceModal({ opts, perm, onClose, setMsg }: { opts: Options; per
 interface PkgRow { id: number; package_code: string; package_no: number; status: string }
 interface PkgLine { item_id: number; proposal_type: string; planned_effective_date: string; selected_quantity: number | null; cost_class: string | null; cost_status: string; cost_status_reason: string; amount: string | null; currency: string | null; cost_period: string | null; milestone_bucket: string; warnings: string[]; evidence: { evidence_code: string; evidence_version: number } | null }
 interface PkgDetail extends PkgRow {
-  frozen: boolean; editable: boolean; reviewed_by: string; approved_by: string; package_fingerprint: string; bindings: { action_item_id: number; evidence_id: number; machine_model_id: number | null; future_candidate_id: number | null }[];
+  frozen: boolean; editable: boolean; reviewed_by: string; approved_by: string; archive_reason: string; package_fingerprint: string; bindings: { action_item_id: number; evidence_id: number; machine_model_id: number | null; future_candidate_id: number | null }[];
   live_warnings: { code: string; detail: string; evidence: string }[];
   package: { completeness: { pricing: string; supported_action_count: number; priced_action_count: number; unresolved_count: number }; warning_codes: string[]; selected_actions: PkgLine[]; unresolved_actions: PkgLine[];
     machine_details: { item_id: number; machine_type_code: string; selected_quantity: number; price_basis: string | null; details: { machine_type: { name: string; reference_placeholders: { note: string } } | null; machine_model: { brand: string; model: string } | null; future_candidate: { candidate_code: string } | null; asset_refs: { asset_kind: string; uri: string; asset_ref: string }[] } }[];
@@ -768,6 +794,8 @@ interface PkgDetail extends PkgRow {
 
 /** Task 8: Executive Decision Package của một Action Plan version APPROVED. Bind evidence do user chọn; không auto-pick, không grand total, không ranking. */
 function DecisionPackagePanel({ apVersionId, items, perm, setMsg }: { apVersionId: number; items: ApItem[]; perm: { manage: boolean; approve: boolean; archived?: boolean }; setMsg: (m: Msg) => void }) {
+  const { user } = useAuth();
+  const me = user?.username ?? "";
   const [pkgs, setPkgs] = useState<PkgRow[]>([]);
   const [sel, setSel] = useState<number | null>(null);
   const [det, setDet] = useState<PkgDetail | null>(null);
@@ -795,9 +823,11 @@ function DecisionPackagePanel({ apVersionId, items, perm, setMsg }: { apVersionI
       {det && s && (
         <div className="space-y-3" data-testid="roadmap-pkg-detail">
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <b>{det.package_code}</b><Chip s={det.status} /><Chip s={s.completeness.pricing} /><span className="text-slate-400">{det.frozen ? `đóng băng · fp ${det.package_fingerprint}` : "preview (tính lại từ evidence hiện tại)"} · {s.completeness.priced_action_count}/{s.completeness.supported_action_count} action đã định giá · {s.completeness.unresolved_count} unresolved</span><span className="flex-1" />
+            <b>{det.package_code}</b><Chip s={det.status} /><Chip s={s.completeness.pricing} /><span className="text-slate-400">{det.frozen ? `đóng băng · fp ${det.package_fingerprint}` : "preview (tính lại từ evidence hiện tại)"} · {s.completeness.priced_action_count}/{s.completeness.supported_action_count} action đã định giá · {s.completeness.unresolved_count} unresolved</span>
+            <span className="text-slate-400" data-testid="roadmap-pkg-people">{det.reviewed_by && `· review: ${det.reviewed_by}`} {det.approved_by && `· duyệt: ${det.approved_by}`}</span>{det.archive_reason && <span className="text-red-600" data-testid="roadmap-pkg-archive-reason">· lý do archive: {det.archive_reason}</span>}<span className="flex-1" />
+            <button className={btn} onClick={() => void (async () => { try { setDrawer({ title: `Lịch sử — ${det.package_code}`, data: (await api.get(`${RES}/decision-packages/${det.id}/history`)).data }); } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); } })()} data-testid="roadmap-pkg-history">Lịch sử</button>
             {perm.manage && det.status === "DRAFT" && <button className={btn} onClick={() => void act(() => api.post(`${RES}/decision-packages/${det.id}/submit-review`), "Đã đóng băng & chuyển UNDER_REVIEW (bạn là reviewer).")} data-testid="roadmap-pkg-review">Gửi review (đóng băng)</button>}
-            {perm.approve && !perm.archived && det.status === "UNDER_REVIEW" && <button className={primary} onClick={() => void act(() => api.post(`${RES}/decision-packages/${det.id}/approve`), "Đã duyệt package (không thực thi mua/tuyển).")} data-testid="roadmap-pkg-approve">Duyệt</button>}
+            {perm.approve && !perm.archived && det.status === "UNDER_REVIEW" && <div><ApproveBtn cls={primary} testid="roadmap-pkg-approve" why={fourEyesWhy(me, det.reviewed_by)} onClick={() => void act(() => api.post(`${RES}/decision-packages/${det.id}/approve`), "Đã duyệt package (không thực thi mua/tuyển).")} /></div>}
             {perm.approve && det.status === "APPROVED" && <button className={btn} onClick={() => { const reason = window.prompt("Lý do archive? (bắt buộc)") ?? ""; if (reason.trim()) void act(() => api.post(`${RES}/decision-packages/${det.id}/archive`, { reason }), "Đã archive."); }}>Archive</button>}
             <select className={`${inp} !w-44`} value="" onChange={(e) => { if (e.target.value) void compare(Number(e.target.value)); }}><option value="">So sánh với…</option>{pkgs.filter((p) => p.id !== det.id).map((p) => <option key={p.id} value={p.id}>{p.package_code}</option>)}</select>
           </div>
@@ -842,5 +872,102 @@ function DecisionPackagePanel({ apVersionId, items, perm, setMsg }: { apVersionI
       )}
       {drawer && <Modal title={drawer.title} onClose={() => setDrawer(null)} wide><J v={drawer.data} /></Modal>}
     </div>
+  );
+}
+
+
+interface SyncRow { run_code: string; status: string; started_at: string | null; finished_at: string | null; total_records: number }
+interface Cov3 { mapped: number; total: number; pct: number | null }
+interface SourceHealth {
+  generated_at: string; stale_definition: string; latest_attempt: SyncRow | null; latest_usable: SyncRow | null; source_age_hours: number | null; roadmap_stale_flag: boolean; recent_runs: SyncRow[]; recent_status_counts: Record<string, number>;
+  data_quality: { invalid_source_date_rows: number; invalid_date_threshold: string; years_with_inconsistent_periods: number; has_warnings: boolean; revenue_yearly: { year: number; status: Record<string, string>; flags: string[] }[] };
+  output_coverage: { earliest_source_date: string | null; latest_source_date: string | null; latest_complete_month: string | null; latest_partial_month: string | null; year_output_rule: string; year_coverage: { year: number; status: string; covered_from: string; covered_to: string }[] };
+  factory_mapping: { period: string; rows: Cov3; qty: Cov3; po: Cov3; note: string } | null;
+}
+const HEALTH_CLS: Record<string, string> = { SUCCEEDED: "pg-ok", PARTIAL: "pg-adv", FAILED: "bg-red-500/20 text-red-600", RUNNING: "pg-known", COMPLETE: "pg-ok", READY: "pg-ok", WARNING: "pg-adv", ACTION_REQUIRED: "bg-red-500/20 text-red-600" };
+const HChip = ({ s }: { s: string }) => <span className={`pg-chip ${HEALTH_CLS[s] ?? STATUS_CLS[s] ?? ""}`}>{s}</span>;
+const pctTxt = (c: Cov3) => `${num(c.mapped)} / ${num(c.total)} (${c.pct === null ? "—" : `${c.pct}%`})`;
+
+/** Task 10 (Issue #21): Source Data Health — CHỈ ĐỌC, mô tả minh bạch; không đổi baseline/semantics (PARTIAL != stale; FACTORY OUTPUT vẫn PARTIAL_SOURCE). */
+function SourceHealthModal({ onClose, setMsg }: { onClose: () => void; setMsg: (m: Msg) => void }) {
+  const [h, setH] = useState<SourceHealth | null>(null);
+  const [month, setMonth] = useState("");
+  const load = useCallback(async (m: string) => {
+    try { setH((await api.get<SourceHealth>(`${RES}/source-health${m ? `?year=${m.slice(0, 4)}&month=${Number(m.slice(5, 7))}` : ""}`)).data); } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); }
+  }, [setMsg]);
+  useEffect(() => { void load(""); }, [load]);
+  return (
+    <Modal title="Source Data Health — mức sẵn sàng dữ liệu nguồn (chỉ đọc)" onClose={onClose} wide>
+      {!h ? <p className="text-sm text-slate-400">Đang tải...</p> : (
+        <div className="space-y-4 text-xs" data-testid="roadmap-health">
+          <p className="rounded-lg border border-slate-200 p-2 text-slate-500">{h.stale_definition} Panel này chỉ mô tả; <b>không đổi</b> kết quả baseline/Run.</p>
+          <section className="space-y-1">
+            <h4 className="text-sm font-bold">Đồng bộ doanh thu/đóng gói (EGMF_REVENUE)</h4>
+            <div className="grid gap-2 md:grid-cols-4">
+              <div className="rounded-lg border border-slate-200 p-2" data-testid="roadmap-health-attempt">Lần thử gần nhất<div>{h.latest_attempt ? <><HChip s={h.latest_attempt.status} /> <span className="font-mono">{h.latest_attempt.run_code}</span></> : "chưa có"}</div><div className="text-[10px] text-slate-400">{h.latest_attempt?.started_at?.slice(0, 16)}</div></div>
+              <div className="rounded-lg border border-slate-200 p-2" data-testid="roadmap-health-usable">Sync dùng được gần nhất (SUCCEEDED/PARTIAL)<div>{h.latest_usable ? <><HChip s={h.latest_usable.status} /> <span className="font-mono">{h.latest_usable.run_code}</span></> : "chưa có"}</div><div className="text-[10px] text-slate-400">{h.latest_usable?.started_at?.slice(0, 16)}</div></div>
+              <div className="rounded-lg border border-slate-200 p-2">Độ tươi<div className="text-base font-semibold">{h.source_age_hours === null ? "—" : `${h.source_age_hours} giờ`}</div></div>
+              <div className="rounded-lg border border-slate-200 p-2" data-testid="roadmap-health-stale">Cờ stale của Roadmap<div><HChip s={h.roadmap_stale_flag ? "WARNING" : "READY"} /> {h.roadmap_stale_flag ? "stale/failed" : "không stale"}</div></div>
+            </div>
+            <div className="text-slate-500">8 lần gần nhất: {Object.entries(h.recent_status_counts).map(([k, n]) => `${k}:${n}`).join(" · ") || "—"}</div>
+            <table className="w-full"><thead><tr><th className={th}>Run</th><th className={th}>Trạng thái</th><th className={th}>Bắt đầu</th><th className={`${th} text-right`}>Records</th></tr></thead>
+              <tbody>{h.recent_runs.map((r) => <tr key={r.run_code} className="border-t border-slate-100"><td className="px-3 py-1 font-mono">{r.run_code}</td><td className="px-3"><HChip s={r.status} /></td><td className="px-3">{r.started_at?.slice(0, 16)}</td><td className="px-3 text-right">{num(r.total_records)}</td></tr>)}{h.recent_runs.length === 0 && <tr><td colSpan={4} className="py-2 text-center text-slate-400">Chưa có lần đồng bộ nào.</td></tr>}</tbody></table>
+          </section>
+          <section className="space-y-1" data-testid="roadmap-health-quality">
+            <h4 className="text-sm font-bold">Chất lượng dữ liệu doanh thu</h4>
+            <div>Dòng revenue_daily có ngày không hợp lệ (&lt; {h.data_quality.invalid_date_threshold}): <b>{h.data_quality.invalid_source_date_rows}</b> (bị loại khỏi baseline, cờ INVALID_SOURCE_DATE) · Năm có SOURCE_INCONSISTENT_PERIODS: <b>{h.data_quality.years_with_inconsistent_periods}</b></div>
+            <table className="w-full"><thead><tr><th className={th}>Năm (revenue_yearly, TOTAL)</th><th className={th}>PLAN</th><th className={th}>ACTUAL</th><th className={th}>Cờ</th></tr></thead>
+              <tbody>{h.data_quality.revenue_yearly.map((y) => <tr key={y.year} className="border-t border-slate-100"><td className="px-3 py-1">{y.year}</td><td className="px-3"><Chip s={y.status.PLAN} /></td><td className="px-3"><Chip s={y.status.ACTUAL} /></td><td className="px-3 text-amber-700">{y.flags.join(", ") || "—"}</td></tr>)}{h.data_quality.revenue_yearly.length === 0 && <tr><td colSpan={4} className="py-2 text-center text-slate-400">Chưa có revenue_yearly.</td></tr>}</tbody></table>
+          </section>
+          <section className="space-y-1" data-testid="roadmap-health-output">
+            <h4 className="text-sm font-bold">Coverage OUTPUT_QTY (po_pack_daily)</h4>
+            <div>Nguồn phủ: <b>{h.output_coverage.earliest_source_date ?? "—"}</b> → <b>{h.output_coverage.latest_source_date ?? "—"}</b> · Tháng đủ dữ liệu gần nhất: <b>{h.output_coverage.latest_complete_month ?? "—"}</b> · Tháng đang dở: <b>{h.output_coverage.latest_partial_month ?? "—"}</b></div>
+            <div className="flex flex-wrap gap-2">{h.output_coverage.year_coverage.map((y) => <span key={y.year} className="rounded-lg border border-slate-200 px-2 py-1">{y.year}: <HChip s={y.status} /> <span className="text-[10px] text-slate-400">{y.covered_from} → {y.covered_to}</span></span>)}</div>
+            <div className="text-[11px] text-slate-500">{h.output_coverage.year_output_rule}</div>
+          </section>
+          <section className="space-y-1" data-testid="roadmap-health-mapping">
+            <div className="flex items-center gap-2"><h4 className="text-sm font-bold">Mapping PO → XN (FACTORY)</h4><span className="flex-1" /><label className="text-slate-500">Tháng <input type="month" className={`${inp} !w-40 !py-0.5`} value={month} onChange={(e) => { setMonth(e.target.value); if (e.target.value) void load(e.target.value); }} /></label></div>
+            {h.factory_mapping ? (
+              <table className="w-full"><thead><tr><th className={th}>Kỳ</th><th className={th}>Dòng đã map / tổng</th><th className={th}>Số lượng đã map / tổng</th><th className={th}>PO đã map / tổng</th></tr></thead>
+                <tbody><tr className="border-t border-slate-100"><td className="px-3 py-1 font-mono">{h.factory_mapping.period}</td><td className="px-3">{pctTxt(h.factory_mapping.rows)}</td><td className="px-3">{pctTxt(h.factory_mapping.qty)}</td><td className="px-3">{pctTxt(h.factory_mapping.po)}</td></tr></tbody></table>
+            ) : <div className="text-slate-400">Chưa có dữ liệu đóng gói.</div>}
+            <div className="text-[11px] text-amber-700">{h.factory_mapping?.note ?? "FACTORY OUTPUT_QTY vẫn PARTIAL_SOURCE trong Roadmap V1."}</div>
+          </section>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+interface ReadyItem { key: string; label: string; status: string; count: number | null; message: string; detail: Record<string, unknown> }
+interface Readiness { overall: string; items: ReadyItem[]; note: string; help: { executable_rule_fields: string[]; executable_rule_source_kinds: { approvable: string[]; blocked_at_approve: string[] }; cost_evidence_source_kinds: { approvable: Record<string, string[]>; blocked_at_approve: string[] };
+  price_basis_meaning: Record<string, string>; labor_cost_evidence: string; four_eyes: string; workflow: string } }
+
+/** Task 10: Production Readiness checklist (chỉ đọc) + help text mẫu (không insert DB). */
+function ReadinessModal({ onClose, setMsg }: { onClose: () => void; setMsg: (m: Msg) => void }) {
+  const [r, setR] = useState<Readiness | null>(null);
+  useEffect(() => { api.get<Readiness>(`${RES}/readiness`).then((x) => setR(x.data)).catch((e) => setMsg({ ok: false, text: errorMessage(e) })); }, [setMsg]);
+  return (
+    <Modal title="Production Readiness — checklist go-live (chỉ đọc)" onClose={onClose} wide>
+      {!r ? <p className="text-sm text-slate-400">Đang tải...</p> : (
+        <div className="space-y-4 text-xs" data-testid="roadmap-readiness">
+          <div className="flex items-center gap-2"><b className="text-sm">Tổng thể:</b><HChip s={r.overall} /><span className="text-slate-500">{r.note}</span></div>
+          <table className="w-full" data-testid="roadmap-readiness-table"><thead><tr><th className={th}>Hạng mục</th><th className={th}>Trạng thái</th><th className={`${th} text-right`}>Số lượng</th><th className={th}>Ghi chú</th></tr></thead>
+            <tbody>{r.items.map((i) => <tr key={i.key} className="border-t border-slate-100 align-top" data-testid={`roadmap-readiness-${i.key}`}><td className="px-3 py-1.5">{i.label}</td><td className="px-3"><HChip s={i.status} /></td><td className="px-3 text-right">{i.count ?? "—"}</td><td className="px-3">{i.message}</td></tr>)}</tbody></table>
+          <details className="rounded-lg border border-slate-200 p-2" open data-testid="roadmap-readiness-help">
+            <summary className="cursor-pointer font-semibold">Hướng dẫn setup (help text — không insert DB, không seed dữ liệu thật)</summary>
+            <div className="mt-2 space-y-2">
+              <div><b>Executable rule — các trường</b><ul className="list-disc pl-5">{r.help.executable_rule_fields.map((f) => <li key={f}>{f}</li>)}</ul></div>
+              <div><b>Nguồn được duyệt — rule</b>: {r.help.executable_rule_source_kinds.approvable.join(", ")} · <span className="text-red-600">chặn khi APPROVE: {r.help.executable_rule_source_kinds.blocked_at_approve.join(", ")}</span></div>
+              <div><b>Nguồn được duyệt — cost evidence</b>{Object.entries(r.help.cost_evidence_source_kinds.approvable).map(([k, v]) => <div key={k}>{k}: {v.join(", ")}</div>)}<span className="text-red-600">chặn khi APPROVE: {r.help.cost_evidence_source_kinds.blocked_at_approve.join(", ")}</span></div>
+              <div><b>price_basis (giá máy)</b><ul className="list-disc pl-5">{Object.entries(r.help.price_basis_meaning).filter(([k]) => k !== "note").map(([k, v]) => <li key={k}><span className="font-mono">{k}</span>: {v}</li>)}</ul><div className="text-slate-500">{r.help.price_basis_meaning.note}</div></div>
+              <div><b>Chi phí lao động</b>: {r.help.labor_cost_evidence}</div>
+              <div><b>Four-eyes</b>: {r.help.four_eyes}</div>
+              <div><b>Quy trình</b>: {r.help.workflow}</div>
+            </div>
+          </details>
+        </div>
+      )}
+    </Modal>
   );
 }

@@ -13,6 +13,8 @@ Action Plan tách khỏi Run immutable: family (1 source run cố định) → v
 from __future__ import annotations
 
 import json
+import logging
+import uuid
 from datetime import date
 from decimal import Decimal
 
@@ -39,6 +41,7 @@ from app.services.audit import write_audit
 _bad = rm._bad
 _iso = rm._iso
 COVERAGE_ENGINE = "AP_COVERAGE_V1"
+log = logging.getLogger("dvt.roadmap")
 
 
 def _dec(v) -> Decimal:
@@ -388,9 +391,13 @@ def approve(db: Session, user: User, version_id: int) -> RoadmapActionPlanVersio
         raise _bad("Action Plan cần ít nhất 1 item", 409)
     errs = _validate_snapshots(db, v, items)
     if errs:
-        raise _bad("Snapshot không hợp lệ: " + "; ".join(errs), 409)
+        tid = uuid.uuid4().hex[:12]
+        log.warning("ROADMAP_ACTION_PLAN_VERIFY_FAILED trace=%s version=%s user=%s errors=%s", tid, v.id, user.username, "; ".join(errs))
+        raise _bad(f"Snapshot không hợp lệ: {'; '.join(errs)} (trace {tid})", 409)
     if not _same_json(compute_coverage(db, v), v.coverage_json):
-        raise _bad("Coverage đóng băng không khớp tính lại từ snapshot", 409)
+        tid = uuid.uuid4().hex[:12]
+        log.warning("ROADMAP_ACTION_PLAN_VERIFY_FAILED trace=%s version=%s user=%s errors=coverage-mismatch", tid, v.id, user.username)
+        raise _bad(f"Coverage đóng băng không khớp tính lại từ snapshot (trace {tid})", 409)
     v.status, v.approved_by, v.approved_at = "APPROVED", user.username, utcnow()
     rm._hist(db, "ACTION_PLAN", v.id, "UNDER_REVIEW", "APPROVED", "", user.username)
     db.commit()
