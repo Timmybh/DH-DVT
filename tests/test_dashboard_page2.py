@@ -167,3 +167,24 @@ def test_dtbq_charts_status_and_targets(db):
         with pytest.raises(HTTPException):
             productivity.set_targets(db, u, bad)
     assert productivity.dtbq_charts(productivity.get_targets(db), ["XN1"], None, []) is None
+
+
+def test_efficiency_daily_series(db):
+    from datetime import date as D
+
+    db.query(LineOutputDaily).delete()
+    db.add_all([BrandCustomer(brand="Q", customer="DECATHLON"), StyleSam(style_cc="A", sam_minutes=1, brand="Q", sam_tt=20.0)])
+    for day, qty in ((D(2026, 5, 22), 250), (D(2026, 5, 23), 500)):
+        db.add(LineOutputDaily(day=day, factory_code="XN1", line="1", style="A", po="", qty=qty))
+        db.add(LaborDaily(factory_code="XN1", line="1", day=day, total=40, present=36, work_minutes=500, outside=4))
+    db.commit()
+    res = productivity_efficiency(db, D(2026, 5, 23))
+    assert [r["date"] for r in res] == ["2026-05-22", "2026-05-23"]                                       # chỉ ngày có sản lượng, từ đầu tháng đến ngày chọn
+    assert res[0]["XN1"] == round(20 * 250 / 500 / 40, 4) and res[1]["XN1"] == round(20 * 500 / 500 / 40, 4)
+    assert res[1]["TONG"] == res[1]["XN1"] and res[1]["XN2"] is None                                       # XN không có số liệu → None, không kéo trung bình toàn công ty
+
+
+def productivity_efficiency(db, day):
+    from app.services import productivity
+
+    return productivity.efficiency_daily(db, day, ["XN1", "XN2"])

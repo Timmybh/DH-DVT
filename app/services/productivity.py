@@ -44,15 +44,19 @@ def compute_row(r: dict) -> dict:
     }
 
 
-def rows_for_day(db: Session, day: date, codes: list[str]) -> list[dict]:
+def rows_for_day(db: Session, day: date, codes: list[str], light: bool = False, ctx: dict | None = None) -> list[dict]:
+    """light=True: chỉ để tính hiệu suất (bỏ kế hoạch và giá); ctx dùng chung danh mục mã hàng/khách hàng giữa nhiều ngày."""
     out_q: dict[tuple, int] = {}
     for c, ln, st, q in db.query(LineOutputDaily.factory_code, LineOutputDaily.line, LineOutputDaily.style, func.sum(LineOutputDaily.qty)).filter(LineOutputDaily.day == day, LineOutputDaily.factory_code.in_(codes)).group_by(LineOutputDaily.factory_code, LineOutputDaily.line, LineOutputDaily.style):
         out_q[(c, ln, st.upper())] = int(q or 0)
-    plan: dict[tuple, LinePlanDaily] = {(p.factory_code, p.line, p.style.upper()): p for p in db.query(LinePlanDaily).filter(LinePlanDaily.day == day, LinePlanDaily.factory_code.in_(codes))}
+    plan: dict[tuple, LinePlanDaily] = {} if light else {(p.factory_code, p.line, p.style.upper()): p for p in db.query(LinePlanDaily).filter(LinePlanDaily.day == day, LinePlanDaily.factory_code.in_(codes))}
     keys = sorted(set(out_q) | set(plan), key=lambda k: (codes.index(k[0]), int(k[1]) if k[1].isdigit() else 10**6, k[1], -out_q.get(k, 0), k[2]))
     labor = {(l.factory_code, l.line): l for l in db.query(LaborDaily).filter(LaborDaily.day == day, LaborDaily.factory_code.in_(codes))}
-    info = {s.style_cc.upper(): s for s in db.query(StyleSam)}
-    cust = {b.brand.upper(): b.customer for b in db.query(BrandCustomer)}
+    ctx = ctx if ctx is not None else {}
+    if "info" not in ctx:
+        ctx["info"] = {s.style_cc.upper(): s for s in db.query(StyleSam)}
+        ctx["cust"] = {b.brand.upper(): b.customer for b in db.query(BrandCustomer)}
+    info, cust = ctx["info"], ctx["cust"]
     line_qty: dict[tuple, int] = defaultdict(int)
     for k, q in out_q.items():
         line_qty[k[:2]] += q
@@ -75,7 +79,7 @@ def rows_for_day(db: Session, day: date, codes: list[str]) -> list[dict]:
         hs = (present + (lab.outside or 0)) if lab and present is not None else None
         may_alloc = round(present * share, 2) if present is not None and share is not None else None
         hs_alloc = round(hs * share, 2) if hs is not None and share is not None else None
-        price = sp.price_on(db, style, day)
+        price = None if light else sp.price_on(db, style, day)
         base = {"factory": fac, "line": line, "style": style, "brand": brand, "customer": customer, "price": price, "qty": qty,
                 "plan_qty": round(pl.plan_qty) if pl else None, "basis": ("SAM" if is_dcl else "SOT") if basis else None, "basis_minutes": basis,
                 "production_days": ((pl.sew_end - pl.in_line_from).days + 1) if pl and pl.in_line_from and pl.sew_end else None,
@@ -108,6 +112,7 @@ def summarize(rows: list[dict], codes: list[str], labor: dict[str, dict]) -> dic
     tong = _one(allrs, {k: _sum(labor.get(c, {}).get(k) for c in codes) for k in ("total", "present", "indirect")})
     tong["efficiency_dcl"] = _avg(out[c]["efficiency_dcl"] for c in codes)
     tong["efficiency_other"] = _avg(out[c]["efficiency_other"] for c in codes)
+    tong["efficiency_avg"] = _avg(out[c]["efficiency_avg"] for c in codes)
     pres, ind = tong["labor_present_erp"], tong["labor_indirect"]
     tong["ns_all_labor"] = _div(tong["revenue_actual"], (pres or 0) + (ind or 0), 3) if pres is not None else None  # DT ÷ (LĐ hiện diện + gián tiếp)
     out["TONG"] = tong
@@ -123,6 +128,7 @@ def _one(rs: list[dict], lab: dict) -> dict:
         "labor_may": may, "labor_hs": hs, "plan_qty": plan, "qty": qty, "pct": _div(qty, plan) if plan else None, "revenue_plan": rp, "revenue_actual": ra,
         "nsld_may": _div(ra, may, 3), "ns_present": _div(ra, hs, 3),
         "efficiency_dcl": _avg(r["efficiency_dcl"] for r in rs), "efficiency_other": _avg(r["efficiency_other"] for r in rs),
+        "efficiency_avg": _avg((r["efficiency_dcl"] if r["efficiency_dcl"] is not None else r["efficiency_other"]) for r in rs),  # hiệu suất bình quân: DCL và hàng khác gộp chung
         "labor_list": total, "labor_present_erp": present, "labor_absent": (total - present) if total is not None and present is not None else None,
         "absent_rate": _div((total - present) if total is not None and present is not None else None, total), "labor_indirect": lab.get("indirect"),
         "avg_revenue_per_present": _div(ra, present, 3),
@@ -179,3 +185,19 @@ def dtbq_charts(targets: dict[str, float], codes: list[str], summaries: dict | N
         "hieu_suat": bars(t2, [*[(c, summaries[c]["ns_present"]) for c in codes], ("Tổng công ty", tong["ns_present"])]),   # DT ÷ SLĐ tính hiệu suất
         "hien_dien": bars(t3, [*[(c, summaries[c]["avg_revenue_per_present"]) for c in codes], ("Tổng công ty", tong.get("ns_all_labor"))]),  # DT ÷ LĐ hiện diện (công ty: + gián tiếp)
     }
+
+
+def efficiency_daily(db: Session, day: date, codes: list[str]) -> list[dict]:
+    """Hiệu suất bình quân từng ngày từ đầu tháng đến ngày chọn (chỉ ngày có dữ liệu): mỗi XN = trung bình hiệu suất các dòng tổ × mã hàng (DCL và hàng khác gộp),
+    toàn công ty = trung bình các XN có giá trị (giống cách Excel gộp). Ngày/XN không có số liệu → None."""
+    from datetime import timedelta
+
+    ctx: dict = {}
+    out, d = [], date(day.year, day.month, 1)
+    while d <= day:
+        rows = rows_for_day(db, d, codes, light=True, ctx=ctx)
+        if rows:
+            sm = summarize(rows, codes, {})
+            out.append({"date": d.isoformat(), **{c: sm[c]["efficiency_avg"] for c in codes}, "TONG": sm["TONG"]["efficiency_avg"]})
+        d += timedelta(days=1)
+    return out

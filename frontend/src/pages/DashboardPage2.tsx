@@ -10,7 +10,8 @@ interface LineRow { factory: string; line: string; style: string; brand: string;
 interface Summ { labor_may: number | null; labor_hs: number | null; plan_qty: number | null; qty: number | null; pct: number | null; revenue_plan: number | null; revenue_actual: number | null; nsld_may: number | null; ns_present: number | null; efficiency_dcl: number | null; efficiency_other: number | null; labor_list: number | null; labor_present_erp: number | null; labor_absent: number | null; absent_rate: number | null; labor_indirect: number | null; avg_revenue_per_present: number | null; ns_all_labor?: number | null }
 interface Bar1 { label: string; value: number | null; status: "TARGET" | "ACHIEVED" | "MISSED" | null }
 interface Charts { targets: Record<string, number>; may_by_day: Bar1[]; hieu_suat: Bar1[]; hien_dien: Bar1[] }
-interface Page2 { dtbq_charts: Charts | null; line_summaries: Record<string, Summ> | null; lines: LineRow[]; date: string; has_data: boolean; unit: string; factories: string[]; day: Record<string, Cell> | null; series: { date: string; cells: Record<string, Cell> }[] }
+interface EffDay { date: string; TONG: number | null; [xn: string]: number | string | null }
+interface Page2 { efficiency_daily: EffDay[]; dtbq_charts: Charts | null; line_summaries: Record<string, Summ> | null; lines: LineRow[]; date: string; has_data: boolean; unit: string; factories: string[]; day: Record<string, Cell> | null; series: { date: string; cells: Record<string, Cell> }[] }
 
 const COLORS: Record<string, string> = { TONG: "#4c9aff", XN1: "#16a34a", XN2: "#f59e0b", XN3: "#a855f7" };
 const th = "px-2 py-2 text-right text-xs font-semibold text-slate-400";
@@ -193,6 +194,23 @@ export default function DashboardPage2() {
                   onEdit={can("resource.manage") ? async (v) => { try { await api.put("/dashboard/productivity-targets", { [code]: v }); setReload((n) => n + 1); } catch (e) { setError(errorMessage(e)); } } : undefined} />
               ))}
             </div>
+          )}
+
+          {data.efficiency_daily.some((r) => codes.some((c) => r[c] !== null && r[c] !== undefined)) && (
+            <section className="rounded-2xl border border-slate-200 bg-white p-3" data-testid="chart-efficiency">
+              <h2 className="mb-2 text-sm font-bold text-slate-700">Hiệu suất bình quân hàng ngày trong tháng</h2>
+              <div className="h-72">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={data.efficiency_daily.map((r) => ({ ...r, name: `${r.date.slice(8)}/${r.date.slice(5, 7)}` }))} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#94a3b833" />
+                    <XAxis dataKey="name" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => `${Math.round(v * 100)}%`} />
+                    <Tooltip formatter={(v: unknown) => (v === null || v === undefined ? "—" : `${(Number(v) * 100).toFixed(1)}%`)} /><Legend formatter={label} />
+                    {codes.map((c) => <Line key={c} type="monotone" dataKey={c} name={c} stroke={COLORS[c] ?? "#64748b"} strokeWidth={c === "TONG" ? 3 : 2} dot={{ r: 2 }} connectNulls />)}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+              <p className="mt-1 text-[11px] text-slate-400">Mỗi XN: trung bình hiệu suất các dòng tổ × mã hàng trong ngày (DCL và hàng khác gộp chung; ô thiếu SAM/SOT/thời gian làm việc không tính); toàn công ty: trung bình các XN.</p>
+            </section>
           )}
 
           {trend.length > 0 && <section className="rounded-2xl border border-slate-200 bg-white p-3" data-testid="chart-dtbq">
