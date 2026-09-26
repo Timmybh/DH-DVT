@@ -18,9 +18,7 @@ export default function DashboardCanvas({ runtime, actions }: Props) {
   }
   const sections = runtime.sections ?? [];
   if (sections.length > 0) {
-    return (
-      <div className="space-y-5" data-testid="dash-sections" data-layout={`${runtime.layout.layout_code}.v${runtime.layout.version}`}>
-        {sections.map((sec) => {
+    const renderSection = (sec: (typeof sections)[number]) => {
           const mine = runtime.items.filter((i) => i.section_id === sec.id);
           if (mine.length === 0) return null;
           const style = { "--cols": sec.spans.map((s) => `${s}fr`).join(" ") } as CSSProperties;
@@ -34,7 +32,17 @@ export default function DashboardCanvas({ runtime, actions }: Props) {
               ))}
             </div>
           );
-        })}
+    };
+    const zoneOf = (z: string) => sections.filter((s) => (s.zone ?? "MAIN") === z);
+    const left = zoneOf("SIDEBAR_LEFT"), right = zoneOf("SIDEBAR_RIGHT");
+    const stack = (list: typeof sections, testid: string) => <div className="min-w-0 space-y-5" data-testid={testid}>{list.map(renderSection)}</div>;
+    const hasItems = (list: typeof sections) => list.some((s) => runtime.items.some((i) => i.section_id === s.id));
+    const showL = hasItems(left), showR = hasItems(right);
+    return (
+      <div className={`dash-page ${showL ? "has-left" : ""} ${showR ? "has-right" : ""}`} data-testid="dash-sections" data-layout={`${runtime.layout.layout_code}.v${runtime.layout.version}`}>
+        {showL && <aside className="dash-side">{stack(left, "dash-sidebar-left")}</aside>}
+        {stack(zoneOf("MAIN"), "dash-main")}
+        {showR && <aside className="dash-side">{stack(right, "dash-sidebar-right")}</aside>}
       </div>
     );
   }

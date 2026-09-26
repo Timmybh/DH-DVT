@@ -488,7 +488,7 @@ export interface RuntimeResponse {
     sync: { revenue: SyncBrief | null; plan: SyncBrief | null };
   };
   items: RuntimeItem[];
-  sections?: { id: number; order_no: number; title: string; preset: string; custom_spans?: number[] | null; is_visible: boolean; spans: number[] }[];
+  sections?: { id: number; order_no: number; title: string; preset: string; custom_spans?: number[] | null; is_visible: boolean; zone?: string; spans: number[] }[];
   message?: string;
 }
 
@@ -551,7 +551,7 @@ export interface DashLayout {
   published_by: string;
   published_at: string | null;
   items?: DashLayoutItem[];
-  sections?: { id: number; order_no: number; title: string; preset: string; custom_spans?: number[] | null; is_visible: boolean; spans: number[] }[];
+  sections?: { id: number; order_no: number; title: string; preset: string; custom_spans?: number[] | null; is_visible: boolean; zone?: string; spans: number[] }[];
 }
 
 export interface DashOptions {

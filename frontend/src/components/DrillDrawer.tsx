@@ -12,6 +12,32 @@ function PoLink({ po }: { po: string }) {
   return <Link to={`/planning/actual/history?po=${encodeURIComponent(po)}`} className="text-brand underline-offset-2 hover:underline" title="Xem lịch sử thực tế của PO này">{po}</Link>;
 }
 
+/** Tab theo XN + chọn Top N cho các bảng PO trong drill-down. */
+function XnFilter({ codes, counts, xn, setXn, topN, setTopN }: { codes: string[]; counts: Record<string, number>; xn: string; setXn: (v: string) => void; topN: number; setTopN: (v: number) => void }) {
+  return (
+    <div className="mb-3 flex flex-wrap items-center justify-between gap-2" data-testid="order-filters">
+      <div className="flex flex-wrap gap-1 text-xs" role="tablist">
+        {["ALL", ...codes].map((c) => (
+          <button key={c} role="tab" aria-selected={xn === c} onClick={() => setXn(c)} data-testid={`order-tab-${c}`}
+            className={`rounded-full px-3 py-1 ${xn === c ? "bg-brand text-white" : "border border-slate-300 text-slate-600"}`}>
+            {c === "ALL" ? "Tất cả" : c} <span className="opacity-70">({counts[c] ?? 0})</span>
+          </button>
+        ))}
+      </div>
+      <label className="flex items-center gap-2 text-xs text-slate-500">Hiển thị
+        <select value={topN} onChange={(e) => setTopN(Number(e.target.value))} className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs" data-testid="order-topn">
+          <option value={5}>Top 5</option><option value={10}>Top 10</option><option value={20}>Top 20</option><option value={0}>Tất cả</option>
+        </select>
+      </label>
+    </div>
+  );
+}
+const xnStats = (rows: { factory: string }[]) => {
+  const counts: Record<string, number> = { ALL: rows.length };
+  rows.forEach((r) => { counts[r.factory] = (counts[r.factory] ?? 0) + 1; });
+  return { codes: Object.keys(counts).filter((k) => k !== "ALL").sort(), counts };
+};
+
 export type DrillTarget =
   | { type: "po"; risk: string }
   | { type: "revenue"; month: string; scope?: string }
@@ -45,9 +71,13 @@ export default function DrillDrawer({ target, scope, onClose }: Props) {
   const [data, setData] = useState<Json>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [xn, setXn] = useState("ALL"); // tab XN của bảng PO may xong / nhập kho
+  const [topN, setTopN] = useState(0); // 0 = tất cả
 
   useEffect(() => {
     if (!target) return;
+    setXn("ALL");
+    setTopN(0);
     setData(null);
     setError("");
     setLoading(true);
@@ -100,7 +130,14 @@ export default function DrillDrawer({ target, scope, onClose }: Props) {
           {loading && <p className="text-sm text-slate-500">Đang tải...</p>}
           {error && <p className="text-sm text-red-600">{error}</p>}
 
-          {data && target.type === "po" && (
+          {data && target.type === "po" && (() => {
+            const st = xnStats(data.rows);
+            const inTab: Json[] = xn === "ALL" ? data.rows : data.rows.filter((r: Json) => r.factory === xn);
+            const shown = topN > 0 ? inTab.slice(0, topN) : inTab;
+            return (
+            <>
+            <XnFilter codes={st.codes} counts={st.counts} xn={xn} setXn={setXn} topN={topN} setTopN={setTopN} />
+            {(xn !== "ALL" || shown.length < inTab.length) && <p className="mb-2 text-xs text-slate-500">{xn !== "ALL" ? `${xn}: ${inTab.length} PO` : ""}{shown.length < inTab.length ? ` · đang hiện ${shown.length}` : ""}</p>}
             <table className="w-full min-w-[720px] text-left text-xs">
               <thead className="sticky top-0 bg-white">
                 <tr className="border-b border-slate-200 text-slate-400">
@@ -116,7 +153,7 @@ export default function DrillDrawer({ target, scope, onClose }: Props) {
                 </tr>
               </thead>
               <tbody>
-                {data.rows.map((r: Json, i: number) => (
+                {shown.map((r: Json, i: number) => (
                   <tr key={i} className="border-b border-slate-50 align-top">
                     <td className={`py-1.5 font-medium ${r.factory === "Chưa xác định XN" ? "text-slate-400" : ""}`}>
                       {r.factory}
@@ -134,14 +171,16 @@ export default function DrillDrawer({ target, scope, onClose }: Props) {
                     <td className="max-w-[220px] text-slate-500">{r.reason}</td>
                   </tr>
                 ))}
-                {data.rows.length === 0 && (
+                {shown.length === 0 && (
                   <tr>
                     <td colSpan={9} className="py-6 text-center text-slate-400">Không có PO nào.</td>
                   </tr>
                 )}
               </tbody>
             </table>
-          )}
+            </>
+            );
+          })()}
 
           {data && target.type === "revenue" && data.detail && <div className="mb-6"><RevenueDetail data={data.detail} today={data.today} /></div>}
           {data && target.type === "revenue" && (
@@ -176,9 +215,15 @@ export default function DrillDrawer({ target, scope, onClose }: Props) {
             </table>
           )}
 
-          {data && target.type === "order" && (
+          {data && target.type === "order" && (() => {
+            const all: Json[] = data.rows;
+            const codes = [...new Set(all.map((r: Json) => r.factory as string))].sort();
+            const inTab = xn === "ALL" ? all : all.filter((r: Json) => r.factory === xn);
+            const shown = topN > 0 ? inTab.slice(0, topN) : inTab;
+            return (
             <>
-              <p className="mb-2 text-xs text-slate-500">{num(data.total)} PO{data.total > data.rows.length ? ` · hiển thị ${data.rows.length} dòng đầu` : ""} · hạn giao = ngày xuất hàng trên ERP</p>
+              <XnFilter codes={codes} counts={xnStats(all).counts} xn={xn} setXn={setXn} topN={topN} setTopN={setTopN} />
+              <p className="mb-2 text-xs text-slate-500">{num(data.total)} PO{data.total > all.length ? ` (tải ${all.length} dòng đầu)` : ""}{xn !== "ALL" ? ` · ${xn}: ${inTab.length} PO` : ""}{shown.length < inTab.length ? ` · đang hiện ${shown.length}` : ""} · sắp theo chênh lệch ngày giảm dần · hạn giao = ngày xuất hàng trên ERP</p>
               <table className="w-full min-w-[640px] text-left text-xs">
                 <thead className="sticky top-0 bg-white">
                   <tr className="border-b border-slate-200 text-slate-400">
@@ -193,7 +238,7 @@ export default function DrillDrawer({ target, scope, onClose }: Props) {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.rows.map((r: Json, i: number) => (
+                  {shown.map((r: Json, i: number) => (
                     <tr key={i} className="border-b border-slate-50">
                       <td className="py-1.5 font-medium">{r.factory}</td>
                       <td><PoLink po={r.po} /></td>
@@ -205,7 +250,7 @@ export default function DrillDrawer({ target, scope, onClose }: Props) {
                       <td className={`text-right font-semibold ${r.days_diff !== null && r.days_diff > 0 ? "text-red-600" : "text-slate-700"}`}>{r.days_diff === null ? "—" : r.days_diff}</td>
                     </tr>
                   ))}
-                  {data.rows.length === 0 && (
+                  {shown.length === 0 && (
                     <tr>
                       <td colSpan={8} className="py-6 text-center text-slate-400">Không có PO nào.</td>
                     </tr>
@@ -213,7 +258,8 @@ export default function DrillDrawer({ target, scope, onClose }: Props) {
                 </tbody>
               </table>
             </>
-          )}
+            );
+          })()}
 
           {data && target.type === "qa" && (
             <table className="w-full text-left text-sm">

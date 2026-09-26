@@ -128,6 +128,12 @@ body { font-family: "Montserrat", "Segoe UI", system-ui, sans-serif; color: #e2e
 /* ===== Dashboard runtime: lưới 12 cột theo metadata bố cục ===== */
 .dash-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 1.25rem; grid-auto-rows: minmax(56px, auto); align-items: start; }
 .dash-item { grid-column: var(--gc); grid-row: var(--gr); }
+.dash-page { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.25rem; align-items: start; }
+@media (min-width: 1280px) {
+  .dash-page.has-right { grid-template-columns: minmax(0, 1fr) 20rem; }
+  .dash-page.has-left { grid-template-columns: 20rem minmax(0, 1fr); }
+  .dash-page.has-left.has-right { grid-template-columns: 20rem minmax(0, 1fr) 20rem; }
+}
 .dash-section { display: grid; grid-template-columns: var(--cols); gap: 1.25rem; align-items: start; }
 @media (max-width: 1023px) { .dash-section { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 1023px) {

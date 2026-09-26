@@ -36,6 +36,7 @@ GRID_COLUMNS = 12
 LAYOUT_SCOPES = ("COMPANY", "FACTORY")
 # Section presets của Layout Designer: số cột theo tỉ lệ trên lưới 12 (không resize pixel tự do)
 SECTION_PRESETS: dict[str, list[int]] = {"100": [12], "50_50": [6, 6], "66_34": [8, 4], "34_66": [4, 8], "33_33_33": [4, 4, 4], "25_25_25_25": [3, 3, 3, 3]}
+SECTION_ZONES = ("MAIN", "SIDEBAR_LEFT", "SIDEBAR_RIGHT")  # sidebar = cột hẹp cạnh vùng chính, chỉ 1 cột
 CUSTOM_PRESET = "CUSTOM"  # tỉ lệ % tự do theo cột, xem DashboardLayoutSection.custom_spans
 
 
@@ -171,7 +172,7 @@ def layout_view(db: Session, l: DashboardLayout, with_items: bool = False) -> di
 
 
 def section_view(x: DashboardLayoutSection) -> dict:
-    return {"id": x.id, "order_no": x.order_no, "title": x.title, "preset": x.preset, "custom_spans": x.custom_spans, "is_visible": x.is_visible, "spans": section_spans(x.preset, x.custom_spans)}
+    return {"id": x.id, "order_no": x.order_no, "title": x.title, "preset": x.preset, "custom_spans": x.custom_spans, "is_visible": x.is_visible, "zone": x.zone or "MAIN", "spans": section_spans(x.preset, x.custom_spans)}
 
 
 def _sections(db: Session, layout_id: int) -> list[DashboardLayoutSection]:
@@ -311,6 +312,11 @@ def _validate_sections(sections: list[dict], items: list[dict]) -> None:
     refs = set()
     for s_ in sections:
         preset = s_.get("preset", "100")
+        zone = s_.get("zone", "MAIN") or "MAIN"
+        if zone not in SECTION_ZONES:
+            raise _bad(f"zone '{zone}' không hợp lệ (chọn: {', '.join(SECTION_ZONES)})")
+        if zone != "MAIN" and preset != "100":
+            raise _bad("Section sidebar chỉ có 1 cột (preset 100)")
         if preset == CUSTOM_PRESET:
             spans = s_.get("custom_spans") or []
             if len(spans) < 1 or len(spans) > 6:
@@ -338,7 +344,7 @@ def _replace_sections_items(db: Session, layout: DashboardLayout, sections: list
     by_ref: dict[str, tuple[DashboardLayoutSection, int]] = {}
     for n, s_ in enumerate(sections, start=1):
         row = DashboardLayoutSection(layout_id=layout.id, order_no=n, title=s_.get("title", "") or "", preset=s_.get("preset", "100"),
-                                    custom_spans=(s_.get("custom_spans") if s_.get("preset") == CUSTOM_PRESET else None), is_visible=bool(s_.get("is_visible", True)))
+                                    custom_spans=(s_.get("custom_spans") if s_.get("preset") == CUSTOM_PRESET else None), is_visible=bool(s_.get("is_visible", True)), zone=s_.get("zone") or "MAIN")
         db.add(row)
         by_ref[str(s_["ref"])] = (row, n)
     db.flush()
@@ -413,7 +419,7 @@ def clone_layout(db: Session, user: User, layout_id: int) -> DashboardLayout:
     secs = _sections(db, src.id)
     if secs:
         items = [{**item_view(i), "section_ref": str(i.section_id)} for i in rows]
-        return create_layout(db, user, {**base, "sections": [{"ref": str(x.id), "title": x.title, "preset": x.preset, "custom_spans": x.custom_spans, "is_visible": x.is_visible} for x in secs], "items": items})
+        return create_layout(db, user, {**base, "sections": [{"ref": str(x.id), "title": x.title, "preset": x.preset, "custom_spans": x.custom_spans, "is_visible": x.is_visible, "zone": x.zone or "MAIN"} for x in secs], "items": items})
     return create_layout(db, user, {**base, "items": [item_view(i) for i in rows]})
 
 

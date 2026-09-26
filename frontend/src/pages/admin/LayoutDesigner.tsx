@@ -8,10 +8,12 @@ const NOOP: DashActions = { month: "", drillRevenue: () => undefined, drillOrder
 const STATUS_CHIP: Record<string, string> = { PUBLISHED: "pg-ok", DRAFT: "pg-adv", RETIRED: "pg-unk", SUPERSEDED: "pg-unk" };
 const PRESET_LABEL: Record<string, string> = { "100": "100%", "50_50": "50 / 50", "66_34": "66 / 34", "34_66": "34 / 66", "33_33_33": "33 / 33 / 33", "25_25_25_25": "25 / 25 / 25 / 25", CUSTOM: "Tùy chỉnh %" };
 const DEFAULT_PRESETS: Record<string, number[]> = { "100": [12], "50_50": [6, 6], "66_34": [8, 4], "34_66": [4, 8], "33_33_33": [4, 4, 4], "25_25_25_25": [3, 3, 3, 3] };
+const ZONE_LABEL: Record<string, string> = { MAIN: "Vùng chính", SIDEBAR_LEFT: "Sidebar trái", SIDEBAR_RIGHT: "Sidebar phải" };
+const ZONES = ["SIDEBAR_LEFT", "MAIN", "SIDEBAR_RIGHT"];
 const btn = "rounded-full border border-slate-300 px-3 py-1.5 text-xs";
 const inp = "w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm";
 
-interface DSec { ref: string; title: string; preset: string; custom_spans?: number[] | null; is_visible: boolean }
+interface DSec { ref: string; title: string; preset: string; custom_spans?: number[] | null; is_visible: boolean; zone?: string }
 interface DItem { uid: string; indicator_code: string; section_ref: string; column_no: number; is_visible: boolean; collapsed: boolean; config_override_json: Record<string, unknown> }
 type Sel = { kind: "widget"; id: string } | { kind: "section"; id: string } | null;
 
@@ -64,7 +66,7 @@ export default function LayoutDesigner({ canEdit, canPublish }: Props) {
     const r = (await api.get<DashLayout>(`/admin/dashboard/layouts/${id}`)).data;
     setSelected(id);
     setLayout(r);
-    setSections((r.sections ?? []).map((s) => ({ ref: String(s.id), title: s.title, preset: s.preset, custom_spans: s.custom_spans ?? undefined, is_visible: s.is_visible })));
+    setSections((r.sections ?? []).map((s) => ({ ref: String(s.id), title: s.title, preset: s.preset, custom_spans: s.custom_spans ?? undefined, is_visible: s.is_visible, zone: s.zone ?? "MAIN" })));
     setItems((r.items ?? []).map((it) => ({ uid: `i${it.id}`, indicator_code: it.indicator_code, section_ref: String(it.section_id), column_no: it.column_no ?? 0, is_visible: it.is_visible, collapsed: it.collapsed, config_override_json: it.config_override_json ?? {} })));
     setDirty(false);
     setSel(null);
@@ -93,12 +95,13 @@ export default function LayoutDesigner({ canEdit, canPublish }: Props) {
   const touch = () => setDirty(true);
 
   // ------------------------------------------------------------------ thao tác Section
-  const addSection = (preset = "100") => { const ref = nid("s"); setSections((c) => [...c, { ref, title: "", preset, is_visible: true }]); setSel({ kind: "section", id: ref }); touch(); return ref; };
+  const addSection = (preset = "100", zone = "MAIN") => { const ref = nid("s"); setSections((c) => [...c, { ref, title: "", preset, is_visible: true, zone }]); setSel({ kind: "section", id: ref }); touch(); return ref; };
   const patchSection = (ref: string, p: Partial<DSec>) => {
     setSections((c) =>
       c.map((s) => {
         if (s.ref !== ref) return s;
         const next = { ...s, ...p };
+        if (p.zone && p.zone !== "MAIN") { next.preset = "100"; next.custom_spans = undefined; } // sidebar chỉ 1 cột
         if (p.preset === "CUSTOM" && !s.custom_spans?.length) {
           const n = spansOf(s.preset).length || 2;
           next.custom_spans = Array.from({ length: n }, () => Math.round((100 / n) * 10) / 10);
@@ -106,8 +109,8 @@ export default function LayoutDesigner({ canEdit, canPublish }: Props) {
         return next;
       }),
     );
-    if (p.preset) {
-      const n = spansOfSec({ ...(sections.find((s) => s.ref === ref) as DSec), ...p }).length;
+    if (p.preset || (p.zone && p.zone !== "MAIN")) {
+      const n = p.zone && p.zone !== "MAIN" ? 1 : spansOfSec({ ...(sections.find((s) => s.ref === ref) as DSec), ...p }).length;
       setItems((c) => c.map((i) => (i.section_ref === ref ? { ...i, column_no: Math.min(i.column_no, n - 1) } : i)));
     }
     touch();
@@ -211,7 +214,7 @@ export default function LayoutDesigner({ canEdit, canPublish }: Props) {
   // ------------------------------------------------------------------ lưu / publish / preview
   const payload = () => ({
     layout_name: layout?.layout_name,
-    sections: sections.map((s) => ({ ref: s.ref, title: s.title, preset: s.preset, custom_spans: s.preset === "CUSTOM" ? s.custom_spans : undefined, is_visible: s.is_visible })),
+    sections: sections.map((s) => ({ ref: s.ref, title: s.title, preset: s.preset, custom_spans: s.preset === "CUSTOM" ? s.custom_spans : undefined, is_visible: s.is_visible, zone: s.zone ?? "MAIN" })),
     items: items.map((i) => ({ indicator_code: i.indicator_code, section_ref: i.section_ref, column_no: i.column_no, is_visible: i.is_visible, collapsed: i.collapsed, config_override_json: i.config_override_json })),
   });
   const save = async (): Promise<boolean> => {
@@ -336,6 +339,7 @@ export default function LayoutDesigner({ canEdit, canPublish }: Props) {
             <div className="flex flex-wrap gap-2">
               {!editable && canEdit && <button onClick={enterEdit} className="rounded-full bg-brand px-4 py-1.5 text-xs font-semibold text-white" data-testid="edit-mode">Edit Mode</button>}
               {editable && <button onClick={() => addSection("100")} className={btn} data-testid="add-section">+ Section</button>}
+              {editable && <button onClick={() => addSection("100", "SIDEBAR_RIGHT")} className={btn} data-testid="add-sidebar">+ Sidebar</button>}
               {editable && <button onClick={() => runPreview("TONG")} className={btn}>Preview</button>}
               {editable && <button onClick={save} disabled={!dirty} className={`${btn} disabled:opacity-40`} data-testid="save-draft">Save Draft</button>}
               {editable && <button onClick={cancel} className={btn}>Cancel</button>}
@@ -361,14 +365,22 @@ export default function LayoutDesigner({ canEdit, canPublish }: Props) {
         {editable && (
           <div className="space-y-3" data-testid="designer-canvas">
             {sections.length === 0 && <p className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-400">Bố cục trống — bấm "+ Section" rồi thêm widget.</p>}
+            <div className={`dash-page ${sections.some((s) => s.zone === "SIDEBAR_LEFT") ? "has-left" : ""} ${sections.some((s) => s.zone === "SIDEBAR_RIGHT") ? "has-right" : ""}`} data-testid="designer-zones">
+            {ZONES.map((z) => (z !== "MAIN" && !sections.some((s) => s.zone === z) ? null : (
+            <div key={z} className="min-w-0 space-y-3" data-testid={`zone-${z}`}>
+            {z !== "MAIN" && <p className="text-[10px] font-bold uppercase text-slate-400">{ZONE_LABEL[z]}</p>}
             {sections.map((sec, si) => {
+              if ((sec.zone ?? "MAIN") !== z) return null;
               const spans = spansOfSec(sec);
               const isSel = sel?.kind === "section" && sel.id === sec.ref;
               return (
                 <section key={sec.ref} className={`rounded-2xl border-2 p-3 ${isSel ? "border-brand" : "border-slate-200"} ${sec.is_visible ? "" : "opacity-50"} bg-white`} data-testid={`section-${si}`} data-preset={sec.preset}>
                   <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
                     <button onClick={() => setSel({ kind: "section", id: sec.ref })} className="font-semibold text-slate-700 hover:underline">{sec.title || `Section ${si + 1}`}</button>
-                    <select value={sec.preset} onChange={(e) => patchSection(sec.ref, { preset: e.target.value })} className="rounded border border-slate-200 px-1 py-0.5" aria-label={`Preset Section ${si + 1}`} data-testid={`preset-${si}`}>
+                    <select value={sec.zone ?? "MAIN"} onChange={(e) => patchSection(sec.ref, { zone: e.target.value })} className="rounded border border-slate-200 px-1 py-0.5" aria-label={`Vùng Section ${si + 1}`} data-testid={`zone-sel-${si}`}>
+                      {ZONES.map((zz) => <option key={zz} value={zz}>{ZONE_LABEL[zz]}</option>)}
+                    </select>
+                    <select value={sec.preset} disabled={(sec.zone ?? "MAIN") !== "MAIN"} onChange={(e) => patchSection(sec.ref, { preset: e.target.value })} className="rounded border border-slate-200 px-1 py-0.5 disabled:opacity-50" aria-label={`Preset Section ${si + 1}`} data-testid={`preset-${si}`}>
                       {presetKeys.map((p) => <option key={p} value={p}>{PRESET_LABEL[p] ?? p}</option>)}
                     </select>
                     {sec.preset === "CUSTOM" && <span className="text-slate-400">{spans.map((v) => `${v}%`).join(" / ")}</span>}
@@ -410,6 +422,9 @@ export default function LayoutDesigner({ canEdit, canPublish }: Props) {
                 </section>
               );
             })}
+            </div>
+            )))}
+            </div>
           </div>
         )}
         <p className="text-[11px] text-slate-400">Bố cục theo Section và cột preset — không resize pixel tự do. Người dùng thường chỉ thấy bản Publish.</p>
@@ -424,8 +439,12 @@ export default function LayoutDesigner({ canEdit, canPublish }: Props) {
               <div className="space-y-2 text-xs">
                 <p className="font-semibold text-slate-700">Section</p>
                 <label className="block text-slate-500">Tiêu đề (chỉ hiển thị trong Designer)<input className={inp} value={selSection.title} onChange={(e) => patchSection(selSection.ref, { title: e.target.value })} /></label>
+                <label className="block text-slate-500">Vùng hiển thị
+                  <select className={inp} value={selSection.zone ?? "MAIN"} onChange={(e) => patchSection(selSection.ref, { zone: e.target.value })} data-testid="prop-zone">{ZONES.map((zz) => <option key={zz} value={zz}>{ZONE_LABEL[zz]}</option>)}</select>
+                </label>
+                {(selSection.zone ?? "MAIN") !== "MAIN" && <p className="text-[11px] text-slate-400">Sidebar là cột hẹp (20rem) chạy dọc cạnh vùng chính; chỉ 1 cột, xếp chồng các Section.</p>}
                 <label className="block text-slate-500">Số cột / tỉ lệ
-                  <select className={inp} value={selSection.preset} onChange={(e) => patchSection(selSection.ref, { preset: e.target.value })} data-testid="prop-preset">{presetKeys.map((p) => <option key={p} value={p}>{PRESET_LABEL[p] ?? p}</option>)}</select>
+                  <select className={inp} disabled={(selSection.zone ?? "MAIN") !== "MAIN"} value={selSection.preset} onChange={(e) => patchSection(selSection.ref, { preset: e.target.value })} data-testid="prop-preset">{presetKeys.map((p) => <option key={p} value={p}>{PRESET_LABEL[p] ?? p}</option>)}</select>
                 </label>
                 {selSection.preset === "CUSTOM" && (
                   <div className="space-y-1.5 rounded-lg border border-slate-200 p-2" data-testid="custom-spans">
