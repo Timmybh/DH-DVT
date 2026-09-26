@@ -10,14 +10,14 @@ from sqlalchemy.pool import StaticPool
 from app.db.session import Base
 from app.models.core import Factory
 from app.models.data import RevenueDaily
-from app.models.resources import BrandCustomer, LaborDaily, LaborStandard, LaborStandardGradeDetail, LineOutputDaily, LinePlanDaily, StylePrice, StyleSam
+from app.models.resources import BrandCustomer, LaborDaily, LaborStandard, LaborStandardGradeDetail, ProductivityTarget, LineOutputDaily, LinePlanDaily, StylePrice, StyleSam
 from app.services import dashboard_page2 as p2
 
 
 @pytest.fixture()
 def db():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    Base.metadata.create_all(engine, tables=[Factory.__table__, RevenueDaily.__table__, LaborDaily.__table__, LineOutputDaily.__table__, LinePlanDaily.__table__, StylePrice.__table__, StyleSam.__table__, BrandCustomer.__table__, LaborStandard.__table__, LaborStandardGradeDetail.__table__])
+    Base.metadata.create_all(engine, tables=[Factory.__table__, RevenueDaily.__table__, LaborDaily.__table__, LineOutputDaily.__table__, LinePlanDaily.__table__, StylePrice.__table__, StyleSam.__table__, BrandCustomer.__table__, LaborStandard.__table__, LaborStandardGradeDetail.__table__, ProductivityTarget.__table__])
     s = sessionmaker(bind=engine)()
     s.add_all([Factory(code=f"XN{n}", name=f"XN {n}", sql_xn_id=n, display_order=n) for n in (1, 2)])
     s.commit()
@@ -140,3 +140,30 @@ def test_totals_rows_follow_excel_rules(db):
     assert x1["avg_revenue_per_present"] == round(300 / 45, 3)
     assert tong["qty"] == 350.0 and tong["efficiency_dcl"] == x1["efficiency_dcl"]                                    # toàn công ty: trung bình các XN có giá trị (bỏ XN trống)
     assert tong["efficiency_other"] == x2["efficiency_other"]
+
+
+def test_dtbq_charts_status_and_targets(db):
+    from datetime import date as D
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+
+    from app.services import productivity
+
+    assert productivity.get_targets(db) == {"DTBQ_LD_MAY": 46.0, "DTBQ_LD_HIEU_SUAT": 38.0, "DTBQ_LD_HIEN_DIEN": 32.0}   # mặc định theo sheet "23"
+    summ = {"XN1": {"ns_present": 40.0, "avg_revenue_per_present": 33.0}, "XN2": {"ns_present": 30.0, "avg_revenue_per_present": None},
+            "TONG": {"ns_present": 35.0, "avg_revenue_per_present": 31.0, "ns_all_labor": 26.0}}
+    ch = productivity.dtbq_charts(productivity.get_targets(db), ["XN1", "XN2"], summ, [{"date": "2026-05-22", "nsld_may": 47.0}, {"date": "2026-05-23", "nsld_may": 40.0}])
+    assert [b["status"] for b in ch["hieu_suat"]] == ["TARGET", "ACHIEVED", "MISSED", "MISSED"]                            # ≥ 38 đạt; < 38 không đạt
+    assert [b["status"] for b in ch["hien_dien"]] == ["TARGET", "ACHIEVED", None, "MISSED"]                               # thiếu số liệu → không có trạng thái
+    assert ch["hien_dien"][-1]["value"] == 26.0                                                                           # toàn công ty: DT ÷ (hiện diện + gián tiếp)
+    assert [b["status"] for b in ch["may_by_day"]] == ["TARGET", "ACHIEVED", "MISSED"]
+    u = SimpleNamespace(username="admin")
+    import app.services.audit as audit_mod
+    audit_mod.write_audit = lambda *a, **k: None
+    assert productivity.set_targets(db, u, {"DTBQ_LD_MAY": 50})["DTBQ_LD_MAY"] == 50.0
+    assert productivity.get_targets(db)["DTBQ_LD_MAY"] == 50.0
+    for bad in ({"XYZ": 1}, {"DTBQ_LD_MAY": 0}):
+        with pytest.raises(HTTPException):
+            productivity.set_targets(db, u, bad)
+    assert productivity.dtbq_charts(productivity.get_targets(db), ["XN1"], None, []) is None

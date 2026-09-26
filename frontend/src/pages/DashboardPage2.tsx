@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Bar, CartesianGrid, ComposedChart, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, LabelList, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { useAuth } from "../context/AuthContext";
 import { api, errorMessage } from "../api/client";
 import LoadingBar from "../components/LoadingBar";
 import { dateVi, num, pct } from "../lib/format";
@@ -7,11 +8,45 @@ import { dateVi, num, pct } from "../lib/format";
 interface Cell { plan: number | null; actual: number | null; pct: number | null; labor_total: number | null; labor_present: number | null; labor_absent: number | null; absent_rate: number | null; dtbq_present: number | null }
 interface LineRow { factory: string; line: string; style: string; brand: string; customer: string; price: number | null; qty: number; plan_qty: number | null; pct: number | null; production_days: number | null; revenue_plan: number | null; revenue_actual: number | null; labor_may: number | null; labor_hs: number | null; nsld_may: number | null; ns_present: number | null; efficiency_dcl: number | null; efficiency_other: number | null }
 interface Summ { labor_may: number | null; labor_hs: number | null; plan_qty: number | null; qty: number | null; pct: number | null; revenue_plan: number | null; revenue_actual: number | null; nsld_may: number | null; ns_present: number | null; efficiency_dcl: number | null; efficiency_other: number | null; labor_list: number | null; labor_present_erp: number | null; labor_absent: number | null; absent_rate: number | null; labor_indirect: number | null; avg_revenue_per_present: number | null; ns_all_labor?: number | null }
-interface Page2 { line_summaries: Record<string, Summ> | null; lines: LineRow[]; date: string; has_data: boolean; unit: string; factories: string[]; day: Record<string, Cell> | null; series: { date: string; cells: Record<string, Cell> }[] }
+interface Bar1 { label: string; value: number | null; status: "TARGET" | "ACHIEVED" | "MISSED" | null }
+interface Charts { targets: Record<string, number>; may_by_day: Bar1[]; hieu_suat: Bar1[]; hien_dien: Bar1[] }
+interface Page2 { dtbq_charts: Charts | null; line_summaries: Record<string, Summ> | null; lines: LineRow[]; date: string; has_data: boolean; unit: string; factories: string[]; day: Record<string, Cell> | null; series: { date: string; cells: Record<string, Cell> }[] }
 
 const COLORS: Record<string, string> = { TONG: "#4c9aff", XN1: "#16a34a", XN2: "#f59e0b", XN3: "#a855f7" };
 const th = "px-2 py-2 text-right text-xs font-semibold text-slate-400";
 const td = "px-2 py-1.5 text-right";
+const BAR_COLOR = { TARGET: "#00e5c0", ACHIEVED: "#0a66ff", MISSED: "#e8792f" } as const;
+
+/** Biểu đồ cột "Thực hiện DTBQ": cột Mục tiêu (xanh ngọc), Đạt (xanh dương, ≥ mục tiêu), Không đạt (cam). */
+function TargetBars({ title, bars, target, unit, testid, onEdit }: { title: string; bars: Bar1[]; target: number; unit: string; testid: string; onEdit?: (v: number) => void }) {
+  const data = bars.map((b) => ({ ...b, name: /^\d{4}-\d{2}-\d{2}$/.test(b.label) ? `${b.label.slice(8)}/${b.label.slice(5, 7)}` : b.label }));
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-3" data-testid={testid}>
+      <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-bold text-slate-700">{title}</h2>
+        {onEdit && <label className="flex items-center gap-1 text-[11px] text-slate-500">Mục tiêu ({unit})
+          <input type="number" min={1} step="0.5" defaultValue={target} key={target} onBlur={(e) => Number(e.target.value) > 0 && Number(e.target.value) !== target && onEdit(Number(e.target.value))} className="w-16 rounded border border-slate-300 px-1 py-0.5 text-right" aria-label={`Mục tiêu ${title}`} />
+        </label>}
+      </div>
+      <div className="h-64">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={data} margin={{ top: 22, right: 8, left: 0, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#94a3b833" vertical={false} />
+            <XAxis dataKey="name" tick={{ fontSize: 11 }} interval={0} /><YAxis tick={{ fontSize: 11 }} domain={[0, "dataMax + 5"]} />
+            <Tooltip formatter={(v: unknown) => (v === null || v === undefined ? "—" : Number(v).toFixed(2))} />
+            <Bar dataKey="value" isAnimationActive={false}>
+              {data.map((d, i) => <Cell key={i} fill={d.status ? BAR_COLOR[d.status] : "#94a3b8"} />)}
+              <LabelList dataKey="value" position="top" formatter={(v: unknown) => (v === null || v === undefined ? "" : Number(v).toFixed(2))} style={{ fontSize: 11, fontWeight: 700 }} />
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="mt-1 flex justify-center gap-4 text-[11px] text-slate-500">
+        {([["TARGET", "Mục tiêu"], ["ACHIEVED", "Đạt"], ["MISSED", "Không đạt"]] as const).map(([k, l]) => <span key={k} className="flex items-center gap-1"><i className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: BAR_COLOR[k] }} />{l}</span>)}
+      </div>
+    </section>
+  );
+}
 const label = (c: string) => (c === "TONG" ? "Toàn công ty" : c);
 
 /** Trang 2: báo cáo năng suất theo ngày (dựng theo sheet "23"). Ngày chọn quyết định mọi số liệu; ngày không có dữ liệu → "Không có dữ liệu". */
@@ -21,6 +56,8 @@ export default function DashboardPage2() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [scope, setScope] = useState("TONG");
+  const { can } = useAuth();
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
     let alive = true;
@@ -31,7 +68,7 @@ export default function DashboardPage2() {
       .catch((e) => alive && setError(errorMessage(e, "Không tải được dữ liệu Trang 2")))
       .finally(() => alive && setLoading(false));
     return () => { alive = false; };
-  }, [date]);
+  }, [date, reload]);
 
   const codes = data ? ["TONG", ...data.factories] : [];
   const trend = (data?.series ?? []).map((s) => {
@@ -147,6 +184,15 @@ export default function DashboardPage2() {
               )}
               <p className="mt-2 text-[11px] text-slate-400">Kế hoạch: OMM_KeHoachThang; sản lượng: HiPro; hiệu suất = SAM (Decathlon) hoặc SOT (khách hàng khác) × sản lượng ÷ thời gian làm việc ÷ SLĐ hiệu suất. Chuyền chạy nhiều mã hàng: lao động phân bổ theo tỉ lệ sản lượng.</p>
             </section>
+          )}
+
+          {data.dtbq_charts && (
+            <div className="grid gap-4 lg:grid-cols-3" data-testid="dtbq-charts">
+              {([["may_by_day", "DTBQ LĐ may (các ngày gần nhất)", "DTBQ_LD_MAY"], ["hieu_suat", "DTBQ LĐ hiệu suất", "DTBQ_LD_HIEU_SUAT"], ["hien_dien", "DTBQ LĐ hiện diện", "DTBQ_LD_HIEN_DIEN"]] as const).map(([k, title, code]) => (
+                <TargetBars key={k} testid={`chart-${k}`} title={`Biểu đồ thực hiện ${title}`} bars={data.dtbq_charts![k]} target={data.dtbq_charts!.targets[code]} unit="USD/người"
+                  onEdit={can("resource.manage") ? async (v) => { try { await api.put("/dashboard/productivity-targets", { [code]: v }); setReload((n) => n + 1); } catch (e) { setError(errorMessage(e)); } } : undefined} />
+              ))}
+            </div>
           )}
 
           {trend.length > 0 && <section className="rounded-2xl border border-slate-200 bg-white p-3" data-testid="chart-dtbq">

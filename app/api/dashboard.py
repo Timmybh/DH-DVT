@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_perm
@@ -70,6 +71,20 @@ def page2(day: str | None = Query(None, alias="date", pattern=r"^\d{4}-\d{2}-\d{
     except ValueError:
         raise HTTPException(422, "Ngày không hợp lệ")
     return dashboard_page2.build(db, d)
+
+
+class TargetsBody(BaseModel):
+    DTBQ_LD_MAY: float | None = Field(None, gt=0)
+    DTBQ_LD_HIEU_SUAT: float | None = Field(None, gt=0)
+    DTBQ_LD_HIEN_DIEN: float | None = Field(None, gt=0)
+
+
+@router.put("/productivity-targets")
+def put_productivity_targets(body: TargetsBody, db: Session = Depends(get_db), user: User = Depends(require_perm("resource.manage"))):
+    """Sửa mục tiêu DTBQ/LĐ cho các biểu đồ Trang 2 (USD/người)."""
+    from app.services import productivity
+
+    return productivity.set_targets(db, user, body.model_dump(exclude_none=True))
 
 
 @router.get("/overview")

@@ -315,6 +315,17 @@ class MachineModel(Base):
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class ProductivityTarget(Base):
+    """Mục tiêu doanh thu bình quân / lao động (USD/người) cho các biểu đồ Trang 2: DTBQ_LD_MAY, DTBQ_LD_HIEU_SUAT, DTBQ_LD_HIEN_DIEN."""
+
+    __tablename__ = "productivity_targets"
+
+    code: Mapped[str] = mapped_column(String(30), primary_key=True)
+    value: Mapped[float] = mapped_column(Float)
+    updated_by: Mapped[str] = mapped_column(String(100), default="")
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class BrandCustomer(Base):
     """Brand → Khách hàng (bảng "brand + khách hàng" của báo cáo năng suất). Khách hàng ≠ DECATHLON được tính hiệu suất theo SOT ("hiệu suất hàng khác")."""
 

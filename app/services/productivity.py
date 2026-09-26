@@ -17,7 +17,7 @@ from datetime import date
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models.resources import BrandCustomer, LaborDaily, LineOutputDaily, LinePlanDaily, StyleSam
+from app.models.resources import BrandCustomer, LaborDaily, LineOutputDaily, LinePlanDaily, ProductivityTarget, StyleSam
 from app.services import style_price_service as sp
 
 DECATHLON = "DECATHLON"
@@ -126,4 +126,56 @@ def _one(rs: list[dict], lab: dict) -> dict:
         "labor_list": total, "labor_present_erp": present, "labor_absent": (total - present) if total is not None and present is not None else None,
         "absent_rate": _div((total - present) if total is not None and present is not None else None, total), "labor_indirect": lab.get("indirect"),
         "avg_revenue_per_present": _div(ra, present, 3),
+    }
+
+
+# ---------------------------------------------------------------- Biểu đồ "Thực hiện DTBQ" (Mục tiêu / Đạt / Không đạt)
+TARGET_DEFAULTS = {"DTBQ_LD_MAY": 46.0, "DTBQ_LD_HIEU_SUAT": 38.0, "DTBQ_LD_HIEN_DIEN": 32.0}  # theo sheet "23" của báo cáo năng suất; sửa được (resource.manage)
+
+
+def get_targets(db: Session) -> dict[str, float]:
+    saved = {t.code: t.value for t in db.query(ProductivityTarget)}
+    return {k: saved.get(k, v) for k, v in TARGET_DEFAULTS.items()}
+
+
+def set_targets(db: Session, user, values: dict) -> dict[str, float]:
+    from fastapi import HTTPException
+
+    from app.db.session import utcnow
+    from app.services.audit import write_audit
+
+    for k, v in values.items():
+        if k not in TARGET_DEFAULTS:
+            raise HTTPException(422, f"Mục tiêu không hợp lệ: {k}")
+        if v is None or not float(v) > 0:
+            raise HTTPException(422, "Mục tiêu phải > 0 (USD/người)")
+    for k, v in values.items():
+        row = db.get(ProductivityTarget, k)
+        if row is None:
+            db.add(ProductivityTarget(code=k, value=float(v), updated_by=user.username, updated_at=utcnow()))
+        else:
+            row.value, row.updated_by, row.updated_at = float(v), user.username, utcnow()
+    db.commit()
+    write_audit("PRODUCTIVITY_TARGET_UPDATE", user=user, object_type="ProductivityTarget", object_id="*", detail=", ".join(f"{k}={v}" for k, v in values.items()))
+    return get_targets(db)
+
+
+def dtbq_charts(targets: dict[str, float], codes: list[str], summaries: dict | None, days: list[dict]) -> dict | None:
+    """3 biểu đồ cột: (1) DTBQ LĐ may của công ty qua các ngày gần nhất, (2) DTBQ LĐ hiệu suất, (3) DTBQ LĐ hiện diện theo XN + toàn công ty.
+    Mỗi cột: value, status = ACHIEVED nếu ≥ mục tiêu, MISSED nếu thấp hơn (không có giá trị → None). Cột đầu luôn là "Mục tiêu"."""
+    if not summaries:
+        return None
+
+    def bars(t: float, items: list[tuple[str, float | None]]) -> list[dict]:
+        out = [{"label": "Mục tiêu", "value": t, "status": "TARGET"}]
+        out += [{"label": lb, "value": v, "status": None if v is None else ("ACHIEVED" if v >= t else "MISSED")} for lb, v in items]
+        return out
+
+    t1, t2, t3 = targets["DTBQ_LD_MAY"], targets["DTBQ_LD_HIEU_SUAT"], targets["DTBQ_LD_HIEN_DIEN"]
+    tong = summaries["TONG"]
+    return {
+        "targets": targets,
+        "may_by_day": bars(t1, [(d["date"], d["nsld_may"]) for d in days]),
+        "hieu_suat": bars(t2, [*[(c, summaries[c]["ns_present"]) for c in codes], ("Tổng công ty", tong["ns_present"])]),   # DT ÷ SLĐ tính hiệu suất
+        "hien_dien": bars(t3, [*[(c, summaries[c]["avg_revenue_per_present"]) for c in codes], ("Tổng công ty", tong.get("ns_all_labor"))]),  # DT ÷ LĐ hiện diện (công ty: + gián tiếp)
     }

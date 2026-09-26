@@ -5,7 +5,7 @@ Ngày không có dữ liệu → has_data = False (không suy diễn, không l�
 """
 
 import calendar
-from datetime import date
+from datetime import date, timedelta
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -94,6 +94,17 @@ def build(db: Session, day: date) -> dict:
             d_ = lab_x.setdefault(s_.factory_code, {})
             d_["indirect"] = d_.get("indirect", 0) + (s_.total_labor - (s_.cn_may or 0))  # gián tiếp = tổng lao động chuyền − CN may
     summaries = productivity.summarize(lines, codes, lab_x) if lines else None
+    # DTBQ LĐ may của công ty ở tối đa 5 ngày gần nhất (đến ngày chọn) có dữ liệu
+    days = []
+    for back in range(0, 14):
+        d0 = day - timedelta(days=back)
+        rows0 = lines if back == 0 else productivity.rows_for_day(db, d0, codes)
+        if rows0:
+            days.append({"date": d0.isoformat(), "nsld_may": productivity.summarize(rows0, codes, {})["TONG"]["nsld_may"]})
+        if len(days) == 5:
+            break
+    days.reverse()
+    charts = productivity.dtbq_charts(productivity.get_targets(db), codes, summaries, days)
     return {
         "date": day.isoformat(),
         "has_data": selected is not None or bool(lines),
@@ -103,4 +114,5 @@ def build(db: Session, day: date) -> dict:
         "series": series,
         "lines": lines,
         "line_summaries": summaries,
+        "dtbq_charts": charts,
     }
