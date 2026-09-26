@@ -44,6 +44,11 @@ PROPOSAL_DECISIONS = ("SELECTED", "REJECTED")
 RULE_STATUSES = ("DRAFT", "APPROVED", "RETIRED")
 TECH_LINK_TYPES = ("FUTURE_CANDIDATE", "PROCESS_VERSION")
 
+# --- Task 6 (Issue #13, GPT APPROVED_TO_IMPLEMENT): executable rule — workflow + evidence source kind
+EXEC_RULE_STATUSES = ("DRAFT", "UNDER_REVIEW", "APPROVED", "RETIRED")
+EXEC_APPROVABLE_SOURCE_KINDS = ("IE_APPROVED_STUDY", "TIME_MOTION_STUDY", "APPROVED_CAPACITY_STUDY", "CONTROLLED_PRODUCTION_TRIAL")
+EXEC_BLOCKED_SOURCE_KINDS = ("ESTIMATE", "DEFAULT", "CLAIMED", "BROCHURE", "PLACEHOLDER", "UNVERIFIED")  # chỉ lưu được ở DRAFT/UNDER_REVIEW để nghiên cứu
+
 
 class RoadmapScenario(Base):
     __tablename__ = "roadmap_scenarios"
@@ -262,3 +267,42 @@ class RoadmapStatusHistory(Base):
     reason: Mapped[str] = mapped_column(String(300), default="")
     actor: Mapped[str] = mapped_column(String(100), default="")
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class RoadmapExecutableRule(Base):
+    """Rule THỰC THI (Task 6). Khác `RoadmapRule` (metadata-only): mang tham số productivity do business khai báo + adapter allowlist trong code.
+    Productivity KHÔNG suy từ bảng nguồn nào. Versioned; APPROVED bất biến (sửa = version mới); DRAFT→UNDER_REVIEW→APPROVED→RETIRED; four-eyes reviewer != approver.
+    KHÔNG seed rule nào."""
+
+    __tablename__ = "roadmap_executable_rules"
+    __table_args__ = (UniqueConstraint("rule_code", "rule_version", name="uq_roadmap_exec_rule_version"), Index("ix_roadmap_exec_rule_type_status", "proposal_type", "status"))
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rule_code: Mapped[str] = mapped_column(String(40), index=True)
+    rule_version: Mapped[int] = mapped_column(Integer, default=1)
+    title: Mapped[str] = mapped_column(String(200), default="")
+    adapter_code: Mapped[str] = mapped_column(String(40))  # phải nằm trong ALLOWLISTED_ADAPTERS (code)
+    adapter_version: Mapped[str] = mapped_column(String(10), default="")
+    proposal_type: Mapped[str] = mapped_column(String(20))
+    metadata_rule_id: Mapped[int | None] = mapped_column(ForeignKey("roadmap_rules.id"), nullable=True)  # tham chiếu tùy chọn tới rule metadata
+    scope_type: Mapped[str] = mapped_column(String(10), default="TOTAL")  # exact match scope scenario; không rollup/average
+    scope_value: Mapped[str] = mapped_column(String(20), default="")
+    period_type: Mapped[str] = mapped_column(String(6), default="MONTH")  # phải khớp period target; không quy đổi DAY→MONTH/YEAR
+    machine_type_code: Mapped[str | None] = mapped_column(ForeignKey("machine_types.code"), nullable=True)  # 1 rule = 1 machine type explicit (adapter machine)
+    productivity_value: Mapped[float] = mapped_column(Float)  # business-owned, không derive từ DB
+    productivity_unit: Mapped[str] = mapped_column(String(30), default="")  # sp/worker/MONTH | sp/machine/YEAR ...
+    owner: Mapped[str] = mapped_column(String(100), default="")
+    source_kind: Mapped[str] = mapped_column(String(30), default="")
+    source_ref: Mapped[str] = mapped_column(String(300), default="")
+    effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    assumptions: Mapped[str] = mapped_column(String(500), default="")
+    sample_input_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    sample_expected_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(12), default="DRAFT", index=True)
+    reviewed_by: Mapped[str] = mapped_column(String(100), default="")
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    approved_by: Mapped[str] = mapped_column(String(100), default="")
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

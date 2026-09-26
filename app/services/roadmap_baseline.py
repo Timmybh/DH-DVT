@@ -188,3 +188,17 @@ def machine_baseline(db: Session, scope_type: str, scope_value: str) -> dict | N
     for r in rows:
         by_t[r.machine_type] = by_t.get(r.machine_type, 0) + int(r.quantity or 0)
     return {"source": "machine_capacities", "status_filter": "ACTIVE", "rows": len(rows), "by_machine_type": dict(sorted(by_t.items()))}
+
+
+def machine_available(db: Session, scope_type: str, scope_value: str, machine_type_code: str) -> dict | None:
+    """Task 6 (GPT chốt): available_machines = SUM(max(0, quantity - maintenance_quantity - down_quantity)) cho đúng scope + machine_type, dòng ACTIVE.
+    Chỉ là CONTEXT (không tham gia công thức gap). Không dùng nominal_output/efficiency placeholder; không sharing/pool. Không có dòng => None."""
+    codes = [f.code for f in scope_factories(db, scope_type, scope_value)]
+    if not codes:
+        return None
+    rows = db.query(MachineCapacity).filter(MachineCapacity.factory_code.in_(codes), MachineCapacity.machine_type == machine_type_code, MachineCapacity.status == "ACTIVE").all()
+    if not rows:
+        return None
+    total = sum(max(0, int(r.quantity or 0) - int(r.maintenance_quantity or 0) - int(r.down_quantity or 0)) for r in rows)
+    return {"source": "machine_capacities", "status_filter": "ACTIVE", "machine_type_code": machine_type_code, "rows": len(rows),
+            "formula": "SUM(max(0, quantity - maintenance_quantity - down_quantity))", "available_machines": total}

@@ -18,6 +18,7 @@ from app.models.data import PoPackDaily, PoProgress, RevenueDaily, RevenueMonthl
 from app.models.future_technology import FutureTechnologyCandidate, FutureTechnologyEvidence
 from app.models.resources import LaborStandard, LaborStandardGradeDetail, MachineCapacity, MachineModel, MachineType
 from app.models.roadmap import (
+    RoadmapExecutableRule,
     RoadmapMilestone,
     RoadmapProposal,
     RoadmapProposalDecisionHistory,
@@ -40,7 +41,7 @@ PLANNER = SimpleNamespace(username="planner", role="PLANNER", id=2)
 _TABLES = [
     Factory, MachineType, MachineModel, RevenueDaily, RevenueMonthly, RevenueYearly, PoPackDaily, PoProgress, SyncRun, LaborStandard, LaborStandardGradeDetail, MachineCapacity,
     FutureTechnologyCandidate, FutureTechnologyEvidence, TechnologyProcess, TechnologyProcessVersion, TechnologyProcessOperation,
-    RoadmapScenario, RoadmapScenarioVersion, RoadmapMilestone, RoadmapTarget, RoadmapTechnologyLink, RoadmapRule, RoadmapRun, RoadmapRunTargetResult,
+    RoadmapScenario, RoadmapScenarioVersion, RoadmapMilestone, RoadmapTarget, RoadmapTechnologyLink, RoadmapRule, RoadmapExecutableRule, RoadmapRun, RoadmapRunTargetResult,
     RoadmapProposal, RoadmapProposalDecisionHistory, RoadmapStatusHistory,
 ]
 
@@ -576,7 +577,7 @@ def test_without_approved_rules_all_quantity_proposals_needs_input_not_invented(
     for pt in ("LABOR_RECRUITMENT", "MACHINE_PURCHASE", "CAPACITY_CHANGE", "TECHNOLOGY_ADOPTION"):
         (p,) = _by_type(r, pt)
         assert p["calc_status"] == "NEEDS_INPUT" and p["quantity"] is None and p["missing_inputs"]
-    assert any("approved calculation rule" in m for m in _by_type(r, "LABOR_RECRUITMENT")[0]["missing_inputs"])
+    assert any("executable rule APPROVED" in m for m in _by_type(r, "LABOR_RECRUITMENT")[0]["missing_inputs"])
     assert r["run"]["summary"]["proposal_status_counts"] == {"NEEDS_INPUT": 4}
 
 
@@ -589,7 +590,7 @@ def test_approved_metadata_rule_never_calculates_labor_quantity(db):
     (p,) = _by_type(r, "LABOR_RECRUITMENT")
     assert p["calc_status"] == "NEEDS_INPUT" and p["quantity"] is None and p["unit"] == ""
     assert p["calculation_rule_version"] == "LAB1@v1" and p["completeness"] == "PARTIAL"
-    assert any("executable calculation adapter" in m for m in p["missing_inputs"])
+    assert any("executable rule APPROVED" in m for m in p["missing_inputs"])
     assert p["input_snapshot"]["available_baseline"]["total_labor"] == 80 and p["input_snapshot"]["rule"]["parameters"] == {"rate_value": 100, "rate_period": "MONTH"}
     assert p["input_snapshot"]["rule"]["executable"] is False and p["evidence_refs"][0]["rule_code"] == "LAB1"
     assert r["run"]["snapshot"]["approved_rules"][0]["formula_type"] == "GAP_PER_UNIT_RATE"  # metadata được snapshot nhưng không thực thi

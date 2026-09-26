@@ -13,6 +13,7 @@ type Msg = { ok: boolean; text: string } | null;
 interface Options {
   lifecycle_statuses: string[]; scope_types: string[]; metric_codes: string[]; target_kinds: string[]; period_types: string[];
   baseline_bases: Record<string, string[]>; canonical_units: Record<string, string>; proposal_types: string[]; rule_proposal_types: string[];
+  exec_approvable_source_kinds: string[]; exec_blocked_source_kinds: string[]; adapters: { adapter_code: string; adapter_version: string; proposal_type: string; needs_machine_type: boolean; productivity_units: string[]; description: string }[];
 }
 interface Scenario { id: number; scenario_code: string; name: string; description: string; scope_type: string; scope_value: string; owner: string; status: string; allowed_transitions: string[]; versions?: { id: number; version_no: number; status: string; note: string }[] }
 interface Target {
@@ -33,6 +34,13 @@ interface Result {
 interface Proposal {
   id: number; milestone_code: string; proposal_type: string; quantity: number | null; unit: string; rationale: string; calculation_rule_version: string; input_snapshot: Record<string, unknown>;
   evidence_refs: unknown[]; missing_inputs: string[]; completeness: string; calc_status: string; status: string; decision_status: string | null; decision_reason: string;
+  calculation: Record<string, unknown> | null; capacity_impact: CapacityImpact | null;
+}
+interface CapacityImpact { requirement_basis: string; capacity_unit: string; period_type: string; gap_output: number; baseline_capacity: number | null; proposed_increment: number; resulting_capacity: number | null; remaining_gap: number; completeness: string; note: string }
+interface ExecRule {
+  id: number; rule_code: string; rule_version: number; title: string; adapter_code: string; adapter_version: string; proposal_type: string; scope_type: string; scope_value: string; period_type: string;
+  machine_type_code: string | null; productivity_value: number; productivity_unit: string; owner: string; source_kind: string; source_ref: string; effective_from: string | null; effective_to: string | null;
+  assumptions: string; sample_input: Record<string, unknown>; sample_expected: Record<string, unknown>; status: string; executable: boolean; reviewed_by: string; approved_by: string;
 }
 interface RunDetail extends RunRow { engine_version: string; snapshot: Record<string, unknown>; results: Result[]; proposals: Proposal[] }
 interface Rule {
@@ -44,7 +52,7 @@ const STATUS_CLS: Record<string, string> = {
   DRAFT: "bg-slate-500/20 text-slate-500", READY: "pg-adv", REVIEWED: "pg-known", APPROVED: "pg-ok", ARCHIVED: "bg-slate-500/20 text-slate-400",
   CALCULATED: "pg-ok", NEEDS_INPUT: "pg-adv", NOT_APPLICABLE: "bg-slate-500/20 text-slate-400", SELECTED: "pg-known", REJECTED: "bg-red-500/20 text-red-600",
   MISSING_BASELINE: "bg-red-500/20 text-red-600", UNIT_MISMATCH: "bg-red-500/20 text-red-600", SCOPE_MISMATCH: "bg-red-500/20 text-red-600", PARTIAL_SOURCE: "pg-adv",
-  RETIRED: "bg-slate-500/20 text-slate-400",
+  RETIRED: "bg-slate-500/20 text-slate-400", UNDER_REVIEW: "pg-adv",
 };
 const Chip = ({ s }: { s: string }) => <span className={`pg-chip ${STATUS_CLS[s] ?? ""}`}>{s}</span>;
 const PTYPE_LABEL: Record<string, string> = { LABOR_RECRUITMENT: "Tuyển lao động", MACHINE_PURCHASE: "Mua máy", TECHNOLOGY_ADOPTION: "Áp dụng công nghệ", CAPACITY_CHANGE: "Đổi năng lực" };
@@ -73,6 +81,7 @@ export default function Roadmap() {
   const [msg, setMsg] = useState<Msg>(null);
   const [creating, setCreating] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
+  const [execOpen, setExecOpen] = useState(false);
   const load = useCallback(async () => setRows((await api.get<Scenario[]>(`${RES}/scenarios`)).data), []);
   useEffect(() => { api.get<Options>(`${RES}/options`).then((r) => setOpts(r.data)).catch((e) => setMsg({ ok: false, text: errorMessage(e) })); load().catch((e) => setMsg({ ok: false, text: errorMessage(e) })); }, [load]);
   return (
@@ -84,7 +93,8 @@ export default function Roadmap() {
       <Notice msg={msg} />
       <div className="flex flex-wrap items-center gap-2">
         <span className="flex-1" />
-        <button onClick={() => setRulesOpen(true)} className={btn} data-testid="roadmap-rules-open">Rule registry</button>
+        <button onClick={() => setExecOpen(true)} className={btn} data-testid="roadmap-exec-open">Rule thực thi</button>
+        <button onClick={() => setRulesOpen(true)} className={btn} data-testid="roadmap-rules-open">Rule registry (metadata)</button>
         {perm.manage && <button onClick={() => setCreating(true)} className={primary} data-testid="roadmap-scenario-add">+ Scenario</button>}
       </div>
       <div className="grid gap-3 lg:grid-cols-[320px_1fr]">
@@ -101,6 +111,7 @@ export default function Roadmap() {
         <div>{sel !== null && opts ? <ScenarioDetail key={sel} id={sel} opts={opts} perm={perm} onChanged={() => void load()} setMsg={setMsg} /> : <p className="rounded-2xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400">Chọn một scenario để xem version, milestone và kết quả mô phỏng.</p>}</div>
       </div>
       {creating && opts && <ScenarioForm opts={opts} onClose={() => setCreating(false)} onDone={(id) => { setCreating(false); void load(); setSel(id); }} setMsg={setMsg} />}
+      {execOpen && opts && <ExecRulesModal opts={opts} perm={perm} onClose={() => setExecOpen(false)} setMsg={setMsg} />}
       {rulesOpen && opts && <RulesModal opts={opts} perm={perm} onClose={() => setRulesOpen(false)} setMsg={setMsg} />}
     </div>
   );
@@ -381,7 +392,8 @@ function RunResult({ runId, perm, setMsg }: { runId: number; perm: { manage: boo
           <tr key={p.id} className="border-t border-slate-100 align-top" data-testid={`roadmap-proposal-${p.id}`}>
             <td className="px-3 py-1.5 font-mono">{p.milestone_code}</td><td className="px-3">{PTYPE_LABEL[p.proposal_type] ?? p.proposal_type}</td>
             <td className="px-3"><Chip s={p.status} />{p.decision_status && <div className="text-[10px] text-slate-400">tính toán: {p.calc_status}</div>}</td>
-            <td className="px-3 text-right">{p.quantity === null ? <span className="text-slate-400">N/A</span> : `${num(p.quantity)} ${p.unit}`}</td><td className="px-3 font-mono text-[11px]">{p.calculation_rule_version}</td>
+            <td className="px-3 text-right">{p.quantity === null ? <span className="text-slate-400">N/A</span> : `+${num(p.quantity)} ${p.unit}`}{p.quantity !== null && <div className="text-[10px] text-slate-400">tăng thêm để bù gap (không phải tổng nhu cầu)</div>}
+              {p.capacity_impact && <div className="mt-1 text-[10px] text-slate-500" data-testid={`roadmap-capacity-impact-${p.id}`}>Capacity impact ({p.capacity_impact.completeness}): +{num(p.capacity_impact.proposed_increment)} {p.capacity_impact.capacity_unit}/{p.capacity_impact.period_type}; còn lại {num(p.capacity_impact.remaining_gap)}{p.capacity_impact.remaining_gap < 0 ? " (vượt gap do làm tròn)" : ""}; baseline/resulting capacity: chưa xác định</div>}</td><td className="px-3 font-mono text-[11px]">{p.calculation_rule_version}</td>
             <td className="px-3">{p.rationale}{p.missing_inputs.length > 0 && <ul className="list-disc pl-4 text-[11px] text-red-600">{p.missing_inputs.map((m) => <li key={m}>{m}</li>)}</ul>}{p.decision_reason && <div className="text-[11px] text-slate-500">Quyết định: {p.decision_reason}</div>}</td>
             <td className="whitespace-nowrap px-3 text-right">
               <button onClick={() => setDrawer({ title: `Evidence — ${p.proposal_type}`, data: { input_snapshot: p.input_snapshot, evidence_refs: p.evidence_refs, missing_inputs: p.missing_inputs, calculation_rule_version: p.calculation_rule_version } })} className="text-brand hover:underline">Evidence</button>
@@ -429,7 +441,7 @@ function RulesModal({ opts, perm, onClose, setMsg }: { opts: Options; perm: { ma
   };
   return (
     <Modal title="Rule registry — metadata & phê duyệt (chưa thực thi)" onClose={onClose} wide>
-      <p className="text-xs text-slate-500">Task 5 chỉ lưu <b>metadata, evidence, version và trạng thái duyệt</b> của rule. Rule KHÔNG được thực thi: chưa có công thức/adapter tính toán nào được business duyệt, nên proposal Labor/Machine luôn ở trạng thái NEEDS_INPUT dù rule đã APPROVED. Rule APPROVED bất biến — sửa = version mới. Không có rule nào được cấu hình sẵn.</p>
+      <p className="text-xs text-slate-500">Task 5 chỉ lưu <b>metadata, evidence, version và trạng thái duyệt</b> của rule. Rule KHÔNG được thực thi: chưa có công thức/adapter tính toán nào được business duyệt, nên proposal Labor/Machine chỉ tính khi có <b>Rule thực thi</b> riêng (nút "Rule thực thi") được duyệt; rule metadata APPROVED không tự tính. Rule APPROVED bất biến — sửa = version mới. Không có rule nào được cấu hình sẵn.</p>
       <div className="mt-3 max-h-72 overflow-y-auto rounded-xl border border-slate-200">
         <table className="w-full text-xs" data-testid="roadmap-rule-table"><thead><tr><th className={th}>Rule</th><th className={th}>Loại</th><th className={th}>Mô tả (metadata)</th><th className={th}>Căn cứ</th><th className={th}>Trạng thái</th><th /></tr></thead>
           <tbody>{rules.map((r) => (
@@ -456,6 +468,89 @@ function RulesModal({ opts, perm, onClose, setMsg }: { opts: Options; perm: { ma
           <div className="col-span-4 text-right"><button disabled={!d.rule_code.trim()} className={primary} data-testid="roadmap-rule-save" onClick={() => void create()}>+ Tạo rule Draft</button></div>
         </div>
       )}
+    </Modal>
+  );
+}
+
+
+const EXEC_EMPTY = { rule_code: "", adapter_code: "", scope_type: "TOTAL", scope_value: "", period_type: "MONTH", machine_type_code: "", productivity_value: "", owner: "", source_kind: "", source_ref: "", effective_from: "", effective_to: "", assumptions: "", s_gap: "", s_avail: "", s_add: "", s_inc: "", s_rem: "" };
+
+/** Task 6 (Issue #13): executable rule — adapter allowlist (LABOR/MACHINE_GAP_REQUIREMENT_V1), productivity do business khai báo, four-eyes. */
+function ExecRulesModal({ opts, perm, onClose, setMsg }: { opts: Options; perm: { manage: boolean; approve: boolean }; onClose: () => void; setMsg: (m: Msg) => void }) {
+  const [rules, setRules] = useState<ExecRule[]>([]);
+  const [d, setD] = useState({ ...EXEC_EMPTY, adapter_code: opts.adapters[0]?.adapter_code ?? "" });
+  const [drawer, setDrawer] = useState<{ title: string; data: unknown } | null>(null);
+  const load = useCallback(async () => setRules((await api.get<ExecRule[]>(`${RES}/executable-rules`)).data), []);
+  useEffect(() => { load().catch((e) => setMsg({ ok: false, text: errorMessage(e) })); }, [load, setMsg]);
+  const adapter = opts.adapters.find((a) => a.adapter_code === d.adapter_code);
+  const act = async (fn: () => Promise<unknown>, ok: string) => { try { await fn(); setMsg({ ok: true, text: ok }); await load(); } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); } };
+  const isMachine = !!adapter?.needs_machine_type;
+  const create = async () => {
+    const unit = adapter?.productivity_units.find((u) => u.endsWith(`/${d.period_type}`)) ?? "";
+    const prod = Number(d.productivity_value);
+    const sample_input: Record<string, unknown> = { gap_output: Number(d.s_gap), gap_unit: "sp", period_type: d.period_type, productivity_unit: unit, [isMachine ? "productivity_per_machine" : "productivity_per_worker"]: prod, [isMachine ? "available_machines" : "available_labor"]: Number(d.s_avail) };
+    if (isMachine) sample_input.machine_type_code = d.machine_type_code;
+    const sample_expected = { [isMachine ? "required_incremental_machines" : "required_incremental_labor"]: Number(d.s_add), [isMachine ? "additional_machines" : "additional_labor"]: Number(d.s_add), proposed_increment: Number(d.s_inc), remaining_gap_after_proposal: Number(d.s_rem) };
+    await act(async () => {
+      await api.post(`${RES}/executable-rules`, {
+        rule_code: d.rule_code, adapter_code: d.adapter_code, scope_type: d.scope_type, scope_value: d.scope_value, period_type: d.period_type, machine_type_code: isMachine ? d.machine_type_code : undefined,
+        productivity_value: prod, productivity_unit: unit, owner: d.owner, source_kind: d.source_kind, source_ref: d.source_ref, effective_from: d.effective_from || undefined, effective_to: d.effective_to || undefined,
+        assumptions: d.assumptions, sample_input, sample_expected,
+      });
+      setD({ ...EXEC_EMPTY, adapter_code: d.adapter_code });
+    }, "Đã tạo rule thực thi (Draft).");
+  };
+  const showHistory = async (r: ExecRule) => { try { setDrawer({ title: `Lịch sử — ${r.rule_code}@v${r.rule_version}`, data: (await api.get(`${RES}/executable-rules/${r.id}/history`)).data }); } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); } };
+  const verify = async (r: ExecRule) => { try { setDrawer({ title: `Sample calculation — ${r.rule_code}@v${r.rule_version}`, data: (await api.post(`${RES}/executable-rules/${r.id}/verify-sample`)).data }); } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); } };
+  return (
+    <Modal title="Rule thực thi — productivity do business khai báo (adapter allowlist)" onClose={onClose} wide>
+      <p className="text-xs text-slate-500">Chỉ có 2 adapter: <b>LABOR_GAP_REQUIREMENT_V1</b> và <b>MACHINE_GAP_REQUIREMENT_V1</b>. Công thức: <span className="font-mono">tăng thêm = CEIL(gap_output / productivity)</span> — <b>incremental gap</b>, không phải tổng nhu cầu; available labor/machine chỉ là context, không bị trừ. Productivity phải đúng period target (MONTH/YEAR, không quy đổi) và do business khai báo kèm nguồn (IE_APPROVED_STUDY, TIME_MOTION_STUDY, APPROVED_CAPACITY_STUDY, CONTROLLED_PRODUCTION_TRIAL); ESTIMATE/DEFAULT/CLAIMED/BROCHURE/PLACEHOLDER/UNVERIFIED không duyệt được. Quy trình DRAFT → UNDER_REVIEW → APPROVED, người duyệt phải khác người review. Chưa có rule nào được cấu hình sẵn: khi chưa có rule APPROVED, proposal Labor/Machine là NEEDS_INPUT.</p>
+      <div className="mt-3 max-h-80 overflow-y-auto rounded-xl border border-slate-200">
+        <table className="w-full text-xs" data-testid="roadmap-exec-table"><thead><tr><th className={th}>Rule</th><th className={th}>Adapter</th><th className={th}>Scope / kỳ</th><th className={th}>Productivity</th><th className={th}>Hiệu lực</th><th className={th}>Nguồn</th><th className={th}>Trạng thái</th><th /></tr></thead>
+          <tbody>{rules.map((r) => (
+            <tr key={r.id} className="border-t border-slate-100 align-top" data-testid={`roadmap-exec-row-${r.id}`}>
+              <td className="px-3 py-1.5 font-mono">{r.rule_code}@v{r.rule_version}<div className="text-[10px] text-slate-400">{r.owner || "chưa có owner"}</div></td>
+              <td className="px-3 font-mono text-[11px]">{r.adapter_code}{r.machine_type_code ? ` (${r.machine_type_code})` : ""}</td>
+              <td className="px-3">{r.scope_type}{r.scope_value ? `/${r.scope_value}` : ""} · {r.period_type}</td>
+              <td className="px-3">{r.productivity_value} <span className="text-[10px] text-slate-400">{r.productivity_unit}</span></td>
+              <td className="px-3">{r.effective_from ?? "—"} → {r.effective_to ?? "mở"}</td>
+              <td className="px-3">{r.source_kind || "—"}<div className="text-[10px] text-slate-400">{r.source_ref}</div></td>
+              <td className="px-3"><Chip s={r.status} />{r.reviewed_by && <div className="text-[10px] text-slate-400">review: {r.reviewed_by}</div>}{r.approved_by && <div className="text-[10px] text-slate-400">duyệt: {r.approved_by}</div>}</td>
+              <td className="whitespace-nowrap px-3 text-right">
+                <button onClick={() => void verify(r)} className="text-brand hover:underline">Sample</button>
+                <button onClick={() => void showHistory(r)} className="ml-2 text-brand hover:underline">Lịch sử</button>
+                {perm.manage && r.status === "DRAFT" && <button onClick={() => void act(() => api.post(`${RES}/executable-rules/${r.id}/submit-review`), "Đã chuyển UNDER_REVIEW (bạn là reviewer).")} className="ml-2 text-amber-700 hover:underline" data-testid={`roadmap-exec-review-${r.id}`}>Gửi review</button>}
+                {perm.approve && r.status === "UNDER_REVIEW" && <button onClick={() => void act(() => api.post(`${RES}/executable-rules/${r.id}/approve`), "Đã duyệt rule thực thi.")} className="ml-2 text-green-700 hover:underline" data-testid={`roadmap-exec-approve-${r.id}`}>Duyệt</button>}
+                {perm.approve && (r.status === "APPROVED" || r.status === "UNDER_REVIEW") && <button onClick={() => { const reason = window.prompt("Lý do retire rule? (bắt buộc)") ?? ""; if (reason.trim()) void act(() => api.post(`${RES}/executable-rules/${r.id}/retire`, { reason }), "Đã retire rule."); }} className="ml-2 text-red-600 hover:underline">Retire</button>}
+                {perm.manage && (r.status === "APPROVED" || r.status === "RETIRED") && <button onClick={() => void act(() => api.post(`${RES}/executable-rules/${r.id}/new-version`), "Đã tạo version mới (Draft).")} className="ml-2 text-brand hover:underline">Version mới</button>}
+              </td></tr>
+          ))}{rules.length === 0 && <tr><td colSpan={8} className="py-4 text-center text-slate-400">Chưa có rule thực thi nào (đúng: production không seed productivity).</td></tr>}</tbody></table>
+      </div>
+      {perm.manage && (
+        <div className="mt-3 grid grid-cols-4 gap-2 rounded-xl border border-slate-200 p-3">
+          <F label="Mã rule"><input className={inp} value={d.rule_code} onChange={(e) => setD({ ...d, rule_code: e.target.value })} data-testid="roadmap-exec-code" /></F>
+          <F label="Adapter"><select className={inp} value={d.adapter_code} onChange={(e) => setD({ ...d, adapter_code: e.target.value })}>{opts.adapters.map((a) => <option key={a.adapter_code} value={a.adapter_code}>{a.adapter_code}</option>)}</select></F>
+          <F label="Scope"><select className={inp} value={d.scope_type} onChange={(e) => setD({ ...d, scope_type: e.target.value })}>{opts.scope_types.map((t) => <option key={t}>{t}</option>)}</select></F>
+          <F label="Factory (khi FACTORY)"><input className={inp} value={d.scope_value} disabled={d.scope_type !== "FACTORY"} onChange={(e) => setD({ ...d, scope_value: e.target.value })} /></F>
+          <F label="Kỳ (phải khớp kỳ target)"><select className={inp} value={d.period_type} onChange={(e) => setD({ ...d, period_type: e.target.value })}>{opts.period_types.map((t) => <option key={t}>{t}</option>)}</select></F>
+          <F label={`Productivity (${adapter?.productivity_units.find((u) => u.endsWith(`/${d.period_type}`)) ?? "sp/…"})`}><input className={inp} type="number" min="0" value={d.productivity_value} onChange={(e) => setD({ ...d, productivity_value: e.target.value })} data-testid="roadmap-exec-prod" /></F>
+          <F label="Loại máy (Machine adapter)"><input className={inp} value={d.machine_type_code} disabled={!isMachine} onChange={(e) => setD({ ...d, machine_type_code: e.target.value })} /></F>
+          <F label="Owner"><input className={inp} value={d.owner} onChange={(e) => setD({ ...d, owner: e.target.value })} /></F>
+          <F label="Loại nguồn"><select className={inp} value={d.source_kind} onChange={(e) => setD({ ...d, source_kind: e.target.value })}><option value="" />{[...opts.exec_approvable_source_kinds, ...opts.exec_blocked_source_kinds].map((k) => <option key={k} value={k}>{k}{opts.exec_blocked_source_kinds.includes(k) ? " (không duyệt được)" : ""}</option>)}</select></F>
+          <div className="col-span-3"><F label="Source ref (tài liệu/mã nghiên cứu)"><input className={inp} value={d.source_ref} onChange={(e) => setD({ ...d, source_ref: e.target.value })} /></F></div>
+          <F label="Hiệu lực từ"><input className={inp} type="date" value={d.effective_from} onChange={(e) => setD({ ...d, effective_from: e.target.value })} /></F>
+          <F label="Hiệu lực đến (tùy chọn)"><input className={inp} type="date" value={d.effective_to} onChange={(e) => setD({ ...d, effective_to: e.target.value })} /></F>
+          <div className="col-span-2"><F label="Assumptions"><input className={inp} value={d.assumptions} onChange={(e) => setD({ ...d, assumptions: e.target.value })} /></F></div>
+          <div className="col-span-4 text-[11px] font-semibold text-slate-500">Sample calculation (business tự tính tay; adapter chạy lại và phải khớp mới được review/duyệt)</div>
+          <F label="Gap mẫu (sp)"><input className={inp} type="number" value={d.s_gap} onChange={(e) => setD({ ...d, s_gap: e.target.value })} /></F>
+          <F label={isMachine ? "Available machines mẫu" : "Available labor mẫu"}><input className={inp} type="number" value={d.s_avail} onChange={(e) => setD({ ...d, s_avail: e.target.value })} /></F>
+          <F label={isMachine ? "Kỳ vọng: máy tăng thêm" : "Kỳ vọng: lao động tăng thêm"}><input className={inp} type="number" value={d.s_add} onChange={(e) => setD({ ...d, s_add: e.target.value })} /></F>
+          <F label="Kỳ vọng: proposed_increment (sp)"><input className={inp} type="number" value={d.s_inc} onChange={(e) => setD({ ...d, s_inc: e.target.value })} /></F>
+          <F label="Kỳ vọng: remaining_gap (sp, giữ dấu)"><input className={inp} type="number" value={d.s_rem} onChange={(e) => setD({ ...d, s_rem: e.target.value })} /></F>
+          <div className="col-span-3 text-right"><button disabled={!d.rule_code.trim() || !d.productivity_value} className={primary} data-testid="roadmap-exec-save" onClick={() => void create()}>+ Tạo rule Draft</button></div>
+        </div>
+      )}
+      {drawer && <Modal title={drawer.title} onClose={() => setDrawer(null)} wide><J v={drawer.data} /></Modal>}
     </Modal>
   );
 }

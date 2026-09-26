@@ -14,6 +14,9 @@ from app.models.core import User
 from app.models.roadmap import (
     BASELINE_BASES,
     CANONICAL_UNITS,
+    EXEC_APPROVABLE_SOURCE_KINDS,
+    EXEC_BLOCKED_SOURCE_KINDS,
+    EXEC_RULE_STATUSES,
     LIFECYCLE_STATUSES,
     METRIC_CODES,
     PERIOD_TYPES,
@@ -25,6 +28,8 @@ from app.models.roadmap import (
     TECH_LINK_TYPES,
 )
 from app.services import roadmap as rm
+from app.services import roadmap_adapters as ad
+from app.services import roadmap_exec_rules as xr
 from app.services import roadmap_baseline as rb
 from app.services import roadmap_engine as eng
 
@@ -44,7 +49,9 @@ def _need_approve(user: User, what: str) -> None:
 def options(_: User = View):
     return {"lifecycle_statuses": list(LIFECYCLE_STATUSES), "scope_types": list(SCOPE_TYPES), "metric_codes": list(METRIC_CODES), "target_kinds": list(TARGET_KINDS),
             "period_types": list(PERIOD_TYPES), "baseline_bases": {k: list(v) for k, v in BASELINE_BASES.items()}, "canonical_units": CANONICAL_UNITS,
-            "proposal_types": list(PROPOSAL_TYPES), "rule_proposal_types": list(RULE_PROPOSAL_TYPES), "proposal_decisions": list(PROPOSAL_DECISIONS), "tech_link_types": list(TECH_LINK_TYPES)}
+            "proposal_types": list(PROPOSAL_TYPES), "rule_proposal_types": list(RULE_PROPOSAL_TYPES), "proposal_decisions": list(PROPOSAL_DECISIONS), "tech_link_types": list(TECH_LINK_TYPES),
+            "exec_rule_statuses": list(EXEC_RULE_STATUSES), "exec_approvable_source_kinds": list(EXEC_APPROVABLE_SOURCE_KINDS),
+            "exec_blocked_source_kinds": list(EXEC_BLOCKED_SOURCE_KINDS), "adapters": [a.contract() for a in ad.ADAPTERS.values()]}
 
 
 # ------------------------------------------------------------------ scenario
@@ -283,3 +290,78 @@ class RetireBody(BaseModel):
 def retire_rule(rule_id: int, body: RetireBody, db: Session = Depends(get_db), user: User = Manage):
     _need_approve(user, "retire rule")
     return rm.rule_view(rm.retire_rule(db, user, rule_id, body.reason))
+
+
+# ------------------------------------------------------------------ executable rules (Task 6)
+class ExecRuleBody(BaseModel):
+    rule_code: str | None = Field(None, max_length=40)
+    title: str | None = Field(None, max_length=200)
+    adapter_code: str | None = Field(None, max_length=40)
+    metadata_rule_id: int | None = None
+    scope_type: str | None = None
+    scope_value: str | None = Field(None, max_length=20)
+    period_type: str | None = None
+    machine_type_code: str | None = Field(None, max_length=20)
+    productivity_value: float | None = None
+    productivity_unit: str | None = Field(None, max_length=30)
+    owner: str | None = Field(None, max_length=100)
+    source_kind: str | None = Field(None, max_length=30)
+    source_ref: str | None = Field(None, max_length=300)
+    effective_from: str | None = None
+    effective_to: str | None = None
+    assumptions: str | None = Field(None, max_length=500)
+    sample_input: dict | None = None
+    sample_expected: dict | None = None
+
+
+@router.get("/executable-rules")
+def list_exec_rules(proposal_type: str = "", status: str = "", db: Session = Depends(get_db), _: User = View):
+    return [xr.rule_view(r) for r in xr.list_rules(db, proposal_type, status)]
+
+
+@router.post("/executable-rules")
+def create_exec_rule(body: ExecRuleBody, db: Session = Depends(get_db), user: User = Manage):
+    return xr.rule_view(xr.create_rule(db, user, body.model_dump(exclude_unset=True)))
+
+
+@router.get("/executable-rules/{rule_id}")
+def get_exec_rule(rule_id: int, db: Session = Depends(get_db), _: User = View):
+    return xr.rule_view(xr.get_rule(db, rule_id))
+
+
+@router.put("/executable-rules/{rule_id}")
+def update_exec_rule(rule_id: int, body: ExecRuleBody, db: Session = Depends(get_db), user: User = Manage):
+    return xr.rule_view(xr.update_rule(db, user, rule_id, body.model_dump(exclude_unset=True)))
+
+
+@router.post("/executable-rules/{rule_id}/new-version")
+def new_exec_rule_version(rule_id: int, db: Session = Depends(get_db), user: User = Manage):
+    return xr.rule_view(xr.new_version(db, user, rule_id))
+
+
+@router.post("/executable-rules/{rule_id}/submit-review")
+def submit_exec_rule_review(rule_id: int, db: Session = Depends(get_db), user: User = Manage):
+    return xr.rule_view(xr.submit_review(db, user, rule_id))
+
+
+@router.post("/executable-rules/{rule_id}/verify-sample")
+def verify_exec_rule_sample(rule_id: int, db: Session = Depends(get_db), _: User = View):
+    return xr.verify_sample(xr.get_rule(db, rule_id))
+
+
+@router.post("/executable-rules/{rule_id}/approve")
+def approve_exec_rule(rule_id: int, db: Session = Depends(get_db), user: User = Manage):
+    _need_approve(user, "duyệt executable rule")
+    return xr.rule_view(xr.approve_rule(db, user, rule_id))
+
+
+@router.post("/executable-rules/{rule_id}/retire")
+def retire_exec_rule(rule_id: int, body: RetireBody, db: Session = Depends(get_db), user: User = Manage):
+    _need_approve(user, "retire executable rule")
+    return xr.rule_view(xr.retire_rule(db, user, rule_id, body.reason))
+
+
+@router.get("/executable-rules/{rule_id}/history")
+def exec_rule_history(rule_id: int, db: Session = Depends(get_db), _: User = View):
+    xr.get_rule(db, rule_id)
+    return rm.list_history(db, "EXEC_RULE", rule_id)

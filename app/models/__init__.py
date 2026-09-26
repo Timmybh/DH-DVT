@@ -30,6 +30,7 @@ from app.models.technology_process import TechnologyProcess, TechnologyProcessOp
 from app.models.erp_sync import MachineCrosswalk, TechProcessSyncException
 from app.models.tech_compatibility import OperationMachineCompatibility
 from app.models.roadmap import (
+    RoadmapExecutableRule,
     RoadmapMilestone,
     RoadmapProposal,
     RoadmapProposalDecisionHistory,
@@ -104,6 +105,7 @@ __all__ = [
     "RoadmapProposal",
     "RoadmapProposalDecisionHistory",
     "RoadmapRule",
+    "RoadmapExecutableRule",
     "RoadmapRun",
     "RoadmapRunTargetResult",
     "RoadmapScenario",
