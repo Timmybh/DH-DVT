@@ -357,6 +357,7 @@ def submit_review(db: Session, user: User, version_id: int) -> RoadmapActionPlan
     v = get_version(db, version_id)
     if v.status != "DRAFT":
         raise _bad(f"Chỉ chuyển UNDER_REVIEW từ DRAFT (hiện {v.status})", 409)
+    _ensure_scenario_open(db, get_plan(db, v.plan_id))
     items = version_items(db, v.id)
     if not items:
         raise _bad("Action Plan cần ít nhất 1 item")
@@ -376,6 +377,7 @@ def approve(db: Session, user: User, version_id: int) -> RoadmapActionPlanVersio
     v = get_version(db, version_id)
     if v.status != "UNDER_REVIEW":
         raise _bad(f"Chỉ duyệt được Action Plan UNDER_REVIEW (hiện {v.status})", 409)
+    _ensure_scenario_open(db, get_plan(db, v.plan_id))
     if not v.reviewed_by or v.reviewed_by == user.username:
         raise _bad("Four-eyes: người duyệt (approver) phải khác người đã đưa vào review (reviewer)", 409)
     run = db.get(RoadmapRun, v.source_run_id)

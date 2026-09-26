@@ -467,3 +467,36 @@ def test_scenario_archived_blocks_action_plan_changes(pdb):
         ap.add_item(pdb, ADMIN, pv.id, {"proposal_id": _pick(run, "LABOR_RECRUITMENT", "M1", "LAB-A@v1")["id"], "planned_effective_date": "2026-08-20"})
     with pytest.raises(HTTPException):
         _plan(pdb, run, "X")
+
+
+def _add_labor(db, run, pv):
+    return ap.add_item(db, ADMIN, pv.id, {"proposal_id": _pick(run, "LABOR_RECRUITMENT", "M1", "LAB-A@v1")["id"], "planned_effective_date": "2026-08-20"})
+
+
+def test_archived_scenario_blocks_submit_review_and_approve_but_not_archive(pdb):
+    s, _v, run = _setup(pdb)
+    d = _plan(pdb, run, "DRAFT-PLAN")
+    _add_labor(pdb, run, d)
+    r = _plan(pdb, run, "REVIEW-PLAN")
+    _add_labor(pdb, run, r)
+    ap.submit_review(pdb, ADMIN, r.id)  # UNDER_REVIEW trước khi Scenario bị ARCHIVED
+    a = _plan(pdb, run, "APPROVED-PLAN")
+    _add_labor(pdb, run, a)
+    _submit_approve(pdb, a)
+    rm.transition_scenario(pdb, ADMIN, s.id, "ARCHIVED", "kết thúc")
+    with pytest.raises(HTTPException) as e:  # 1) DRAFT -> UNDER_REVIEW
+        ap.submit_review(pdb, ADMIN, d.id)
+    assert e.value.status_code == 409 and ap.get_version(pdb, d.id).status == "DRAFT"
+    with pytest.raises(HTTPException) as e:  # 2) UNDER_REVIEW -> APPROVED
+        ap.approve(pdb, ADMIN2, r.id)
+    assert e.value.status_code == 409 and ap.get_version(pdb, r.id).status == "UNDER_REVIEW"
+    assert ap.archive(pdb, ADMIN2, a.id, "dọn dẹp").status == "ARCHIVED"  # 3) vẫn đóng được plan APPROVED
+    # 4) guard cũ vẫn giữ
+    with pytest.raises(HTTPException):
+        _add_labor(pdb, run, d)
+    with pytest.raises(HTTPException):
+        ap.update_item(pdb, ADMIN, ap.version_items(pdb, d.id)[0].id, {"selected_quantity": 1})
+    with pytest.raises(HTTPException):
+        ap.new_version(pdb, ADMIN, a.id)
+    with pytest.raises(HTTPException):
+        _plan(pdb, run, "X")
