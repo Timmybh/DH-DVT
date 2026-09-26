@@ -179,12 +179,12 @@ function ScenarioDetail({ id, opts, perm, onChanged, setMsg }: { id: number; opt
           </>
         )}
       </div>
-      {versionId !== null ? <VersionPanel key={versionId} versionId={versionId} opts={opts} perm={perm} onChanged={() => { void load(); onChanged(); }} setMsg={setMsg} /> : <p className="text-sm text-slate-400">Scenario chưa có version. Tạo version để nhập milestone/target.</p>}
+      {versionId !== null ? <VersionPanel key={versionId} versionId={versionId} opts={opts} perm={s.status === "ARCHIVED" ? { ...perm, manage: false, run: false, archived: true } : perm} onChanged={() => { void load(); onChanged(); }} setMsg={setMsg} /> : <p className="text-sm text-slate-400">Scenario chưa có version. Tạo version để nhập milestone/target.</p>}
     </div>
   );
 }
 
-function VersionPanel({ versionId, opts, perm, onChanged, setMsg }: { versionId: number; opts: Options; perm: { manage: boolean; run: boolean; approve: boolean }; onChanged: () => void; setMsg: (m: Msg) => void }) {
+function VersionPanel({ versionId, opts, perm, onChanged, setMsg }: { versionId: number; opts: Options; perm: { manage: boolean; run: boolean; approve: boolean; archived?: boolean }; onChanged: () => void; setMsg: (m: Msg) => void }) {
   const [v, setV] = useState<Version | null>(null);
   const [runs, setRuns] = useState<RunRow[]>([]);
   const [runId, setRunId] = useState<number | null>(null);
@@ -356,7 +356,7 @@ function TargetForm({ milestone, version, opts, onClose, onDone, setMsg }: { mil
   );
 }
 
-function RunResult({ runId, perm, setMsg }: { runId: number; perm: { manage: boolean; approve?: boolean }; setMsg: (m: Msg) => void }) {
+function RunResult({ runId, perm, setMsg }: { runId: number; perm: { manage: boolean; approve?: boolean; archived?: boolean }; setMsg: (m: Msg) => void }) {
   const [r, setR] = useState<RunDetail | null>(null);
   const [drawer, setDrawer] = useState<{ title: string; data: unknown } | null>(null);
   const load = useCallback(async () => setR((await api.get<RunDetail>(`${RES}/runs/${runId}`)).data), [runId]);
@@ -408,7 +408,7 @@ function RunResult({ runId, perm, setMsg }: { runId: number; perm: { manage: boo
             </td>
           </tr>
         ))}</tbody></table></div>
-      <ActionPlanPanel runId={r.id} proposals={r.proposals} perm={{ manage: perm.manage, approve: !!perm.approve }} setMsg={setMsg} />
+      <ActionPlanPanel runId={r.id} proposals={r.proposals} perm={{ manage: perm.manage, approve: !!perm.approve, archived: !!perm.archived }} setMsg={setMsg} />
       {drawer && <Modal title={drawer.title} onClose={() => setDrawer(null)} wide><J v={drawer.data} /></Modal>}
     </div>
   );
@@ -579,7 +579,7 @@ interface ApDetail extends ApVersionRow {
 }
 
 /** Task 7 (Issue #15): Action Plan theo milestone — user chọn thủ công; coverage OUTPUT_QTY tách theo proposal_type (không cộng chéo labor+machine). Không optimizer/ranking, không thực thi mua/tuyển. */
-function ActionPlanPanel({ runId, proposals, perm, setMsg }: { runId: number; proposals: Proposal[]; perm: { manage: boolean; approve: boolean }; setMsg: (m: Msg) => void }) {
+function ActionPlanPanel({ runId, proposals, perm, setMsg }: { runId: number; proposals: Proposal[]; perm: { manage: boolean; approve: boolean; archived?: boolean }; setMsg: (m: Msg) => void }) {
   const [plans, setPlans] = useState<ApPlan[]>([]);
   const [sel, setSel] = useState<number | null>(null);
   const [det, setDet] = useState<ApDetail | null>(null);
@@ -615,7 +615,7 @@ function ActionPlanPanel({ runId, proposals, perm, setMsg }: { runId: number; pr
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <b>{det.action_plan_code} v{det.version_no}</b><Chip s={det.status} /><span className="text-slate-400">{det.reviewed_by && `review: ${det.reviewed_by}`} {det.approved_by && `· duyệt: ${det.approved_by}`} · coverage {det.coverage_frozen ? "đã đóng băng" : "preview (tính từ snapshot)"}</span><span className="flex-1" />
             {perm.manage && det.status === "DRAFT" && <button className={btn} onClick={() => void act(() => api.post(`${RES}/action-plan-versions/${det.id}/submit-review`), "Đã chuyển UNDER_REVIEW (bạn là reviewer).")} data-testid="roadmap-ap-review">Gửi review</button>}
-            {perm.approve && det.status === "UNDER_REVIEW" && <button className={primary} onClick={() => void act(() => api.post(`${RES}/action-plan-versions/${det.id}/approve`), "Đã duyệt Action Plan (không thực thi mua/tuyển).")} data-testid="roadmap-ap-approve">Duyệt</button>}
+            {perm.approve && !perm.archived && det.status === "UNDER_REVIEW" && <button className={primary} onClick={() => void act(() => api.post(`${RES}/action-plan-versions/${det.id}/approve`), "Đã duyệt Action Plan (không thực thi mua/tuyển).")} data-testid="roadmap-ap-approve">Duyệt</button>}
             {perm.approve && det.status === "APPROVED" && <button className={btn} onClick={() => { const reason = window.prompt("Lý do archive? (bắt buộc)") ?? ""; if (reason.trim()) void act(() => api.post(`${RES}/action-plan-versions/${det.id}/archive`, { reason }), "Đã archive."); }}>Archive</button>}
             {perm.manage && (det.status === "APPROVED" || det.status === "ARCHIVED") && <button className={btn} onClick={() => void act(async () => { const v = (await api.post<ApDetail>(`${RES}/action-plan-versions/${det.id}/new-version`)).data; setSel(v.id); }, "Đã tạo version mới (Draft, giữ nguyên source run).")}>Version mới</button>}
             <select className={`${inp} !w-44`} value="" onChange={(e) => { if (e.target.value) void compare(Number(e.target.value)); }}><option value="">So sánh với…</option>{allVersions.filter((v) => v.id !== det.id).map((v) => <option key={v.id} value={v.id}>{v.action_plan_code} v{v.version_no}</option>)}</select>
@@ -767,7 +767,7 @@ interface PkgDetail extends PkgRow {
 }
 
 /** Task 8: Executive Decision Package của một Action Plan version APPROVED. Bind evidence do user chọn; không auto-pick, không grand total, không ranking. */
-function DecisionPackagePanel({ apVersionId, items, perm, setMsg }: { apVersionId: number; items: ApItem[]; perm: { manage: boolean; approve: boolean }; setMsg: (m: Msg) => void }) {
+function DecisionPackagePanel({ apVersionId, items, perm, setMsg }: { apVersionId: number; items: ApItem[]; perm: { manage: boolean; approve: boolean; archived?: boolean }; setMsg: (m: Msg) => void }) {
   const [pkgs, setPkgs] = useState<PkgRow[]>([]);
   const [sel, setSel] = useState<number | null>(null);
   const [det, setDet] = useState<PkgDetail | null>(null);
@@ -797,7 +797,7 @@ function DecisionPackagePanel({ apVersionId, items, perm, setMsg }: { apVersionI
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <b>{det.package_code}</b><Chip s={det.status} /><Chip s={s.completeness.pricing} /><span className="text-slate-400">{det.frozen ? `đóng băng · fp ${det.package_fingerprint}` : "preview (tính lại từ evidence hiện tại)"} · {s.completeness.priced_action_count}/{s.completeness.supported_action_count} action đã định giá · {s.completeness.unresolved_count} unresolved</span><span className="flex-1" />
             {perm.manage && det.status === "DRAFT" && <button className={btn} onClick={() => void act(() => api.post(`${RES}/decision-packages/${det.id}/submit-review`), "Đã đóng băng & chuyển UNDER_REVIEW (bạn là reviewer).")} data-testid="roadmap-pkg-review">Gửi review (đóng băng)</button>}
-            {perm.approve && det.status === "UNDER_REVIEW" && <button className={primary} onClick={() => void act(() => api.post(`${RES}/decision-packages/${det.id}/approve`), "Đã duyệt package (không thực thi mua/tuyển).")} data-testid="roadmap-pkg-approve">Duyệt</button>}
+            {perm.approve && !perm.archived && det.status === "UNDER_REVIEW" && <button className={primary} onClick={() => void act(() => api.post(`${RES}/decision-packages/${det.id}/approve`), "Đã duyệt package (không thực thi mua/tuyển).")} data-testid="roadmap-pkg-approve">Duyệt</button>}
             {perm.approve && det.status === "APPROVED" && <button className={btn} onClick={() => { const reason = window.prompt("Lý do archive? (bắt buộc)") ?? ""; if (reason.trim()) void act(() => api.post(`${RES}/decision-packages/${det.id}/archive`, { reason }), "Đã archive."); }}>Archive</button>}
             <select className={`${inp} !w-44`} value="" onChange={(e) => { if (e.target.value) void compare(Number(e.target.value)); }}><option value="">So sánh với…</option>{pkgs.filter((p) => p.id !== det.id).map((p) => <option key={p.id} value={p.id}>{p.package_code}</option>)}</select>
           </div>
