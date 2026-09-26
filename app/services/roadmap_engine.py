@@ -4,8 +4,9 @@ Nguyên tắc đã chốt (GPT Issue #11):
 - Run CHỈ trên version READY/REVIEWED (khóa từ READY); Run IMMUTABLE, snapshot đầy đủ; cùng input => trả run cũ (no-op).
 - gap = effective_target - baseline (không clamp). INCREMENT: effective_target = baseline + increment. Không đổi unit ngầm.
 - Thiếu/không khớp => trạng thái minh bạch (NEEDS_INPUT / MISSING_BASELINE / UNIT_MISMATCH / SCOPE_MISMATCH / PARTIAL_SOURCE), KHÔNG fallback.
-- Proposal: Task 5 KHÔNG thực thi công thức nghiệp vụ nào (rule registry chỉ metadata, chưa có executable calculation adapter được duyệt):
-  LABOR_RECRUITMENT / MACHINE_PURCHASE / CAPACITY_CHANGE luôn NEEDS_INPUT (không quantity); TECHNOLOGY_ADOPTION chỉ link/snapshot evidence;
+- Proposal: chỉ THỰC THI khi có executable rule APPROVED (Task 6, allowlist LABOR/MACHINE_GAP_REQUIREMENT_V1 — INCREMENTAL GAP, không total requirement,
+  không trừ available, không quy đổi period, productivity do business khai báo). Không có rule hiệu lực => NEEDS_INPUT (không quantity).
+  Rule metadata (Task 5) vẫn chỉ là registry, không thực thi. CAPACITY_CHANGE luôn NEEDS_INPUT; TECHNOLOGY_ADOPTION chỉ link/snapshot evidence;
   revenue gap KHÔNG suy ra labor/machine/capacity; không rank/score, không auto SELECTED.
 - Fingerprint = version inputs + baseline VALUES + source identity + rule versions + tech/evidence + resource baselines; timestamp/sync_run_id
   chỉ là evidence (không vào hash).
@@ -39,10 +40,12 @@ from app.models.roadmap import (
 )
 from app.models.technology_process import TechnologyProcess, TechnologyProcessVersion
 from app.services import roadmap as rm
+from app.services import roadmap_adapters as ad
 from app.services import roadmap_baseline as rb
+from app.services import roadmap_exec_rules as xr
 from app.services.audit import write_audit
 
-ENGINE_VERSION = "RM_ENGINE_V1"
+ENGINE_VERSION = "RM_ENGINE_V2"  # V2 (Task 6): executable adapter LABOR/MACHINE_GAP_REQUIREMENT_V1 (incremental gap)
 
 
 def _iso(v):
@@ -145,7 +148,71 @@ def _proposal(r: dict, ptype: str, status: str, rationale: str, *, quantity=None
             "missing_inputs_json": missing or [], "completeness": completeness, "calc_status": status}
 
 
-def build_proposals(r: dict, tech: list[dict], rules: list[RoadmapRule], labor: dict | None, machine: dict | None) -> list[dict]:
+def _capacity_impact(gap: float, out: dict, period_type: str) -> dict:
+    """Task 6: baseline/resulting capacity = NULL (chưa có relation được duyệt); KHÔNG utilization/bottleneck."""
+    return {"requirement_basis": ad.REQUIREMENT_BASIS, "capacity_unit": "sp", "period_type": period_type, "gap_output": gap, "baseline_capacity": None,
+            "proposed_increment": out["proposed_increment"], "resulting_capacity": None, "remaining_gap": out["remaining_gap_after_proposal"], "completeness": "PARTIAL",
+            "note": "baseline/resulting capacity chưa xác định: chưa có approved relation giữa available resource và baseline output"}
+
+
+def _exec_lines(r: dict, pt: str, xrules: list, labor: dict | None, machine_avail: dict) -> list[dict] | None:
+    """Mỗi executable rule APPROVED (scope exact, hiệu lực tại milestone.target_date) = một dòng; không tie-break/rank. None nếu không có rule nào liên quan."""
+    scope = (r["scope_type"], r["scope_value"])
+    cand = [x for x in xrules if x.proposal_type == pt and (x.scope_type, x.scope_value) == scope and xr.is_effective(x, r["milestone_date"])]
+    if not cand:
+        return None
+    out: list[dict] = []
+    for x in cand:
+        a = ad.get_adapter(x.adapter_code)
+        ref = {"type": "EXECUTABLE_RULE", "rule_code": x.rule_code, "rule_version": x.rule_version, "adapter_code": x.adapter_code, "adapter_version": x.adapter_version,
+               "source_kind": x.source_kind, "source_ref": x.source_ref}
+        if a.needs_machine_type:
+            av = machine_avail.get(x.machine_type_code)
+            avail_val = av["available_machines"] if av else None
+            avail_missing = f"available machines (machine_capacities ACTIVE, loại máy {x.machine_type_code}, scope {r['scope_type']}/{r['scope_value'] or 'TOTAL'})"
+        else:
+            av = labor
+            avail_val = labor["total_labor"] if labor else None
+            avail_missing = "available labor (labor_standards ACTIVE theo scope)"
+        snap = {"gap": r["gap"], "gap_unit": "sp", "period_type": r["period_type"], "available_baseline": av, "executable_rule": xr.snapshot(x), "requirement_basis": ad.REQUIREMENT_BASIS}
+        missing: list[str] = []
+        if x.period_type != r["period_type"]:
+            snap["flags"] = ["PERIOD_MISMATCH"]
+            missing.append(f"PERIOD_MISMATCH: rule {x.rule_code}@v{x.rule_version} khai productivity theo {x.period_type} nhưng target theo {r['period_type']} — không quy đổi period; cần rule đúng {r['period_type']}")
+        if avail_val is None:
+            missing.append(avail_missing)
+        if missing:
+            out.append(_proposal(r, pt, "NEEDS_INPUT", f"Rule {x.rule_code}@v{x.rule_version} hiệu lực nhưng thiếu/lệch input: {'; '.join(missing)}", rule=x, inputs=snap,
+                                 refs=[ref], missing=missing, completeness="PARTIAL"))
+            continue
+        inp = {"gap_output": r["gap"], "gap_unit": "sp", "period_type": r["period_type"], a.productivity_key: x.productivity_value, "productivity_unit": x.productivity_unit,
+               a.available_key: avail_val}
+        if a.needs_machine_type:
+            inp["machine_type_code"] = x.machine_type_code
+        try:
+            res = a.run(inp)
+        except ad.AdapterInputError as e:
+            snap["adapter_error"] = {"code": e.code, "message": str(e)}
+            out.append(_proposal(r, pt, "NEEDS_INPUT", f"Rule {x.rule_code}@v{x.rule_version}: input không hợp lệ cho adapter ({e.code}): {e}", rule=x, inputs=snap, refs=[ref],
+                                 missing=[f"{e.code}: {e}"], completeness="PARTIAL"))
+            continue
+        snap["adapter_input"], snap["adapter_output"] = inp, res
+        snap["capacity_impact"] = _capacity_impact(r["gap"], res, r["period_type"])
+        qty = res["additional_machines" if a.needs_machine_type else "additional_labor"]
+        out.append(_proposal(r, pt, "CALCULATED",
+                             f"{x.adapter_code}: CEIL({r['gap']:g} / {x.productivity_value:g}) = {qty} {a.resource} tăng thêm để bù gap (INCREMENTAL_GAP; không phải tổng nhu cầu; available chỉ là context).",
+                             quantity=float(qty), unit=a.resource, rule=x, inputs=snap, refs=[ref], missing=[], completeness="COMPLETE"))
+    return out
+
+
+def relevant_exec_rules(xrules: list, results: list[dict]) -> list:
+    """Chỉ rule có thể ảnh hưởng >=1 proposal của run: OUTPUT_QTY CALCULATED gap>0, scope exact, hiệu lực tại milestone.target_date (period lệch vẫn relevant vì tạo dòng NEEDS_INPUT)."""
+    live = [r for r in results if r["metric_code"] == "OUTPUT_QTY" and r["result_status"] == "CALCULATED" and r["gap"] is not None and r["gap"] > 0]
+    return [x for x in xrules if any((x.scope_type, x.scope_value) == (r["scope_type"], r["scope_value"]) and xr.is_effective(x, r["milestone_date"]) for r in live)]
+
+
+def build_proposals(r: dict, tech: list[dict], rules: list[RoadmapRule], labor: dict | None, machine: dict | None, xrules: list | None = None,
+                    machine_avail: dict | None = None) -> list[dict]:
     out: list[dict] = []
     trefs = _tech_refs(tech)
     tech_missing = ["approved technology impact formula (Task 5 không dùng claimed evidence thành numeric uplift)"] + ([] if tech else ["chưa liên kết Future Technology / Technology Process nào"])
@@ -175,17 +242,21 @@ def build_proposals(r: dict, tech: list[dict], rules: list[RoadmapRule], labor: 
 
     # OUTPUT_QTY, gap dương — Task 5 KHÔNG có executable calculation adapter nào: LABOR/MACHINE luôn NEEDS_INPUT, không quantity
     for pt, baseline, bname in (("LABOR_RECRUITMENT", labor, "labor_standards"), ("MACHINE_PURCHASE", machine, "machine_capacities")):
+        lines = _exec_lines(r, pt, xrules or [], labor, machine_avail or {})
+        if lines is not None:  # có executable rule hiệu lực => các dòng thực thi thay cho dòng metadata
+            out.extend(lines)
+            continue
         cand = [x for x in rules if x.proposal_type == pt]
         base_inputs = {"gap": r["gap"], "gap_unit": "sp", "available_baseline": baseline}
         if not cand:
-            out.append(_proposal(r, pt, "NEEDS_INPUT", f"Chưa có rule {pt} nào được APPROVED trong registry — không tự bịa công thức.",
-                                 missing=["approved calculation rule", "approved executable calculation adapter/formula", "capacity/output relationship", "productivity basis"], inputs=base_inputs))
+            out.append(_proposal(r, pt, "NEEDS_INPUT", f"Chưa có executable rule {pt} nào APPROVED, đúng scope và còn hiệu lực tại {r['milestone_date']} — không tự bịa công thức.",
+                                 missing=["executable rule APPROVED (đúng scope, hiệu lực tại milestone.target_date)", "productivity do business khai báo & duyệt"], inputs=base_inputs))
             continue
         for rule in cand:  # mỗi rule APPROVED (metadata) = một dòng, KHÔNG thực thi, KHÔNG chọn/rank
             out.append(_proposal(r, pt, "NEEDS_INPUT",
-                                 f"Rule {rule.rule_code}@v{rule.rule_version} đã APPROVED ở mức metadata nhưng chưa có executable calculation adapter/formula được duyệt — Task 5 không tính quantity.",
+                                 f"Rule {rule.rule_code}@v{rule.rule_version} chỉ APPROVED ở mức metadata (không thực thi). Cần executable rule riêng được duyệt, đúng scope và còn hiệu lực.",
                                  rule=rule, inputs={**base_inputs, "rule": _rule_snapshot(rule)}, refs=[{"type": "RULE", "rule_code": rule.rule_code, "rule_version": rule.rule_version, "basis_note": rule.basis_note}],
-                                 missing=[f"approved executable calculation adapter/formula cho rule {rule.rule_code}@v{rule.rule_version} (Task 5 chỉ lưu metadata)"], completeness="PARTIAL"))
+                                 missing=[f"executable rule APPROVED (đúng scope, hiệu lực) — rule {rule.rule_code}@v{rule.rule_version} chỉ là metadata"], completeness="PARTIAL"))
     out.append(_proposal(r, "CAPACITY_CHANGE", "NEEDS_INPUT", "Chưa có approved capacity-change rule; không diễn giải thành đổi ca/OT/tuyển người/mua máy.",
                          missing=["approved capacity-change rule"], inputs={"gap": r["gap"], "unit": "sp"}))
     out.append(tech_prop())
@@ -224,17 +295,23 @@ def run_simulation(db: Session, user: User, version_id: int) -> dict:
     tech = technology_snapshot(db, v)
     rules = _approved_rules(db)
     labor, machine = rb.labor_baseline(db, v.scope_type, v.scope_value), rb.machine_baseline(db, v.scope_type, v.scope_value)
+    xrules = relevant_exec_rules(xr.approved_rules(db), results)
+    machine_avail = {mt: rb.machine_available(db, v.scope_type, v.scope_value, mt) for mt in sorted({x.machine_type_code for x in xrules if x.machine_type_code})}
     proposals: list[dict] = []
     for r in results:
-        proposals.extend(build_proposals(r, tech, rules, labor, machine))
+        proposals.extend(build_proposals(r, tech, rules, labor, machine, xrules, machine_avail))
 
+    fp_types = set(machine_avail) | {x.machine_type_code for x in rules if x.machine_type_code}  # loại máy của rule relevant (executable) + rule metadata APPROVED
     fingerprint = _hash({
         "engine": ENGINE_VERSION,
         "scope": [v.scope_type, v.scope_value],
         "results": [_canonical_result(r) for r in results],
         "technology": _core_tech(tech),
         "rules": [_rule_snapshot(x) for x in rules],
-        "resources": {"labor": labor, "machine": machine},
+        # machine baseline chỉ tính loại máy thuộc rule relevant (tồn kho loại máy không liên quan không được làm đổi run); phần hiển thị vẫn nằm trong snapshot
+        "resources": {"labor": labor, "machine": {"by_machine_type": {t: n for t, n in ((machine or {}).get("by_machine_type") or {}).items() if t in fp_types}}},
+        "executable_rules": [xr.snapshot(x) for x in xrules],
+        "machine_availability": machine_avail,
     })
     existing = db.query(RoadmapRun).filter_by(version_id=v.id, run_fingerprint=fingerprint).first()
     if existing:
@@ -252,7 +329,8 @@ def run_simulation(db: Session, user: User, version_id: int) -> dict:
     snapshot = {
         "engine_version": ENGINE_VERSION, "version": version_snap, "source_freshness": rb.source_freshness(db), "data_quality_flags": flags,
         "resource_baselines": {"labor": labor, "machine": machine, "capacity_definitions_note": "capacity_definitions chỉ tham chiếu, KHÔNG cộng thô thành baseline (guardrail Issue #11)"},
-        "technology_links": tech, "approved_rules": [_rule_snapshot(x) for x in rules], "missing_inputs": sorted({m for r in results for m in r["missing_inputs_json"]}),
+        "technology_links": tech, "approved_rules": [_rule_snapshot(x) for x in rules],
+        "executable_rules": [xr.snapshot(x) for x in xrules], "machine_availability": machine_avail, "missing_inputs": sorted({m for r in results for m in r["missing_inputs_json"]}),
     }
     summary = {"completeness": completeness, "target_result_counts": counts, "proposal_status_counts": pcounts, "target_count": len(results), "proposal_count": len(proposals), "data_quality_flags": flags}
 
@@ -307,6 +385,7 @@ def proposal_view(p: RoadmapProposal) -> dict:
         "scope_value": p.scope_value, "quantity": p.quantity, "unit": p.unit, "rationale": p.rationale, "calculation_rule_code": p.calculation_rule_code,
         "calculation_rule_version": p.calculation_rule_version, "input_snapshot": p.input_snapshot_json, "evidence_refs": p.evidence_refs_json, "missing_inputs": p.missing_inputs_json,
         "completeness": p.completeness, "calc_status": p.calc_status, "status": p.decision_status or p.calc_status, "decision_status": p.decision_status,
+        "calculation": (p.input_snapshot_json or {}).get("adapter_output"), "capacity_impact": (p.input_snapshot_json or {}).get("capacity_impact"),
         "decision_reason": p.decision_reason, "decision_by": p.decision_by, "decision_at": _iso(p.decision_at),
     }
 
