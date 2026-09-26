@@ -2,7 +2,7 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_perm
@@ -11,6 +11,7 @@ from app.models.core import User
 from app.models.resources import LaborStandard, ProductivityGrade, CapacityDefinition, MachineCapacity, MachineMaintenance, MachineRequirement, MachineSharedPool, MachineSharing, MachineStyleOutput, MachineType, StyleSam
 from app.services import labor_grade_service as lg
 from app.services import resource_service as svc
+from app.services import style_price_service as sp
 from app.services.audit import write_audit
 from app.services.dashboard import today_local
 
@@ -343,7 +344,14 @@ class StandardBody(BaseModel):
     effective_from: date
     effective_to: date | None = None
     note: str | None = Field(None, max_length=300)
-    details: list[GradeLine]
+    cn_may: int | None = Field(None, ge=0)
+    ql: int | None = Field(None, ge=0)
+    kh: int | None = Field(None, ge=0)
+    dg: int | None = Field(None, ge=0)
+    ui: int | None = Field(None, ge=0)
+    khac: int | None = Field(None, ge=0)
+    details: list[GradeLine] = []
+    no_grades: bool = False  # tạm không quản lý bậc nghề: bỏ qua details, chỉ cần total_labor
 
 
 @router.get("/labor-standards")
@@ -355,6 +363,26 @@ def list_standards(factory: str | None = None, on: date | None = None, include_h
         q = q.filter(LaborStandard.factory_code == factory)
     rows = q.order_by(LaborStandard.factory_code, LaborStandard.line, LaborStandard.effective_from.desc()).limit(1000).all()
     return [lg.standard_view(db, s, on) for s in rows]
+
+
+class BulkRoleItem(BaseModel):
+    id: int
+    cn_may: int = Field(0, ge=0)
+    ql: int = Field(0, ge=0)
+    kh: int = Field(0, ge=0)
+    dg: int = Field(0, ge=0)
+    ui: int = Field(0, ge=0)
+    khac: int = Field(0, ge=0)
+
+
+class BulkRolesBody(BaseModel):
+    items: list[BulkRoleItem]
+
+
+@router.put("/labor-standards/bulk")
+def bulk_edit_standards(body: BulkRolesBody, db: Session = Depends(get_db), user: User = Manage):
+    """Lưu toàn bảng cơ cấu ở chế độ sửa: cập nhật tại chỗ, không tạo phiên bản."""
+    return [lg.standard_view(db, s) for s in lg.bulk_update_roles(db, user, [i.model_dump() for i in body.items])]
 
 
 @router.post("/labor-standards")
@@ -457,18 +485,50 @@ def activate_shared(pid: int, body: StatusBody, db: Session = Depends(get_db), u
     return svc.pool_view(svc.set_row_status(db, user, MachineSharedPool, pid, True, body.reason))
 
 
+# ------------------------------------------------------------------ Bảng giá theo mã hàng
+class PriceBody(BaseModel):
+    style_cc: str = Field(..., max_length=60)
+    unit_price: float = Field(..., gt=0)
+    effective_from: date
+    note: str | None = Field(None, max_length=300)
+
+
+@router.get("/style-prices")
+def list_style_prices(q: str | None = None, include_history: bool = False, db: Session = Depends(get_db), _: User = View):
+    return sp.list_prices(db, q, include_history)
+
+
+@router.post("/style-prices")
+def create_style_price(body: PriceBody, db: Session = Depends(get_db), user: User = Manage):
+    return sp.view(sp.create_price(db, user, body.model_dump()))
+
+
+@router.post("/style-prices/{pid}/deactivate")
+def deactivate_style_price(pid: int, db: Session = Depends(get_db), user: User = Manage):
+    return sp.view(sp.set_status(db, user, pid, False))
+
+
+@router.post("/style-prices/{pid}/activate")
+def activate_style_price(pid: int, db: Session = Depends(get_db), user: User = Manage):
+    return sp.view(sp.set_status(db, user, pid, True))
+
+
 # ------------------------------------------------------------------ SAM theo mã hàng
 class SamBody(BaseModel):
     sam_minutes: float | None = Field(None, gt=0)
     source: str | None = None
     note: str | None = Field(None, max_length=300)
+    brand: str | None = Field(None, max_length=60)
+    sam_kt: float | None = Field(None, gt=0)
+    sam_tt: float | None = Field(None, gt=0)
+    sot_minutes: float | None = Field(None, gt=0)
 
 
 @router.get("/style-sam")
 def list_style_sam(q: str | None = None, source: str | None = None, limit: int = Query(3000, ge=1, le=5000), db: Session = Depends(get_db), _: User = View):
     query = db.query(StyleSam)
     if q:
-        query = query.filter(StyleSam.style_cc.ilike(f"%{q.strip()}%"))
+        query = query.filter(or_(StyleSam.style_cc.ilike(f"%{q.strip()}%"), StyleSam.brand.ilike(f"%{q.strip()}%")))
     if source:
         query = query.filter(StyleSam.source == source)
     total = query.count()

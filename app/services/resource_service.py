@@ -621,7 +621,7 @@ ASSUMED_EFFICIENCY = 0.85   # hiệu suất giả định của kế hoạch
 
 def sam_view(r: StyleSam) -> dict:
     return {"id": r.id, "style_cc": r.style_cc, "sam_minutes": r.sam_minutes, "source": r.source, "samples": r.samples, "note": r.note, "updated_by": r.updated_by,
-            "updated_at": r.updated_at.isoformat() if r.updated_at else None}
+            "brand": r.brand or "", "sot_minutes": r.sot_minutes, "sam_kt": r.sam_kt, "sam_tt": r.sam_tt, "updated_at": r.updated_at.isoformat() if r.updated_at else None}
 
 
 def known_styles(db: Session) -> set[str]:
@@ -677,6 +677,17 @@ def save_style_sam(db: Session, user: User, style: str, d: dict) -> StyleSam:
         row.sam_minutes, row.source = float(d["sam_minutes"]), d.get("source") if d.get("source") in ("MANUAL", "TRAINED") else "MANUAL"
     if "note" in d and d["note"] is not None:
         row.note = d["note"]
+    for fld in ("sam_kt", "sam_tt"):
+        if fld in d:
+            if d[fld] is not None and not float(d[fld]) > 0:
+                raise HTTPException(422, "SAM phải > 0 (phút/sản phẩm)")
+            setattr(row, fld, float(d[fld]) if d[fld] is not None else None)
+    if "brand" in d and d["brand"] is not None:
+        row.brand = str(d["brand"]).strip()[:60]
+    if "sot_minutes" in d:
+        if d["sot_minutes"] is not None and not float(d["sot_minutes"]) > 0:
+            raise HTTPException(422, "SOT phải > 0 (phút/sản phẩm)")
+        row.sot_minutes = float(d["sot_minutes"]) if d["sot_minutes"] is not None else None
     row.updated_by, row.updated_at = user.username, utcnow()
     db.commit()
     write_audit("STYLE_SAM_UPDATE", user=user, object_type="StyleSam", object_id=row.style_cc, detail=f"SAM {row.sam_minutes}")
