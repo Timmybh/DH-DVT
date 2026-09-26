@@ -105,6 +105,7 @@ def build(db: Session, day: date) -> dict:
             break
     days.reverse()
     charts = productivity.dtbq_charts(productivity.get_targets(db), codes, summaries, days)
+    eff_daily = productivity.efficiency_daily(db, day, codes)
     return {
         "date": day.isoformat(),
         "has_data": selected is not None or bool(lines),
@@ -115,6 +116,7 @@ def build(db: Session, day: date) -> dict:
         "lines": lines,
         "line_summaries": summaries,
         "dtbq_charts": charts,
-        "efficiency_daily": productivity.efficiency_daily(db, day, codes),
+        "efficiency_daily": eff_daily,
+        "efficiency_month": productivity.efficiency_month(eff_daily, codes),
         "nsbq": productivity.nsbq_monthly(db, day, codes),
     }

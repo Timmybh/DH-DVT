@@ -244,3 +244,13 @@ def nsbq_monthly(db: Session, day: date, codes: list[str]) -> dict:
         return sorted(({"label": k, "value": round(sum(v) / len(v), 2), "days": len(v)} for k, v in bucket.items()), key=lambda x: -x["value"])
 
     return {"month": f"{day.year}-{day.month:02d}", "by_brand": fin(days_brand), "by_customer": fin(days_cust)}
+
+
+def efficiency_month(daily: list[dict], codes: list[str]) -> list[dict]:
+    """Hiệu suất bình quân THÁNG của từng XN và toàn công ty = trung bình các ngày có giá trị trong chuỗi hàng ngày (hàng "bình quân" của Excel).
+    Trả [{label, value, days}] theo thứ tự XN1.., Tổng công ty; XN không có ngày nào ⇒ value None."""
+    out = []
+    for key, label in [*[(c, c) for c in codes], ("TONG", "Tổng công ty")]:
+        vals = [r[key] for r in daily if r.get(key) is not None]
+        out.append({"label": label, "value": round(sum(vals) / len(vals), 4) if vals else None, "days": len(vals)})
+    return out

@@ -11,8 +11,9 @@ interface Summ { labor_may: number | null; labor_hs: number | null; plan_qty: nu
 interface Bar1 { label: string; value: number | null; status: "TARGET" | "ACHIEVED" | "MISSED" | null }
 interface Charts { targets: Record<string, number>; may_by_day: Bar1[]; hieu_suat: Bar1[]; hien_dien: Bar1[] }
 interface EffDay { date: string; TONG: number | null; [xn: string]: number | string | null }
+interface EffMonth { label: string; value: number | null; days: number }
 interface NsbqItem { label: string; value: number; days: number }
-interface Page2 { nsbq: { month: string; by_brand: NsbqItem[]; by_customer: NsbqItem[] } | null; efficiency_daily: EffDay[]; dtbq_charts: Charts | null; line_summaries: Record<string, Summ> | null; lines: LineRow[]; date: string; has_data: boolean; unit: string; factories: string[]; day: Record<string, Cell> | null; series: { date: string; cells: Record<string, Cell> }[] }
+interface Page2 { efficiency_month: EffMonth[]; nsbq: { month: string; by_brand: NsbqItem[]; by_customer: NsbqItem[] } | null; efficiency_daily: EffDay[]; dtbq_charts: Charts | null; line_summaries: Record<string, Summ> | null; lines: LineRow[]; date: string; has_data: boolean; unit: string; factories: string[]; day: Record<string, Cell> | null; series: { date: string; cells: Record<string, Cell> }[] }
 
 const COLORS: Record<string, string> = { TONG: "#4c9aff", XN1: "#16a34a", XN2: "#f59e0b", XN3: "#a855f7" };
 const th = "px-2 py-2 text-right text-xs font-semibold text-slate-400";
@@ -217,6 +218,26 @@ export default function DashboardPage2() {
                 </ResponsiveContainer>
               </div>
               <p className="mt-1 text-[11px] text-slate-400">Mỗi ngày: trung bình NS/LĐ hiện diện của các dòng tổ × mã hàng thuộc {nsbqBy === "by_brand" ? "brand" : "khách hàng"}; dòng chưa có brand, giá hoặc lao động không được tính.</p>
+            </section>
+          )}
+
+          {data.efficiency_month.some((m) => m.value !== null) && (
+            <section className="rounded-2xl border border-slate-200 bg-white p-3" data-testid="chart-efficiency-month">
+              <h2 className="mb-1 text-sm font-bold text-slate-700">Hiệu suất bình quân tháng {date.slice(5, 7)}/{date.slice(0, 4)} <span className="font-normal text-slate-400">(trung bình các ngày đến {date ? dateVi(date) : ""})</span></h2>
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={data.efficiency_month} margin={{ top: 22, right: 8, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#94a3b833" vertical={false} />
+                    <XAxis dataKey="label" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => `${Math.round(v * 100)}%`} />
+                    <Tooltip formatter={(v: unknown, _n: unknown, p: { payload?: EffMonth }) => [v === null || v === undefined ? "—" : `${(Number(v) * 100).toFixed(1)}% (${p.payload?.days ?? 0} ngày)`, "Hiệu suất BQ"]} />
+                    <Bar dataKey="value" isAnimationActive={false}>
+                      {data.efficiency_month.map((m, i) => <Cell key={i} fill={m.label === "Tổng công ty" ? COLORS.TONG : (COLORS[m.label] ?? "#64748b")} />)}
+                      <LabelList dataKey="value" position="top" formatter={(v: unknown) => (v === null || v === undefined ? "" : `${(Number(v) * 100).toFixed(1)}%`)} style={{ fontSize: 11, fontWeight: 700 }} />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <p className="mt-1 text-[11px] text-slate-400">Hiệu suất bình quân tháng = trung bình hiệu suất bình quân hàng ngày (chart đường phía dưới) của từng XN và toàn công ty.</p>
             </section>
           )}
 

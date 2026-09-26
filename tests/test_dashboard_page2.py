@@ -211,3 +211,12 @@ def test_nsbq_monthly_by_brand_and_customer(db):
     assert b["Q"]["value"] == round(((100 / 3 + 200 / 3) / 2), 2) and b["P"]["value"] == round(300 / 3, 2)                   # Q: trung bình 2 dòng; P: 300 ÷ 3
     assert [x["label"] for x in res["by_brand"]] == ["P", "Q"]                                                                # sắp giảm dần
     assert {x["label"] for x in res["by_customer"]} == {"DECATHLON", "ITOCHU"}
+
+
+def test_efficiency_month_is_average_of_daily():
+    from app.services import productivity
+
+    daily = [{"date": "2026-05-22", "XN1": 0.8, "XN2": None, "TONG": 0.8}, {"date": "2026-05-23", "XN1": 1.0, "XN2": None, "TONG": 0.9}]
+    m = productivity.efficiency_month(daily, ["XN1", "XN2"])
+    assert [(x["label"], x["value"], x["days"]) for x in m] == [("XN1", 0.9, 2), ("XN2", None, 0), ("Tổng công ty", 0.85, 2)]      # trung bình các ngày có giá trị; XN không có số liệu → None
+    assert productivity.efficiency_month([], ["XN1"])[0]["value"] is None
