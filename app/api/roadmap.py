@@ -3,6 +3,8 @@
 - run: chạy simulation; approve: REVIEWED→APPROVED (scenario/version) và duyệt/retire rule.
 Route nested theo id (tránh lặp lỗi routing collision Task 3)."""
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -40,11 +42,13 @@ from app.services import roadmap_action_plan as ap
 from app.services import roadmap_adapters as ad
 from app.services import roadmap_cost as rc
 from app.services import roadmap_decision_package as dp
+from app.services import roadmap_health as hl
 from app.services import roadmap_exec_rules as xr
 from app.services import roadmap_baseline as rb
 from app.services import roadmap_engine as eng
 
 router = APIRouter(prefix="/roadmap", tags=["roadmap"])
+log = logging.getLogger("dvt.roadmap")
 
 View = Depends(require_perm("roadmap.view"))
 Manage = Depends(require_perm("roadmap.manage"))
@@ -53,6 +57,7 @@ Run = Depends(require_perm("roadmap.run"))
 
 def _need_approve(user: User, what: str) -> None:
     if "roadmap.approve" not in ROLE_PERMISSIONS.get(user.role, set()):
+        log.warning("ROADMAP_PERMISSION_DENIED user=%s role=%s need=roadmap.approve action=%s", user.username, user.role, what)
         raise HTTPException(403, f"Thiếu quyền: roadmap.approve ({what})")
 
 
@@ -625,3 +630,16 @@ def decision_package_history(package_id: int, db: Session = Depends(get_db), _: 
 @router.get("/decision-package-compare/{a_id}/{b_id}")
 def compare_decision_packages(a_id: int, b_id: int, db: Session = Depends(get_db), _: User = View):
     return dp.compare(db, a_id, b_id)
+
+
+# ------------------------------------------------------------------ Source Data Health + Production Readiness (Task 10 — chỉ đọc)
+@router.get("/source-health")
+def source_health(year: int | None = None, month: int | None = None, db: Session = Depends(get_db), _: User = View):
+    if (year is None) != (month is None) or (month is not None and not 1 <= month <= 12) or (year is not None and not 2000 <= year <= 2100):
+        raise HTTPException(422, "year/month phải đi cùng nhau: year 2000..2100, month 1..12")
+    return hl.source_health(db, year, month)
+
+
+@router.get("/readiness")
+def production_readiness(db: Session = Depends(get_db), _: User = View):
+    return hl.production_readiness(db)

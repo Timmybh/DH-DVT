@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import uuid
 from datetime import date
 from decimal import Decimal
 
@@ -43,6 +45,7 @@ from app.services.audit import write_audit
 _bad = rm._bad
 _iso = rm._iso
 PACKAGE_ENGINE = "DP_V1"
+log = logging.getLogger("dvt.roadmap")
 FAMILY_OF = {"MACHINE_PURCHASE": "MACHINE_UNIT_PRICE", "LABOR_RECRUITMENT": "LABOR_COST_PER_WORKER_PERIOD"}
 AFTER_LAST = "AFTER_LAST_MILESTONE"
 
@@ -503,7 +506,9 @@ def approve(db: Session, user: User, package_id: int) -> RoadmapDecisionPackage:
     _ensure_source_approved(apv)
     errs = verify(db, pkg)
     if errs:
-        raise _bad("Snapshot/fingerprint verify thất bại: " + "; ".join(errs), 409)
+        tid = uuid.uuid4().hex[:12]
+        log.warning("ROADMAP_PACKAGE_VERIFY_FAILED trace=%s package=%s user=%s errors=%s", tid, pkg.package_code, user.username, "; ".join(errs))
+        raise _bad(f"Snapshot/fingerprint verify thất bại: {'; '.join(errs)} (trace {tid})", 409)
     pkg.status, pkg.approved_by, pkg.approved_at = "APPROVED", user.username, utcnow()
     rm._hist(db, "DEC_PACKAGE", pkg.id, "UNDER_REVIEW", "APPROVED", "", user.username)
     db.commit()
