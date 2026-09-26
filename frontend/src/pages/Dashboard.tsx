@@ -4,6 +4,7 @@ import { api, Drill, errorMessage, RuntimeResponse } from "../api/client";
 import DashboardCanvas from "../components/dashboard/DashboardCanvas";
 import { DashActions } from "../components/dashboard/renderers";
 import DrillDrawer, { DrillTarget } from "../components/DrillDrawer";
+import LoadingBar from "../components/LoadingBar";
 
 interface Meta {
   today: string;
@@ -109,7 +110,8 @@ export default function Dashboard() {
       {error && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
 
       {runtime && <DashboardCanvas runtime={runtime} actions={actions} />}
-      {!runtime && loading && <p className="text-sm text-slate-500">Đang tải dữ liệu...</p>}
+      {!runtime && loading && <LoadingBar />}
+      {runtime && loading && <div className="dvt-loadbar" data-testid="refresh-bar" />}
 
       <DrillDrawer target={drill} scope={scope} onClose={() => setDrill(null)} />
     </div>

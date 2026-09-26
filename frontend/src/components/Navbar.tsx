@@ -1,4 +1,4 @@
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { ADMIN_TABS, SubTabsMenu } from "./SubTabs";
 import { ROLE_LABEL } from "../lib/format";
@@ -10,6 +10,7 @@ const linkClass = ({ isActive }: { isActive: boolean }) =>
 export default function Navbar() {
   const { user, can, logout } = useAuth();
   const { mode, toggle } = useTheme();
+  const loc = useLocation();
   return (
     <header className="border-b border-white/10 bg-[#0b1226]">
       <div className="mx-auto flex max-w-[1500px] items-center justify-between gap-4 px-4 py-1.5 sm:px-6">
@@ -23,7 +24,7 @@ export default function Navbar() {
 
         <div className="flex flex-1 items-center justify-center gap-3">
         <nav className="flex items-center gap-1 overflow-x-auto">
-          <NavLink to="/" end className={linkClass}>Dashboard</NavLink>
+          <NavLink to="/" className={() => linkClass({ isActive: loc.pathname === "/" || loc.pathname.startsWith("/dashboard") })}>Dashboard</NavLink>
           {can("planning.view") && <NavLink to="/planning" className={linkClass}>Kế hoạch</NavLink>}
           {ADMIN_TABS.some((t) => can(t.perm)) && <NavLink to="/admin" className={linkClass}>Quản trị</NavLink>}
         </nav>

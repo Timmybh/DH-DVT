@@ -7,6 +7,7 @@ from app.models.core import Factory, User
 from app.core.permissions import permissions_for
 from app.services import dashboard as svc
 from app.services import dashboard_meta
+from app.services import dashboard_page2
 from app.services.rules import parse_month
 from app.services.signals import build_signals
 
@@ -58,6 +59,17 @@ def runtime(
     if layout_id is not None and "dashboard.config_view" not in permissions_for(user.role):
         raise HTTPException(403, "Không có quyền xem trước bố cục nháp")
     return dashboard_meta.build_runtime(db, user, scope, month, period, layout_id)
+
+
+@router.get("/page2")
+def page2(day: str | None = Query(None, alias="date", pattern=r"^\d{4}-\d{2}-\d{2}$"), db: Session = Depends(get_db), _: User = Viewer):
+    """Trang 2: số liệu của ngày chọn (mặc định hôm nay) + chuỗi ngày trong tháng đến ngày đó."""
+    from datetime import date as _date
+    try:
+        d = _date.fromisoformat(day) if day else svc.today_local()
+    except ValueError:
+        raise HTTPException(422, "Ngày không hợp lệ")
+    return dashboard_page2.build(db, d)
 
 
 @router.get("/overview")

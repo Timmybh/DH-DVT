@@ -180,3 +180,8 @@ body { font-family: "Montserrat", "Segoe UI", system-ui, sans-serif; color: #e2e
 .pg-linecell { background: none; border: 0; padding: 0 4px; color: inherit; cursor: pointer; font: inherit; border-radius: 6px; }
 .pg-linecell:hover { background: #2e3868; }
 .pg-linecell.pg-chip { padding: 1px 7px; }
+
+/* Thanh loading kiểu không xác định (indeterminate) — hiện khi Dashboard đang tính toán dữ liệu */
+.dvt-loadbar { position: relative; height: 4px; overflow: hidden; border-radius: 9999px; background: rgba(148, 163, 184, 0.25); }
+.dvt-loadbar::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 35%; border-radius: 9999px; background: #4c9aff; animation: dvt-load 1.1s ease-in-out infinite; }
+@keyframes dvt-load { 0% { left: -35%; } 100% { left: 100%; } }
