@@ -52,7 +52,8 @@ const STATUS_CLS: Record<string, string> = {
   DRAFT: "bg-slate-500/20 text-slate-500", READY: "pg-adv", REVIEWED: "pg-known", APPROVED: "pg-ok", ARCHIVED: "bg-slate-500/20 text-slate-400",
   CALCULATED: "pg-ok", NEEDS_INPUT: "pg-adv", NOT_APPLICABLE: "bg-slate-500/20 text-slate-400", SELECTED: "pg-known", REJECTED: "bg-red-500/20 text-red-600",
   MISSING_BASELINE: "bg-red-500/20 text-red-600", UNIT_MISMATCH: "bg-red-500/20 text-red-600", SCOPE_MISMATCH: "bg-red-500/20 text-red-600", PARTIAL_SOURCE: "pg-adv",
-  RETIRED: "bg-slate-500/20 text-slate-400", UNDER_REVIEW: "pg-adv",
+  RETIRED: "bg-slate-500/20 text-slate-400", UNDER_REVIEW: "pg-adv", COUNTED: "pg-ok", UNRESOLVED: "pg-adv",
+  NOT_COVERED: "bg-slate-500/20 text-slate-500", PARTIALLY_COVERED: "pg-adv", COVERED: "pg-ok", OVER_COVERED: "pg-known", NOT_COMBINABLE: "pg-adv",
 };
 const Chip = ({ s }: { s: string }) => <span className={`pg-chip ${STATUS_CLS[s] ?? ""}`}>{s}</span>;
 const PTYPE_LABEL: Record<string, string> = { LABOR_RECRUITMENT: "Tuyển lao động", MACHINE_PURCHASE: "Mua máy", TECHNOLOGY_ADOPTION: "Áp dụng công nghệ", CAPACITY_CHANGE: "Đổi năng lực" };
@@ -350,7 +351,7 @@ function TargetForm({ milestone, version, opts, onClose, onDone, setMsg }: { mil
   );
 }
 
-function RunResult({ runId, perm, setMsg }: { runId: number; perm: { manage: boolean }; setMsg: (m: Msg) => void }) {
+function RunResult({ runId, perm, setMsg }: { runId: number; perm: { manage: boolean; approve?: boolean }; setMsg: (m: Msg) => void }) {
   const [r, setR] = useState<RunDetail | null>(null);
   const [drawer, setDrawer] = useState<{ title: string; data: unknown } | null>(null);
   const load = useCallback(async () => setR((await api.get<RunDetail>(`${RES}/runs/${runId}`)).data), [runId]);
@@ -402,6 +403,7 @@ function RunResult({ runId, perm, setMsg }: { runId: number; perm: { manage: boo
             </td>
           </tr>
         ))}</tbody></table></div>
+      <ActionPlanPanel runId={r.id} proposals={r.proposals} perm={{ manage: perm.manage, approve: !!perm.approve }} setMsg={setMsg} />
       {drawer && <Modal title={drawer.title} onClose={() => setDrawer(null)} wide><J v={drawer.data} /></Modal>}
     </div>
   );
@@ -552,5 +554,106 @@ function ExecRulesModal({ opts, perm, onClose, setMsg }: { opts: Options; perm: 
       )}
       {drawer && <Modal title={drawer.title} onClose={() => setDrawer(null)} wide><J v={drawer.data} /></Modal>}
     </Modal>
+  );
+}
+
+
+interface ApVersionRow { id: number; plan_id: number; action_plan_code: string; name: string; version_no: number; status: string }
+interface ApPlan { id: number; action_plan_code: string; name: string; versions: ApVersionRow[] }
+interface ApItem {
+  id: number; proposal_id: number; proposal_type: string; source_milestone_code: string; planned_effective_date: string; selected_quantity: number | null; planned_increment: number | null; unit: string;
+  impact_persistence: string; inclusion_status: string; notes: string; current_proposal_decision_changed: boolean; snapshot: unknown;
+}
+interface ApCov { status: string; planned_increment: number; remaining_gap: number }
+interface ApTarget {
+  target_result_id: number; milestone_code: string; period_label: string; baseline_value: number | null; effective_target: number | null; original_gap: number; unit: string;
+  coverage_by_proposal_type: Record<string, ApCov>; mixed_resource_types: boolean; overall_combined_status: string; planned_increment: number | null; remaining_gap_after_plan: number | null; has_unresolved_actions: boolean;
+}
+interface ApDetail extends ApVersionRow {
+  editable: boolean; coverage_frozen: boolean; reviewed_by: string; approved_by: string; source_run_fingerprint: string; items: ApItem[]; coverage: { targets: ApTarget[]; unresolved_items: { item_id: number; proposal_type: string; source_milestone_code: string }[] };
+}
+
+/** Task 7 (Issue #15): Action Plan theo milestone — user chọn thủ công; coverage OUTPUT_QTY tách theo proposal_type (không cộng chéo labor+machine). Không optimizer/ranking, không thực thi mua/tuyển. */
+function ActionPlanPanel({ runId, proposals, perm, setMsg }: { runId: number; proposals: Proposal[]; perm: { manage: boolean; approve: boolean }; setMsg: (m: Msg) => void }) {
+  const [plans, setPlans] = useState<ApPlan[]>([]);
+  const [sel, setSel] = useState<number | null>(null);
+  const [det, setDet] = useState<ApDetail | null>(null);
+  const [drawer, setDrawer] = useState<{ title: string; data: unknown } | null>(null);
+  const [f, setF] = useState({ proposal_id: "", date: "", qty: "", unresolved: false, notes: "" });
+  const [name, setName] = useState("");
+  const loadPlans = useCallback(async () => setPlans((await api.get<ApPlan[]>(`${RES}/action-plans?source_run_id=${runId}`)).data), [runId]);
+  const loadDet = useCallback(async (id: number) => setDet((await api.get<ApDetail>(`${RES}/action-plan-versions/${id}`)).data), []);
+  useEffect(() => { loadPlans().catch((e) => setMsg({ ok: false, text: errorMessage(e) })); }, [loadPlans, setMsg]);
+  useEffect(() => { if (sel !== null) loadDet(sel).catch((e) => setMsg({ ok: false, text: errorMessage(e) })); else setDet(null); }, [sel, loadDet, setMsg]);
+  const act = async (fn: () => Promise<unknown>, ok: string, then?: () => Promise<void>) => { try { await fn(); setMsg({ ok: true, text: ok }); await loadPlans(); if (sel !== null) await loadDet(sel); if (then) await then(); } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); } };
+  const create = async () => { try { const v = (await api.post<ApDetail>(`${RES}/runs/${runId}/action-plans`, { name })).data; setName(""); await loadPlans(); setSel(v.id); setMsg({ ok: true, text: `Đã tạo ${v.action_plan_code} v1 (Draft).` }); } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); } };
+  const pickable = proposals.filter((p) => p.calc_status !== "NOT_APPLICABLE" && p.decision_status !== "REJECTED");
+  const chosen = pickable.find((p) => String(p.id) === f.proposal_id);
+  const addItem = () => act(async () => {
+    await api.post(`${RES}/action-plan-versions/${det!.id}/items`, { proposal_id: Number(f.proposal_id), planned_effective_date: f.date, selected_quantity: f.qty && !f.unresolved ? Number(f.qty) : undefined, as_unresolved: f.unresolved || undefined, notes: f.notes });
+    setF({ ...f, qty: "", notes: "" });
+  }, "Đã thêm item.");
+  const allVersions = plans.flatMap((p) => p.versions);
+  const compare = async (otherId: number) => { try { setDrawer({ title: `So sánh v${det?.version_no} ↔ #${otherId} (không xếp hạng)`, data: (await api.get(`${RES}/action-plan-compare/${det!.id}/${otherId}`)).data }); } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); } };
+  return (
+    <div className="space-y-3 rounded-xl border border-slate-200 p-3" data-testid="roadmap-action-plan">
+      <div className="flex flex-wrap items-center gap-2">
+        <h4 className="text-sm font-bold">Action Plan (chọn thủ công, không tự chọn/xếp hạng)</h4><span className="flex-1" />
+        {perm.manage && <><input className={`${inp} !w-48`} placeholder="Tên Action Plan" value={name} onChange={(e) => setName(e.target.value)} /><button className={primary} onClick={() => void create()} data-testid="roadmap-ap-create">+ Tạo Action Plan từ Run</button></>}
+      </div>
+      <div className="flex flex-wrap gap-2 text-xs" data-testid="roadmap-ap-list">
+        {plans.length === 0 && <span className="text-slate-400">Chưa có Action Plan cho Run này.</span>}
+        {allVersions.map((v) => <button key={v.id} onClick={() => setSel(v.id)} className={`rounded-full border px-3 py-1 ${sel === v.id ? "border-brand bg-brand/10" : "border-slate-300"}`}>{v.action_plan_code} v{v.version_no} <Chip s={v.status} /></button>)}
+      </div>
+      {det && (
+        <div className="space-y-3" data-testid="roadmap-ap-detail">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <b>{det.action_plan_code} v{det.version_no}</b><Chip s={det.status} /><span className="text-slate-400">{det.reviewed_by && `review: ${det.reviewed_by}`} {det.approved_by && `· duyệt: ${det.approved_by}`} · coverage {det.coverage_frozen ? "đã đóng băng" : "preview (tính từ snapshot)"}</span><span className="flex-1" />
+            {perm.manage && det.status === "DRAFT" && <button className={btn} onClick={() => void act(() => api.post(`${RES}/action-plan-versions/${det.id}/submit-review`), "Đã chuyển UNDER_REVIEW (bạn là reviewer).")} data-testid="roadmap-ap-review">Gửi review</button>}
+            {perm.approve && det.status === "UNDER_REVIEW" && <button className={primary} onClick={() => void act(() => api.post(`${RES}/action-plan-versions/${det.id}/approve`), "Đã duyệt Action Plan (không thực thi mua/tuyển).")} data-testid="roadmap-ap-approve">Duyệt</button>}
+            {perm.approve && det.status === "APPROVED" && <button className={btn} onClick={() => { const reason = window.prompt("Lý do archive? (bắt buộc)") ?? ""; if (reason.trim()) void act(() => api.post(`${RES}/action-plan-versions/${det.id}/archive`, { reason }), "Đã archive."); }}>Archive</button>}
+            {perm.manage && (det.status === "APPROVED" || det.status === "ARCHIVED") && <button className={btn} onClick={() => void act(async () => { const v = (await api.post<ApDetail>(`${RES}/action-plan-versions/${det.id}/new-version`)).data; setSel(v.id); }, "Đã tạo version mới (Draft, giữ nguyên source run).")}>Version mới</button>}
+            <select className={`${inp} !w-44`} value="" onChange={(e) => { if (e.target.value) void compare(Number(e.target.value)); }}><option value="">So sánh với…</option>{allVersions.filter((v) => v.id !== det.id).map((v) => <option key={v.id} value={v.id}>{v.action_plan_code} v{v.version_no}</option>)}</select>
+          </div>
+          {det.editable && perm.manage && (
+            <div className="grid grid-cols-5 gap-2 rounded-lg border border-slate-200 p-2">
+              <div className="col-span-2"><F label="Proposal (chỉ CALCULATED/NEEDS_INPUT, không REJECTED)"><select className={inp} value={f.proposal_id} onChange={(e) => setF({ ...f, proposal_id: e.target.value })} data-testid="roadmap-ap-proposal"><option value="" />{pickable.map((p) => <option key={p.id} value={p.id}>{p.milestone_code} · {PTYPE_LABEL[p.proposal_type] ?? p.proposal_type} · {p.calculation_rule_version} · {p.calc_status}{p.quantity !== null ? ` (${num(p.quantity)} ${p.unit})` : ""}</option>)}</select></F></div>
+              <F label="Ngày hiệu lực"><input className={inp} type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} data-testid="roadmap-ap-date" /></F>
+              <F label={`Số lượng (nguyên${chosen?.quantity ? `, 1..${chosen.quantity}` : ""}; trống = full)`}><input className={inp} type="number" min="1" step="1" value={f.qty} disabled={f.unresolved} onChange={(e) => setF({ ...f, qty: e.target.value })} data-testid="roadmap-ap-qty" /></F>
+              <label className="flex items-end gap-1 pb-1 text-xs text-slate-500"><input type="checkbox" checked={f.unresolved} onChange={(e) => setF({ ...f, unresolved: e.target.checked })} />Chỉ theo dõi (UNRESOLVED)</label>
+              <div className="col-span-4"><F label="Ghi chú"><input className={inp} value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} /></F></div>
+              <div className="flex items-end justify-end"><button className={primary} disabled={!f.proposal_id || !f.date} onClick={() => void addItem()} data-testid="roadmap-ap-add">+ Thêm item</button></div>
+              <p className="col-span-5 text-[11px] text-slate-500">Labor/Machine CALCULATED được chọn từng phần (số nguyên) — planned_increment = số lượng × productivity trong snapshot của proposal, persistence cố định PERSISTENT. Các loại khác chỉ là UNRESOLVED (không tính coverage). Không chọn nhiều rule cùng loại cho cùng target (là phương án thay thế).</p>
+            </div>
+          )}
+          <div className="overflow-x-auto"><table className="w-full text-xs" data-testid="roadmap-ap-items">
+            <thead><tr><th className={th}>Proposal</th><th className={th}>Milestone nguồn</th><th className={th}>Hiệu lực</th><th className={`${th} text-right`}>Số lượng</th><th className={`${th} text-right`}>Planned increment</th><th className={th}>Trạng thái</th><th /></tr></thead>
+            <tbody>{det.items.map((i) => (
+              <tr key={i.id} className="border-t border-slate-100 align-top">
+                <td className="px-3 py-1.5">{PTYPE_LABEL[i.proposal_type] ?? i.proposal_type} <span className="font-mono text-[10px] text-slate-400">#{i.proposal_id}</span>{i.current_proposal_decision_changed && <div className="text-[10px] text-amber-700">quyết định của proposal đã đổi sau khi chọn (coverage dùng snapshot)</div>}</td>
+                <td className="px-3 font-mono">{i.source_milestone_code}</td><td className="px-3">{i.planned_effective_date}</td>
+                <td className="px-3 text-right">{i.selected_quantity === null ? "—" : `${i.selected_quantity} ${i.unit}`}</td>
+                <td className="px-3 text-right">{i.planned_increment === null ? <span className="text-slate-400">không tính</span> : `${num(i.planned_increment)} sp`}</td>
+                <td className="px-3"><Chip s={i.inclusion_status} /><div className="text-[10px] text-slate-400">{i.impact_persistence}</div></td>
+                <td className="whitespace-nowrap px-3 text-right"><button className="text-brand hover:underline" onClick={() => setDrawer({ title: `Snapshot item #${i.id}`, data: i.snapshot })}>Evidence</button>
+                  {det.editable && perm.manage && <button className="ml-2 text-red-600 hover:underline" onClick={() => void act(() => api.delete(`${RES}/action-plan-items/${i.id}`), "Đã xóa item.")}>Xóa</button>}</td>
+              </tr>
+            ))}{det.items.length === 0 && <tr><td colSpan={7} className="py-3 text-center text-slate-400">Chưa chọn item nào.</td></tr>}</tbody></table></div>
+          <h5 className="text-xs font-bold">Milestone coverage — OUTPUT_QTY (tách theo loại nguồn lực; LABOR + MACHINE không cộng chéo)</h5>
+          <div className="overflow-x-auto"><table className="w-full text-xs" data-testid="roadmap-ap-coverage">
+            <thead><tr><th className={th}>Milestone / kỳ</th><th className={`${th} text-right`}>Baseline</th><th className={`${th} text-right`}>Target</th><th className={`${th} text-right`}>Original gap</th><th className={th}>Planned / Remaining theo loại</th><th className={th}>Coverage</th></tr></thead>
+            <tbody>{det.coverage.targets.map((t) => (
+              <tr key={t.target_result_id} className="border-t border-slate-100 align-top" data-testid={`roadmap-ap-cov-${t.milestone_code}`}>
+                <td className="px-3 py-1.5 font-mono">{t.milestone_code} · {t.period_label}</td>
+                <td className="px-3 text-right">{t.baseline_value === null ? "—" : num(t.baseline_value)}</td><td className="px-3 text-right">{t.effective_target === null ? "—" : num(t.effective_target)}</td><td className="px-3 text-right font-semibold">{num(t.original_gap)}</td>
+                <td className="px-3">{Object.keys(t.coverage_by_proposal_type).length === 0 ? <span className="text-slate-400">chưa có item được tính</span> : Object.entries(t.coverage_by_proposal_type).map(([k, c]) => <div key={k}>{PTYPE_LABEL[k] ?? k}: +{num(c.planned_increment)} · còn lại {num(c.remaining_gap)}{c.remaining_gap < 0 ? " (vượt)" : ""} <Chip s={c.status} /></div>)}</td>
+                <td className="px-3">{t.mixed_resource_types ? <><Chip s="NOT_COMBINABLE" /><div className="text-[10px] text-amber-700">MIXED_RESOURCE_TYPES — không có tổng remaining gap</div></> : <Chip s={t.overall_combined_status} />}{t.has_unresolved_actions && <div className="text-[10px] text-amber-700">có action chưa giải quyết (UNRESOLVED)</div>}</td>
+              </tr>
+            ))}{det.coverage.targets.length === 0 && <tr><td colSpan={6} className="py-3 text-center text-slate-400">Run không có target OUTPUT_QTY với gap &gt; 0.</td></tr>}</tbody></table></div>
+          {det.coverage.unresolved_items.length > 0 && <p className="text-xs text-amber-700" data-testid="roadmap-ap-unresolved">Unresolved (không tính coverage): {det.coverage.unresolved_items.map((u) => `${PTYPE_LABEL[u.proposal_type] ?? u.proposal_type} @${u.source_milestone_code}`).join(", ")}</p>}
+        </div>
+      )}
+      {drawer && <Modal title={drawer.title} onClose={() => setDrawer(null)} wide><J v={drawer.data} /></Modal>}
+    </div>
   );
 }
