@@ -123,6 +123,57 @@ async def import_plan(file: UploadFile, db: Session = Depends(get_db), user: Use
         Path(tmp.name).unlink(missing_ok=True)
 
 
+class ScheduleIO(BaseModel):
+    enabled: bool | None = None
+    mode: str | None = None
+    daily_time: str | None = None
+    interval_minutes: int | None = None
+    window_start: str | None = None
+    window_end: str | None = None
+
+
+@router.get("/schedules")
+def list_schedules(db: Session = Depends(get_db), _: User = Depends(require_perm("sync.view"))):
+    """Bảng đăng ký tần suất đồng bộ theo nguồn: dòng eGMF đầy đủ (lịch ở /config) + các nguồn nhẹ."""
+    from app.models.data import SyncSchedule
+    from app.services import sync_schedule as ss
+
+    cfg = db.get(SyncConfig, 1) or SyncConfig(id=1)
+    last = db.query(SyncRun).filter(SyncRun.source == "EGMF_REVENUE").order_by(SyncRun.started_at.desc()).first()
+    egmf = {"code": "EGMF_FULL", "name": "eGMF — đồng bộ đầy đủ (doanh thu, tiến độ PO, QA, lao động, sản lượng chuyền HiPro từ đầu tháng)", "description": "Chỉnh giờ chạy ở khung \"Lịch đồng bộ dữ liệu ERP hằng ngày\".",
+            "enabled": cfg.enabled, "mode": "DAILY", "daily_time": cfg.scheduled_time, "interval_minutes": 0, "window_start": "", "window_end": "", "editable": False,
+            "last_run_at": last.started_at.isoformat() if last else None, "last_status": last.status if last else "", "last_rows": last.total_records if last else 0, "last_changed": 0,
+            "last_duration_ms": last.duration_ms if last else 0, "last_error": last.error_message[:400] if last else "", "updated_by": ""}
+    return [egmf, *({**ss.view(r), "editable": True} for r in db.query(SyncSchedule).order_by(SyncSchedule.code))]
+
+
+@router.put("/schedules/{code}")
+def put_schedule(code: str, payload: ScheduleIO, db: Session = Depends(get_db), user: User = Depends(require_perm("sync.run"))):
+    from app.models.data import SyncSchedule
+    from app.services import sync_schedule as ss
+
+    row = db.query(SyncSchedule).filter(SyncSchedule.code == code).first()
+    if row is None:
+        raise HTTPException(404, "Nguồn đồng bộ không tồn tại (lịch eGMF đầy đủ chỉnh ở /sync/config)")
+    ss.validate_and_apply(row, payload.model_dump(exclude_none=True), user.username)
+    db.commit()
+    write_audit("SYNC_SCHEDULE_CHANGE", user=user, object_type="SyncSchedule", object_id=code, detail=f"enabled={row.enabled} mode={row.mode} every={row.interval_minutes}m window={row.window_start}-{row.window_end} daily={row.daily_time}")
+    return {**ss.view(row), "editable": True}
+
+
+@router.post("/schedules/{code}/run")
+def run_schedule_now(code: str, db: Session = Depends(get_db), user: User = Depends(require_perm("sync.run"))):
+    from app.models.data import SyncSchedule
+    from app.services import sync_schedule as ss
+
+    row = db.query(SyncSchedule).filter(SyncSchedule.code == code).first()
+    if row is None or code not in ss.RUNNERS:
+        raise HTTPException(404, "Nguồn đồng bộ không tồn tại")
+    ss.run_one(db, row)
+    write_audit("SYNC_SCHEDULE_RUN", user=user, object_type="SyncSchedule", object_id=code, detail=f"status={row.last_status} rows={row.last_rows}")
+    return {**ss.view(row), "editable": True}
+
+
 class SyncConfigIO(BaseModel):
     enabled: bool
     scheduled_time: str
