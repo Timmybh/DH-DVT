@@ -31,6 +31,10 @@ from app.models.erp_sync import MachineCrosswalk, TechProcessSyncException
 from app.models.tech_compatibility import OperationMachineCompatibility
 from app.models.roadmap import (
     RoadmapActionPlan,
+    RoadmapAssetRef,
+    RoadmapCostEvidence,
+    RoadmapDecisionPackage,
+    RoadmapPackageBinding,
     RoadmapActionPlanItem,
     RoadmapActionPlanVersion,
     RoadmapExecutableRule,
@@ -110,6 +114,10 @@ __all__ = [
     "RoadmapRule",
     "RoadmapExecutableRule",
     "RoadmapActionPlan",
+    "RoadmapAssetRef",
+    "RoadmapCostEvidence",
+    "RoadmapDecisionPackage",
+    "RoadmapPackageBinding",
     "RoadmapActionPlanVersion",
     "RoadmapActionPlanItem",
     "RoadmapRun",
