@@ -467,3 +467,59 @@ def test_http_executable_rules_routes(xdb):
         assert c.get("/api/roadmap/options").json()["adapters"][0]["adapter_code"] == LAB
     finally:
         app.dependency_overrides.clear()
+
+
+# =================================================================== GPT review round 1 (PR #14)
+def test_retire_only_from_approved(xdb):
+    r = xr.create_rule(xdb, ADMIN, _body())
+    xr.submit_review(xdb, ADMIN, r.id)
+    with pytest.raises(HTTPException) as e:
+        xr.retire_rule(xdb, ADMIN2, r.id, "từ chối review")  # UNDER_REVIEW -> RETIRED không thuộc contract
+    assert e.value.status_code == 409 and xr.get_rule(xdb, r.id).status == "UNDER_REVIEW"
+    d = xr.create_rule(xdb, ADMIN, _body(rule_code="LAB-D"))
+    with pytest.raises(HTTPException):
+        xr.retire_rule(xdb, ADMIN2, d.id, "x")  # DRAFT -> RETIRED cũng không
+    ok = _xrule(xdb, rule_code="LAB-OK")
+    assert xr.retire_rule(xdb, ADMIN2, ok.id, "hết hiệu lực").status == "RETIRED"
+
+
+def test_fingerprint_ignores_unrelated_executable_rules(xdb):
+    _labor(xdb)
+    _s, v, r1 = _gap500(xdb)
+    assert _run(xdb, v)["created"] is False
+    _xrule(xdb, rule_code="LAB-XN2", scope_type="FACTORY", scope_value="XN2")  # scope khác scenario TOTAL
+    assert _run(xdb, v)["created"] is False
+    _xrule(xdb, rule_code="LAB-FUT", effective_from="2027-01-01")  # hiệu lực ngoài mọi milestone (2026-08-31)
+    assert _run(xdb, v)["created"] is False
+    xr.retire_rule(xdb, ADMIN2, xr.list_rules(xdb)[0].id, "retire rule không liên quan")
+    assert _run(xdb, v)["created"] is False
+    rel = _xrule(xdb, rule_code="LAB-REL")  # đúng scope + hiệu lực => run mới
+    r2 = _run(xdb, v)
+    assert r2["created"] is True and _by_type(r2, "LABOR_RECRUITMENT")[0]["quantity"] == 5
+    assert _run(xdb, v)["created"] is False
+    assert [x["rule_code"] for x in r2["run"]["snapshot"]["executable_rules"]] == ["LAB-REL"]  # snapshot chỉ chứa rule relevant
+    xr.retire_rule(xdb, ADMIN2, rel.id, "retire rule relevant")
+    back = _run(xdb, v)  # retire rule relevant => effective inputs quay về trạng thái không rule => trả lại run gốc (idempotent), không tạo run trùng
+    assert back["created"] is False and back["run"]["id"] == r1["run"]["id"]
+    rel2 = _xrule(xdb, rule_code="LAB-REL2", prod=200.0)  # đổi rule relevant khác => run mới
+    assert rel2.status == "APPROVED" and _run(xdb, v)["created"] is True
+
+
+def test_period_mismatch_rule_is_relevant_and_fingerprinted(xdb):
+    _labor(xdb)
+    _s, v, _r = _gap500(xdb)
+    _xrule(xdb, period="YEAR", prod=1440.0)  # tạo dòng NEEDS_INPUT PERIOD_MISMATCH => relevant
+    assert _run(xdb, v)["created"] is True
+
+
+def test_machine_inventory_only_matters_for_relevant_machine_rules(xdb):
+    _machines(xdb, "XN1", "1K", 10)
+    _xrule(xdb, MAC, rule_code="MAC-1K", prod=300.0)  # relevant (TOTAL, hiệu lực)
+    _xrule(xdb, MAC, rule_code="MAC-2K", prod=300.0, machine_type_code="2K", scope_type="FACTORY", scope_value="XN2")  # không relevant với scenario TOTAL
+    _s, v, r1 = _gap500(xdb)
+    assert _by_type(r1, "MACHINE_PURCHASE")[0]["calculation_rule_version"] == "MAC-1K@v1"
+    _machines(xdb, "XN2", "2K", 7)  # tồn kho loại máy chỉ thuộc rule không liên quan
+    assert _run(xdb, v)["created"] is False
+    _machines(xdb, "XN1", "1K", 3)  # tồn kho loại máy của rule relevant
+    r3 = _run(xdb, v)
+    assert r3["created"] is True and _by_type(r3, "MACHINE_PURCHASE")[0]["calculation"]["available_machines"] == 13

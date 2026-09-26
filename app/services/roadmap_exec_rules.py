@@ -281,8 +281,8 @@ def approve_rule(db: Session, user: User, rule_id: int) -> RoadmapExecutableRule
 
 def retire_rule(db: Session, user: User, rule_id: int, reason: str = "") -> RoadmapExecutableRule:
     r = get_rule(db, rule_id)
-    if r.status not in ("APPROVED", "UNDER_REVIEW"):
-        raise _bad(f"Chỉ retire được rule APPROVED/UNDER_REVIEW (hiện {r.status})", 409)
+    if r.status != "APPROVED":
+        raise _bad(f"Chỉ retire được rule APPROVED (hiện {r.status}) — workflow DRAFT→UNDER_REVIEW→APPROVED→RETIRED", 409)
     if not (reason or "").strip():
         raise _bad("Retire rule bắt buộc có reason")
     frm = r.status

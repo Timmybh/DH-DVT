@@ -205,6 +205,12 @@ def _exec_lines(r: dict, pt: str, xrules: list, labor: dict | None, machine_avai
     return out
 
 
+def relevant_exec_rules(xrules: list, results: list[dict]) -> list:
+    """Chỉ rule có thể ảnh hưởng >=1 proposal của run: OUTPUT_QTY CALCULATED gap>0, scope exact, hiệu lực tại milestone.target_date (period lệch vẫn relevant vì tạo dòng NEEDS_INPUT)."""
+    live = [r for r in results if r["metric_code"] == "OUTPUT_QTY" and r["result_status"] == "CALCULATED" and r["gap"] is not None and r["gap"] > 0]
+    return [x for x in xrules if any((x.scope_type, x.scope_value) == (r["scope_type"], r["scope_value"]) and xr.is_effective(x, r["milestone_date"]) for r in live)]
+
+
 def build_proposals(r: dict, tech: list[dict], rules: list[RoadmapRule], labor: dict | None, machine: dict | None, xrules: list | None = None,
                     machine_avail: dict | None = None) -> list[dict]:
     out: list[dict] = []
@@ -289,19 +295,21 @@ def run_simulation(db: Session, user: User, version_id: int) -> dict:
     tech = technology_snapshot(db, v)
     rules = _approved_rules(db)
     labor, machine = rb.labor_baseline(db, v.scope_type, v.scope_value), rb.machine_baseline(db, v.scope_type, v.scope_value)
-    xrules = xr.approved_rules(db)
+    xrules = relevant_exec_rules(xr.approved_rules(db), results)
     machine_avail = {mt: rb.machine_available(db, v.scope_type, v.scope_value, mt) for mt in sorted({x.machine_type_code for x in xrules if x.machine_type_code})}
     proposals: list[dict] = []
     for r in results:
         proposals.extend(build_proposals(r, tech, rules, labor, machine, xrules, machine_avail))
 
+    fp_types = set(machine_avail) | {x.machine_type_code for x in rules if x.machine_type_code}  # loại máy của rule relevant (executable) + rule metadata APPROVED
     fingerprint = _hash({
         "engine": ENGINE_VERSION,
         "scope": [v.scope_type, v.scope_value],
         "results": [_canonical_result(r) for r in results],
         "technology": _core_tech(tech),
         "rules": [_rule_snapshot(x) for x in rules],
-        "resources": {"labor": labor, "machine": machine},
+        # machine baseline chỉ tính loại máy thuộc rule relevant (tồn kho loại máy không liên quan không được làm đổi run); phần hiển thị vẫn nằm trong snapshot
+        "resources": {"labor": labor, "machine": {"by_machine_type": {t: n for t, n in ((machine or {}).get("by_machine_type") or {}).items() if t in fp_types}}},
         "executable_rules": [xr.snapshot(x) for x in xrules],
         "machine_availability": machine_avail,
     })
