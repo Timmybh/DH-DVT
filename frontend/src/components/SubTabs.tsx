@@ -9,6 +9,11 @@ export interface TabDef {
   end?: boolean;
 }
 
+export const DASHBOARD_TABS: TabDef[] = [
+  { to: "/", label: "Trang 1", perm: "dashboard.view", end: true },
+  { to: "/dashboard/trang-2", label: "Trang 2", perm: "dashboard.view" },
+];
+
 export const PLANNING_TABS: TabDef[] = [
   { to: "/planning", label: "Bảng kế hoạch", perm: "planning.view", end: true },
   { to: "/planning/versions", label: "Phiên bản", perm: "planning.view" },
@@ -39,7 +44,7 @@ export function SubTabsMenu() {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const loc = useLocation();
-  const tabs = loc.pathname.startsWith("/planning") ? PLANNING_TABS : loc.pathname.startsWith("/admin") ? ADMIN_TABS : null;
+  const tabs = loc.pathname === "/" || loc.pathname.startsWith("/dashboard") ? DASHBOARD_TABS : loc.pathname.startsWith("/planning") ? PLANNING_TABS : loc.pathname.startsWith("/admin") ? ADMIN_TABS : null;
   const allowed = (tabs ?? []).filter((t) => can(t.perm));
   const current = [...allowed].sort((a, b) => b.to.length - a.to.length).find((t) => (t.end ? loc.pathname === t.to : loc.pathname.startsWith(t.to)));
 

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_perm
@@ -7,6 +8,7 @@ from app.models.core import Factory, User
 from app.core.permissions import permissions_for
 from app.services import dashboard as svc
 from app.services import dashboard_meta
+from app.services import dashboard_page2
 from app.services.rules import parse_month
 from app.services.signals import build_signals
 
@@ -58,6 +60,31 @@ def runtime(
     if layout_id is not None and "dashboard.config_view" not in permissions_for(user.role):
         raise HTTPException(403, "Không có quyền xem trước bố cục nháp")
     return dashboard_meta.build_runtime(db, user, scope, month, period, layout_id)
+
+
+@router.get("/page2")
+def page2(day: str | None = Query(None, alias="date", pattern=r"^\d{4}-\d{2}-\d{2}$"), db: Session = Depends(get_db), _: User = Viewer):
+    """Trang 2: số liệu của ngày chọn (mặc định hôm nay) + chuỗi ngày trong tháng đến ngày đó."""
+    from datetime import date as _date
+    try:
+        d = _date.fromisoformat(day) if day else svc.today_local()
+    except ValueError:
+        raise HTTPException(422, "Ngày không hợp lệ")
+    return dashboard_page2.build(db, d)
+
+
+class TargetsBody(BaseModel):
+    DTBQ_LD_MAY: float | None = Field(None, gt=0)
+    DTBQ_LD_HIEU_SUAT: float | None = Field(None, gt=0)
+    DTBQ_LD_HIEN_DIEN: float | None = Field(None, gt=0)
+
+
+@router.put("/productivity-targets")
+def put_productivity_targets(body: TargetsBody, db: Session = Depends(get_db), user: User = Depends(require_perm("resource.manage"))):
+    """Sửa mục tiêu DTBQ/LĐ cho các biểu đồ Trang 2 (USD/người)."""
+    from app.services import productivity
+
+    return productivity.set_targets(db, user, body.model_dump(exclude_none=True))
 
 
 @router.get("/overview")

@@ -1,0 +1,274 @@
+"""Bảng năng suất theo tổ × mã hàng của một ngày (Dashboard Trang 2, theo sheet "23" của báo cáo năng suất).
+
+Công thức (giống Excel):
+    Doanh thu KH / TH = (kế hoạch / sản lượng) × đơn giá
+    % hoàn thành      = sản lượng ÷ kế hoạch
+    NSLĐBQ            = doanh thu TH ÷ SLĐ công nhân may;   NS/LĐ hiện diện = doanh thu TH ÷ SLĐ tính hiệu suất
+    Hiệu suất         = SAM (hoặc SOT) × sản lượng ÷ thời gian làm việc (phút) ÷ SLĐ tính hiệu suất
+      - khách hàng DECATHLON  → Hiệu suất DCL, dùng SAM TT (thiếu thì SAM KT)
+      - khách hàng khác       → Hiệu suất hàng khác, dùng SOT
+SLĐ công nhân may = lao động có mặt của chuyền; SLĐ tính hiệu suất = có mặt + lao động ngoài chuyền (QL...). Chuyền chạy nhiều mã hàng trong ngày:
+lao động được phân bổ theo tỉ lệ sản lượng của từng mã hàng (chưa có số lao động thực tế theo mã hàng). Thiếu dữ liệu nào thì ô đó để trống, không suy diễn.
+"""
+
+from collections import defaultdict
+from datetime import date
+
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from app.models.resources import BrandCustomer, LaborDaily, LineOutputDaily, LinePlanDaily, ProductivityTarget, StyleSam
+from app.services import style_price_service as sp
+
+DECATHLON = "DECATHLON"
+
+
+def _div(a, b, nd=4):
+    return round(a / b, nd) if a is not None and b else None
+
+
+def compute_row(r: dict) -> dict:
+    """r: qty, plan_qty, price, basis_minutes, is_dcl (True/False/None), work_minutes, labor_may, labor_hs (đã phân bổ cho mã hàng)."""
+    qty, plan, price = r.get("qty") or 0, r.get("plan_qty"), r.get("price")
+    rev_actual = round(qty * price, 2) if price is not None else None
+    rev_plan = round(plan * price, 2) if plan is not None and price is not None else None
+    eff = r.get("eff_line")  # hiệu suất tính ở cấp chuyền (xem _line_efficiency), không tính riêng từng mã hàng với lao động phân bổ
+    return {
+        "pct": _div(qty, plan) if plan else None,
+        "revenue_plan": rev_plan, "revenue_actual": rev_actual,
+        "nsld_may": _div(rev_actual, r.get("labor_may"), 3), "ns_present": _div(rev_actual, r.get("labor_hs"), 3),
+        "efficiency_dcl": eff if r.get("is_dcl") is True else None,
+        "efficiency_other": eff if r.get("is_dcl") is False else None,
+    }
+
+
+def _price(db: Session, ctx: dict, style: str, day: date):
+    """Giá áp dụng ngày `day`; nạp sẵn bảng giá vào ctx để tính nhiều ngày không phải truy vấn từng dòng."""
+    if "prices" not in ctx:
+        from app.models.resources import StylePrice
+
+        by: dict[str, list] = defaultdict(list)
+        for r in db.query(StylePrice).filter(StylePrice.status == "ACTIVE").order_by(StylePrice.effective_from, StylePrice.id):
+            by[r.style_cc].append((r.effective_from, r.unit_price))
+        ctx["prices"] = by
+    best = None
+    for eff, price in ctx["prices"].get(style.strip().upper(), []):
+        if eff <= day:
+            best = price
+    return best
+
+
+def rows_for_day(db: Session, day: date, codes: list[str], light: bool = False, ctx: dict | None = None, with_price: bool | None = None) -> list[dict]:
+    """light=True: chỉ để tính hiệu suất (bỏ kế hoạch và giá); ctx dùng chung danh mục mã hàng/khách hàng giữa nhiều ngày."""
+    out_q: dict[tuple, int] = {}
+    for c, ln, st, q in db.query(LineOutputDaily.factory_code, LineOutputDaily.line, LineOutputDaily.style, func.sum(LineOutputDaily.qty)).filter(LineOutputDaily.day == day, LineOutputDaily.factory_code.in_(codes)).group_by(LineOutputDaily.factory_code, LineOutputDaily.line, LineOutputDaily.style):
+        out_q[(c, ln, st.upper())] = int(q or 0)
+    plan: dict[tuple, LinePlanDaily] = {} if light else {(p.factory_code, p.line, p.style.upper()): p for p in db.query(LinePlanDaily).filter(LinePlanDaily.day == day, LinePlanDaily.factory_code.in_(codes))}
+    keys = sorted(set(out_q) | set(plan), key=lambda k: (codes.index(k[0]), int(k[1]) if k[1].isdigit() else 10**6, k[1], -out_q.get(k, 0), k[2]))
+    labor = {(l.factory_code, l.line): l for l in db.query(LaborDaily).filter(LaborDaily.day == day, LaborDaily.factory_code.in_(codes))}
+    ctx = ctx if ctx is not None else {}
+    if "info" not in ctx:
+        ctx["info"] = {s.style_cc.upper(): s for s in db.query(StyleSam)}
+        ctx["cust"] = {b.brand.upper(): b.customer for b in db.query(BrandCustomer)}
+    info, cust = ctx["info"], ctx["cust"]
+    line_qty: dict[tuple, int] = defaultdict(int)
+    for k, q in out_q.items():
+        line_qty[k[:2]] += q
+
+    rows = []
+    for k in keys:
+        fac, line, style = k
+        si, lab, pl = info.get(style), labor.get((fac, line)), plan.get(k)
+        brand = (si.brand if si else "") or ""
+        customer = cust.get(brand.upper(), "") if brand else ""
+        is_dcl = None if not customer else customer.strip().upper() == DECATHLON
+        basis = None
+        if si is not None and is_dcl is True:
+            basis = si.sam_tt if si.sam_tt else si.sam_kt
+        elif si is not None and is_dcl is False:
+            basis = si.sot_minutes
+        qty = out_q.get(k, 0)
+        share = (qty / line_qty[k[:2]]) if line_qty.get(k[:2]) else None
+        present = lab.present if lab and lab.present else None  # có mặt = 0 (ERP chưa chấm công, vd ngày lễ) ⇒ coi như chưa có số liệu lao động, không chia cho 0/lao động ngoài chuyền
+        hs = (present + (lab.outside or 0)) if lab and present is not None else None
+        may_alloc = round(present * share, 2) if present is not None and share is not None else None
+        hs_alloc = round(hs * share, 2) if hs is not None and share is not None else None
+        price = _price(db, ctx, style, day) if (with_price if with_price is not None else not light) else None
+        base = {"factory": fac, "line": line, "style": style, "brand": brand, "customer": customer, "price": price, "qty": qty,
+                "plan_qty": round(pl.plan_qty) if pl else None, "basis": ("SAM" if is_dcl else "SOT") if basis else None, "basis_minutes": basis,
+                "production_days": ((pl.sew_end - pl.in_line_from).days + 1) if pl and pl.in_line_from and pl.sew_end else None,
+                "labor_may": may_alloc, "labor_hs": hs_alloc, "work_minutes": lab.work_minutes if lab else None}
+        rows.append({**base, "_is_dcl": is_dcl})
+    # Hiệu suất tính theo CHUYỀN (lao động của chuyền dùng chung cho các mã hàng): mọi dòng cùng nhóm (DCL / hàng khác) của một chuyền có cùng hiệu suất
+    line_total: dict[tuple, int] = defaultdict(int)
+    for r in rows:
+        line_total[(r["factory"], r["line"])] += r["qty"]
+    grp: dict[tuple, list] = defaultdict(lambda: [0.0, 0])  # [Σ SAM×SL, Σ SL] của các dòng có SAM/SOT
+    for r in rows:
+        if r["basis_minutes"] and r["qty"] and r["_is_dcl"] is not None:
+            g = grp[(r["factory"], r["line"], r["_is_dcl"])]
+            g[0] += r["basis_minutes"] * r["qty"]
+            g[1] += r["qty"]
+    labor_hs_line = {(fc, ln): (lab.present + (lab.outside or 0)) for (fc, ln), lab in labor.items() if lab.present}
+    for i, r in enumerate(rows):
+        is_dcl = r.pop("_is_dcl")
+        eff_line = None
+        g = grp.get((r["factory"], r["line"], is_dcl))
+        wm, hs = r["work_minutes"], labor_hs_line.get((r["factory"], r["line"]))
+        if g and g[1] and wm and hs and is_dcl is not None:
+            # SAM bình quân của phần sản lượng có SAM/SOT × tổng sản lượng chuyền ÷ (thời gian × lao động): phần không có SAM/SOT coi như cùng SAM bình quân
+            eff_line = round((g[0] / g[1]) * line_total[(r["factory"], r["line"])] / wm / hs, 4)
+        rows[i] = {**r, **compute_row({**r, "is_dcl": is_dcl, "eff_line": eff_line})}
+    return rows
+
+
+def _sum(vals):
+    v = [x for x in vals if x is not None]
+    return round(sum(v), 2) if v else None
+
+
+def _avg(vals):
+    v = [x for x in vals if x is not None]
+    return round(sum(v) / len(v), 4) if v else None
+
+
+def summarize(rows: list[dict], codes: list[str], labor: dict[str, dict]) -> dict:
+    """Dòng tổng của từng XN và toàn công ty — cùng cách tính với các dòng tổng của sheet Excel:
+       tổng SLĐ / kế hoạch / sản lượng / doanh thu = cộng các dòng; % HT = SL ÷ KH; NSLĐBQ = DT TH ÷ SLĐ may; NS/LĐ hiện diện = DT TH ÷ SLĐ hiệu suất;
+       Hiệu suất DCL / hàng khác = TRUNG BÌNH các dòng có giá trị (bỏ ô trống); toàn công ty = trung bình của các XN có giá trị.
+       Khối lao động (nguồn ERP + cơ cấu chức danh): danh sách, có mặt, vắng, tỉ lệ vắng, gián tiếp (= tổng lao động chuyền − CN may); DT bình quân = DT TH ÷ LĐ có mặt.
+       labor[code] = {total, present, indirect} (đã cộng theo các chuyền của XN)."""
+    out = {}
+    for code in codes:
+        rs = [r for r in rows if r["factory"] == code]
+        out[code] = _one(rs, labor.get(code) or {})
+    allrs = rows
+    tong = _one(allrs, {k: _sum(labor.get(c, {}).get(k) for c in codes) for k in ("total", "present", "indirect")})
+    tong["efficiency_dcl"] = _avg(out[c]["efficiency_dcl"] for c in codes)
+    tong["efficiency_other"] = _avg(out[c]["efficiency_other"] for c in codes)
+    tong["efficiency_avg"] = _avg(out[c]["efficiency_avg"] for c in codes)
+    pres, ind = tong["labor_present_erp"], tong["labor_indirect"]
+    tong["ns_all_labor"] = _div(tong["revenue_actual"], (pres or 0) + (ind or 0), 3) if pres is not None else None  # DT ÷ (LĐ hiện diện + gián tiếp)
+    out["TONG"] = tong
+    return out
+
+
+def _one(rs: list[dict], lab: dict) -> dict:
+    plan, qty = _sum(r["plan_qty"] for r in rs), _sum(r["qty"] for r in rs)
+    rp, ra = _sum(r["revenue_plan"] for r in rs), _sum(r["revenue_actual"] for r in rs)
+    may, hs = _sum(r["labor_may"] for r in rs), _sum(r["labor_hs"] for r in rs)
+    total, present = lab.get("total"), lab.get("present")
+    return {
+        "labor_may": may, "labor_hs": hs, "plan_qty": plan, "qty": qty, "pct": _div(qty, plan) if plan else None, "revenue_plan": rp, "revenue_actual": ra,
+        "nsld_may": _div(ra, may, 3), "ns_present": _div(ra, hs, 3),
+        "efficiency_dcl": _avg(r["efficiency_dcl"] for r in rs), "efficiency_other": _avg(r["efficiency_other"] for r in rs),
+        "efficiency_avg": _avg((r["efficiency_dcl"] if r["efficiency_dcl"] is not None else r["efficiency_other"]) for r in rs),  # hiệu suất bình quân: DCL và hàng khác gộp chung
+        "labor_list": total, "labor_present_erp": present, "labor_absent": (total - present) if total is not None and present is not None else None,
+        "absent_rate": _div((total - present) if total is not None and present is not None else None, total), "labor_indirect": lab.get("indirect"),
+        "avg_revenue_per_present": _div(ra, present, 3),
+    }
+
+
+# ---------------------------------------------------------------- Biểu đồ "Thực hiện DTBQ" (Mục tiêu / Đạt / Không đạt)
+TARGET_DEFAULTS = {"DTBQ_LD_MAY": 46.0, "DTBQ_LD_HIEU_SUAT": 38.0, "DTBQ_LD_HIEN_DIEN": 32.0}  # theo sheet "23" của báo cáo năng suất; sửa được (resource.manage)
+
+
+def get_targets(db: Session) -> dict[str, float]:
+    saved = {t.code: t.value for t in db.query(ProductivityTarget)}
+    return {k: saved.get(k, v) for k, v in TARGET_DEFAULTS.items()}
+
+
+def set_targets(db: Session, user, values: dict) -> dict[str, float]:
+    from fastapi import HTTPException
+
+    from app.db.session import utcnow
+    from app.services.audit import write_audit
+
+    for k, v in values.items():
+        if k not in TARGET_DEFAULTS:
+            raise HTTPException(422, f"Mục tiêu không hợp lệ: {k}")
+        if v is None or not float(v) > 0:
+            raise HTTPException(422, "Mục tiêu phải > 0 (USD/người)")
+    for k, v in values.items():
+        row = db.get(ProductivityTarget, k)
+        if row is None:
+            db.add(ProductivityTarget(code=k, value=float(v), updated_by=user.username, updated_at=utcnow()))
+        else:
+            row.value, row.updated_by, row.updated_at = float(v), user.username, utcnow()
+    db.commit()
+    write_audit("PRODUCTIVITY_TARGET_UPDATE", user=user, object_type="ProductivityTarget", object_id="*", detail=", ".join(f"{k}={v}" for k, v in values.items()))
+    return get_targets(db)
+
+
+def dtbq_charts(targets: dict[str, float], codes: list[str], summaries: dict | None, days: list[dict]) -> dict | None:
+    """3 biểu đồ cột: (1) DTBQ LĐ may của công ty qua các ngày gần nhất, (2) DTBQ LĐ hiệu suất, (3) DTBQ LĐ hiện diện theo XN + toàn công ty.
+    Mỗi cột: value, status = ACHIEVED nếu ≥ mục tiêu, MISSED nếu thấp hơn (không có giá trị → None). Cột đầu luôn là "Mục tiêu"."""
+    if not summaries:
+        return None
+
+    def bars(t: float, items: list[tuple[str, float | None]]) -> list[dict]:
+        out = [{"label": "Mục tiêu", "value": t, "status": "TARGET"}]
+        out += [{"label": lb, "value": v, "status": None if v is None else ("ACHIEVED" if v >= t else "MISSED")} for lb, v in items]
+        return out
+
+    t1, t2, t3 = targets["DTBQ_LD_MAY"], targets["DTBQ_LD_HIEU_SUAT"], targets["DTBQ_LD_HIEN_DIEN"]
+    tong = summaries["TONG"]
+    return {
+        "targets": targets,
+        "may_by_day": bars(t1, [(d["date"], d["nsld_may"]) for d in days]),
+        "hieu_suat": bars(t2, [*[(c, summaries[c]["ns_present"]) for c in codes], ("Tổng công ty", tong["ns_present"])]),   # DT ÷ SLĐ tính hiệu suất
+        "hien_dien": bars(t3, [*[(c, summaries[c]["avg_revenue_per_present"]) for c in codes], ("Tổng công ty", tong.get("ns_all_labor"))]),  # DT ÷ LĐ hiện diện (công ty: + gián tiếp)
+    }
+
+
+def efficiency_daily(db: Session, day: date, codes: list[str]) -> list[dict]:
+    """Hiệu suất bình quân từng ngày từ đầu tháng đến ngày chọn (chỉ ngày có dữ liệu): mỗi XN = trung bình hiệu suất các dòng tổ × mã hàng (DCL và hàng khác gộp),
+    toàn công ty = trung bình các XN có giá trị (giống cách Excel gộp). Ngày/XN không có số liệu → None."""
+    from datetime import timedelta
+
+    ctx: dict = {}
+    out, d = [], date(day.year, day.month, 1)
+    while d <= day:
+        rows = rows_for_day(db, d, codes, light=True, ctx=ctx)
+        if rows:
+            sm = summarize(rows, codes, {})
+            out.append({"date": d.isoformat(), **{c: sm[c]["efficiency_avg"] for c in codes}, "TONG": sm["TONG"]["efficiency_avg"]})
+        d += timedelta(days=1)
+    return out
+
+
+def nsbq_monthly(db: Session, day: date, codes: list[str]) -> dict:
+    """NSBQ lao động hiện diện (USD/người) theo Brand và theo Khách hàng, trung bình các ngày từ đầu tháng đến ngày chọn (sheet "TỔNG NSBQ THEO BRAND"):
+    giá trị ngày của một brand = trung bình NS/LĐ hiện diện của các dòng tổ × mã hàng thuộc brand đó (pivot "Average of NSLĐBQ ... hiện diện");
+    giá trị tháng = trung bình các ngày có số liệu. Dòng chưa có brand/giá/lao động không được tính. Sắp giảm dần."""
+    from datetime import timedelta
+
+    ctx: dict = {}
+    days_brand: dict[str, list[float]] = defaultdict(list)
+    days_cust: dict[str, list[float]] = defaultdict(list)
+    d = date(day.year, day.month, 1)
+    while d <= day:
+        rows = rows_for_day(db, d, codes, light=True, ctx=ctx, with_price=True)
+        for key, bucket in (("brand", days_brand), ("customer", days_cust)):
+            per: dict[str, list[float]] = defaultdict(list)
+            for r in rows:
+                if r[key] and r["ns_present"] is not None:
+                    per[r[key]].append(r["ns_present"])
+            for name, vals in per.items():
+                bucket[name].append(sum(vals) / len(vals))
+        d += timedelta(days=1)
+
+    def fin(bucket):
+        return sorted(({"label": k, "value": round(sum(v) / len(v), 2), "days": len(v)} for k, v in bucket.items()), key=lambda x: -x["value"])
+
+    return {"month": f"{day.year}-{day.month:02d}", "by_brand": fin(days_brand), "by_customer": fin(days_cust)}
+
+
+def efficiency_month(daily: list[dict], codes: list[str]) -> list[dict]:
+    """Hiệu suất bình quân THÁNG của từng XN và toàn công ty = trung bình các ngày có giá trị trong chuỗi hàng ngày (hàng "bình quân" của Excel).
+    Trả [{label, value, days}] theo thứ tự XN1.., Tổng công ty; XN không có ngày nào ⇒ value None."""
+    out = []
+    for key, label in [*[(c, c) for c in codes], ("TONG", "Tổng công ty")]:
+        vals = [r[key] for r in daily if r.get(key) is not None]
+        out.append({"label": label, "value": round(sum(vals) / len(vals), 4) if vals else None, "days": len(vals)})
+    return out

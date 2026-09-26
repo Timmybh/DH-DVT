@@ -5,6 +5,7 @@ import Navbar from "./components/Navbar";
 import { useAuth } from "./context/AuthContext";
 import { useTheme } from "./theme/ThemeContext";
 import Dashboard from "./pages/Dashboard";
+import DashboardPage2 from "./pages/DashboardPage2";
 import ChangePassword from "./pages/ChangePassword";
 import Login from "./pages/Login";
 import Planning from "./pages/Planning";
@@ -56,6 +57,7 @@ export default function App() {
       <Route path="/login" element={<Login />} />
       <Route path="/change-password" element={<ChangePassword />} />
       <Route path="/" element={<Protected perm="dashboard.view"><Dashboard /></Protected>} />
+      <Route path="/dashboard/trang-2" element={<Protected perm="dashboard.view"><DashboardPage2 /></Protected>} />
       <Route path="/planning" element={<Protected perm="planning.view"><SubTabs tabs={PLANNING_TABS}><Planning /></SubTabs></Protected>} />
       <Route path="/planning/versions" element={<Protected perm="planning.view"><SubTabs tabs={PLANNING_TABS}><Versions /></SubTabs></Protected>} />
       <Route path="/planning/calendar" element={<Protected perm="calendar.view"><SubTabs tabs={PLANNING_TABS}><Calendar /></SubTabs></Protected>} />
