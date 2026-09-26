@@ -32,9 +32,7 @@ def compute_row(r: dict) -> dict:
     qty, plan, price = r.get("qty") or 0, r.get("plan_qty"), r.get("price")
     rev_actual = round(qty * price, 2) if price is not None else None
     rev_plan = round(plan * price, 2) if plan is not None and price is not None else None
-    eff = None
-    if r.get("basis_minutes") and qty and r.get("work_minutes") and r.get("labor_hs"):
-        eff = round(r["basis_minutes"] * qty / r["work_minutes"] / r["labor_hs"], 4)
+    eff = r.get("eff_line")  # hiệu suất tính ở cấp chuyền (xem _line_efficiency), không tính riêng từng mã hàng với lao động phân bổ
     return {
         "pct": _div(qty, plan) if plan else None,
         "revenue_plan": rev_plan, "revenue_actual": rev_actual,
@@ -91,7 +89,7 @@ def rows_for_day(db: Session, day: date, codes: list[str], light: bool = False, 
             basis = si.sot_minutes
         qty = out_q.get(k, 0)
         share = (qty / line_qty[k[:2]]) if line_qty.get(k[:2]) else None
-        present = lab.present if lab else None
+        present = lab.present if lab and lab.present else None  # có mặt = 0 (ERP chưa chấm công, vd ngày lễ) ⇒ coi như chưa có số liệu lao động, không chia cho 0/lao động ngoài chuyền
         hs = (present + (lab.outside or 0)) if lab and present is not None else None
         may_alloc = round(present * share, 2) if present is not None and share is not None else None
         hs_alloc = round(hs * share, 2) if hs is not None and share is not None else None
@@ -100,7 +98,27 @@ def rows_for_day(db: Session, day: date, codes: list[str], light: bool = False, 
                 "plan_qty": round(pl.plan_qty) if pl else None, "basis": ("SAM" if is_dcl else "SOT") if basis else None, "basis_minutes": basis,
                 "production_days": ((pl.sew_end - pl.in_line_from).days + 1) if pl and pl.in_line_from and pl.sew_end else None,
                 "labor_may": may_alloc, "labor_hs": hs_alloc, "work_minutes": lab.work_minutes if lab else None}
-        rows.append({**base, **compute_row({**base, "is_dcl": is_dcl})})
+        rows.append({**base, "_is_dcl": is_dcl})
+    # Hiệu suất tính theo CHUYỀN (lao động của chuyền dùng chung cho các mã hàng): mọi dòng cùng nhóm (DCL / hàng khác) của một chuyền có cùng hiệu suất
+    line_total: dict[tuple, int] = defaultdict(int)
+    for r in rows:
+        line_total[(r["factory"], r["line"])] += r["qty"]
+    grp: dict[tuple, list] = defaultdict(lambda: [0.0, 0])  # [Σ SAM×SL, Σ SL] của các dòng có SAM/SOT
+    for r in rows:
+        if r["basis_minutes"] and r["qty"] and r["_is_dcl"] is not None:
+            g = grp[(r["factory"], r["line"], r["_is_dcl"])]
+            g[0] += r["basis_minutes"] * r["qty"]
+            g[1] += r["qty"]
+    labor_hs_line = {(fc, ln): (lab.present + (lab.outside or 0)) for (fc, ln), lab in labor.items() if lab.present}
+    for i, r in enumerate(rows):
+        is_dcl = r.pop("_is_dcl")
+        eff_line = None
+        g = grp.get((r["factory"], r["line"], is_dcl))
+        wm, hs = r["work_minutes"], labor_hs_line.get((r["factory"], r["line"]))
+        if g and g[1] and wm and hs and is_dcl is not None:
+            # SAM bình quân của phần sản lượng có SAM/SOT × tổng sản lượng chuyền ÷ (thời gian × lao động): phần không có SAM/SOT coi như cùng SAM bình quân
+            eff_line = round((g[0] / g[1]) * line_total[(r["factory"], r["line"])] / wm / hs, 4)
+        rows[i] = {**r, **compute_row({**r, "is_dcl": is_dcl, "eff_line": eff_line})}
     return rows
 
 

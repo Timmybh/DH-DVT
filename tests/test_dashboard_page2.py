@@ -58,9 +58,10 @@ def test_productivity_rows_formulas(db):
     assert a["revenue_actual"] == 600.0 and a["revenue_plan"] == 1200.0                                                # × đơn giá 2,0
     share = 300 / 420
     assert a["labor_hs"] == round(40 * share, 2) and a["nsld_may"] == round(600.0 / round(36 * share, 2), 3)
-    assert a["efficiency_dcl"] == round(25.0 * 300 / 500 / round(40 * share, 2), 4) and a["efficiency_other"] is None  # SAM TT × SL ÷ thời gian ÷ SLĐ
+    eff_line = round((25.0 * 300 + 12.0 * 120) / 420 * 420 / 500 / 40, 4)                                              # chuyền: (Σ SAM×SL) ÷ thời gian ÷ SLĐ hiệu suất (SAM TT ưu tiên, thiếu thì SAM KT)
+    assert a["efficiency_dcl"] == eff_line and a["efficiency_other"] is None
     b = rows[("1", "340477")]
-    assert b["basis"] == "SAM" and b["efficiency_dcl"] == round(12.0 * 120 / 500 / round(40 * (120 / 420), 2), 4)      # dùng SAM KT khi thiếu TT
+    assert b["basis"] == "SAM" and b["efficiency_dcl"] == eff_line                                                     # mọi mã hàng cùng chuyền/nhóm có cùng hiệu suất
     assert b["price"] is None and b["revenue_actual"] is None                                                          # chưa có giá → để trống
     c = rows[("3", "PUMA1")]
     assert c["efficiency_other"] is None and c["work_minutes"] is None                                                 # chuyền 3 chưa có thời gian làm việc → không tính
@@ -220,3 +221,15 @@ def test_efficiency_month_is_average_of_daily():
     m = productivity.efficiency_month(daily, ["XN1", "XN2"])
     assert [(x["label"], x["value"], x["days"]) for x in m] == [("XN1", 0.9, 2), ("XN2", None, 0), ("Tổng công ty", 0.85, 2)]      # trung bình các ngày có giá trị; XN không có số liệu → None
     assert productivity.efficiency_month([], ["XN1"])[0]["value"] is None
+
+
+def test_zero_present_labor_gives_no_efficiency(db):
+    from datetime import date as D
+
+    db.query(LineOutputDaily).delete()
+    db.add_all([BrandCustomer(brand="Q", customer="DECATHLON"), StyleSam(style_cc="A", sam_minutes=1, brand="Q", sam_tt=20.0),
+                LineOutputDaily(day=D(2026, 5, 24), factory_code="XN1", line="1", style="A", po="", qty=500),
+                LaborDaily(factory_code="XN1", line="1", day=D(2026, 5, 24), total=40, present=0, outside=6, work_minutes=525)])   # ngày chưa chấm công
+    db.commit()
+    r = next(x for x in p2.build(db, D(2026, 5, 24))["lines"] if x["style"] == "A")
+    assert r["efficiency_dcl"] is None and r["labor_hs"] is None                                       # không tính hiệu suất bằng 6 người "ngoài chuyền"
