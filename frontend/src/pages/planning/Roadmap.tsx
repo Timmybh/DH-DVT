@@ -13,6 +13,7 @@ type Msg = { ok: boolean; text: string } | null;
 interface Options {
   lifecycle_statuses: string[]; scope_types: string[]; metric_codes: string[]; target_kinds: string[]; period_types: string[];
   baseline_bases: Record<string, string[]>; canonical_units: Record<string, string>; proposal_types: string[]; rule_proposal_types: string[];
+  cost_families: string[]; cost_approvable_source_kinds: Record<string, string[]>; cost_blocked_source_kinds: string[]; machine_price_bases: string[]; asset_kinds: string[]; asset_subject_types: string[];
   exec_approvable_source_kinds: string[]; exec_blocked_source_kinds: string[]; adapters: { adapter_code: string; adapter_version: string; proposal_type: string; needs_machine_type: boolean; productivity_units: string[]; description: string }[];
 }
 interface Scenario { id: number; scenario_code: string; name: string; description: string; scope_type: string; scope_value: string; owner: string; status: string; allowed_transitions: string[]; versions?: { id: number; version_no: number; status: string; note: string }[] }
@@ -53,6 +54,7 @@ const STATUS_CLS: Record<string, string> = {
   CALCULATED: "pg-ok", NEEDS_INPUT: "pg-adv", NOT_APPLICABLE: "bg-slate-500/20 text-slate-400", SELECTED: "pg-known", REJECTED: "bg-red-500/20 text-red-600",
   MISSING_BASELINE: "bg-red-500/20 text-red-600", UNIT_MISMATCH: "bg-red-500/20 text-red-600", SCOPE_MISMATCH: "bg-red-500/20 text-red-600", PARTIAL_SOURCE: "pg-adv",
   RETIRED: "bg-slate-500/20 text-slate-400", UNDER_REVIEW: "pg-adv", COUNTED: "pg-ok", UNRESOLVED: "pg-adv",
+  PRICED: "pg-ok", UNPRICED: "pg-adv", COMPLETE_PRICING: "pg-ok", PARTIAL_PRICING: "pg-adv",
   NOT_COVERED: "bg-slate-500/20 text-slate-500", PARTIALLY_COVERED: "pg-adv", COVERED: "pg-ok", OVER_COVERED: "pg-known", NOT_COMBINABLE: "pg-adv",
 };
 const Chip = ({ s }: { s: string }) => <span className={`pg-chip ${STATUS_CLS[s] ?? ""}`}>{s}</span>;
@@ -83,6 +85,7 @@ export default function Roadmap() {
   const [creating, setCreating] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
   const [execOpen, setExecOpen] = useState(false);
+  const [costOpen, setCostOpen] = useState(false);
   const load = useCallback(async () => setRows((await api.get<Scenario[]>(`${RES}/scenarios`)).data), []);
   useEffect(() => { api.get<Options>(`${RES}/options`).then((r) => setOpts(r.data)).catch((e) => setMsg({ ok: false, text: errorMessage(e) })); load().catch((e) => setMsg({ ok: false, text: errorMessage(e) })); }, [load]);
   return (
@@ -94,6 +97,7 @@ export default function Roadmap() {
       <Notice msg={msg} />
       <div className="flex flex-wrap items-center gap-2">
         <span className="flex-1" />
+        <button onClick={() => setCostOpen(true)} className={btn} data-testid="roadmap-cost-open">Cost Evidence</button>
         <button onClick={() => setExecOpen(true)} className={btn} data-testid="roadmap-exec-open">Rule thực thi</button>
         <button onClick={() => setRulesOpen(true)} className={btn} data-testid="roadmap-rules-open">Rule registry (metadata)</button>
         {perm.manage && <button onClick={() => setCreating(true)} className={primary} data-testid="roadmap-scenario-add">+ Scenario</button>}
@@ -112,6 +116,7 @@ export default function Roadmap() {
         <div>{sel !== null && opts ? <ScenarioDetail key={sel} id={sel} opts={opts} perm={perm} onChanged={() => void load()} setMsg={setMsg} /> : <p className="rounded-2xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400">Chọn một scenario để xem version, milestone và kết quả mô phỏng.</p>}</div>
       </div>
       {creating && opts && <ScenarioForm opts={opts} onClose={() => setCreating(false)} onDone={(id) => { setCreating(false); void load(); setSel(id); }} setMsg={setMsg} />}
+      {costOpen && opts && <CostEvidenceModal opts={opts} perm={perm} onClose={() => setCostOpen(false)} setMsg={setMsg} />}
       {execOpen && opts && <ExecRulesModal opts={opts} perm={perm} onClose={() => setExecOpen(false)} setMsg={setMsg} />}
       {rulesOpen && opts && <RulesModal opts={opts} perm={perm} onClose={() => setRulesOpen(false)} setMsg={setMsg} />}
     </div>
@@ -650,7 +655,189 @@ function ActionPlanPanel({ runId, proposals, perm, setMsg }: { runId: number; pr
                 <td className="px-3">{t.mixed_resource_types ? <><Chip s="NOT_COMBINABLE" /><div className="text-[10px] text-amber-700">MIXED_RESOURCE_TYPES — không có tổng remaining gap</div></> : <Chip s={t.overall_combined_status} />}{t.has_unresolved_actions && <div className="text-[10px] text-amber-700">có action chưa giải quyết (UNRESOLVED)</div>}</td>
               </tr>
             ))}{det.coverage.targets.length === 0 && <tr><td colSpan={6} className="py-3 text-center text-slate-400">Run không có target OUTPUT_QTY với gap &gt; 0.</td></tr>}</tbody></table></div>
+          {det.status === "APPROVED" && <DecisionPackagePanel apVersionId={det.id} items={det.items} perm={perm} setMsg={setMsg} />}
           {det.coverage.unresolved_items.length > 0 && <p className="text-xs text-amber-700" data-testid="roadmap-ap-unresolved">Unresolved (không tính coverage): {det.coverage.unresolved_items.map((u) => `${PTYPE_LABEL[u.proposal_type] ?? u.proposal_type} @${u.source_milestone_code}`).join(", ")}</p>}
+        </div>
+      )}
+      {drawer && <Modal title={drawer.title} onClose={() => setDrawer(null)} wide><J v={drawer.data} /></Modal>}
+    </div>
+  );
+}
+
+
+interface CostEv {
+  id: number; evidence_code: string; evidence_version: number; cost_family: string; machine_type_code: string | null; machine_model_id: number | null; future_candidate_id: number | null;
+  scope_type: string; scope_value: string; cost_period: string; amount: string; currency: string; price_basis: string; vendor: string; source_kind: string; source_ref: string;
+  effective_from: string | null; effective_to: string | null; quote_valid_until: string | null; status: string; reviewed_by: string; approved_by: string;
+}
+const EV_EMPTY = { evidence_code: "", cost_family: "MACHINE_UNIT_PRICE", machine_type_code: "", machine_model_id: "", future_candidate_id: "", scope_type: "TOTAL", scope_value: "", cost_period: "MONTH", amount: "", currency: "USD", price_basis: "", vendor: "", source_kind: "", source_ref: "", evidence_date: "", quote_valid_until: "", effective_from: "", effective_to: "" };
+
+/** Task 8 (Issue #17): cost evidence versioned/effective-dated — machine unit price / labor cost per worker per period. Không seed; APPROVED mới được dùng; four-eyes. */
+function CostEvidenceModal({ opts, perm, onClose, setMsg }: { opts: Options; perm: { manage: boolean; approve: boolean }; onClose: () => void; setMsg: (m: Msg) => void }) {
+  const [rows, setRows] = useState<CostEv[]>([]);
+  const [d, setD] = useState(EV_EMPTY);
+  const [asset, setAsset] = useState({ subject_type: "MACHINE_TYPE", subject_ref: "", asset_kind: "IMAGE", uri: "", asset_ref: "" });
+  const load = useCallback(async () => setRows((await api.get<CostEv[]>(`${RES}/cost-evidence`)).data), []);
+  useEffect(() => { load().catch((e) => setMsg({ ok: false, text: errorMessage(e) })); }, [load, setMsg]);
+  const act = async (fn: () => Promise<unknown>, ok: string) => { try { await fn(); setMsg({ ok: true, text: ok }); await load(); } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); } };
+  const machine = d.cost_family === "MACHINE_UNIT_PRICE";
+  const kinds = [...(opts.cost_approvable_source_kinds[d.cost_family] ?? []), ...opts.cost_blocked_source_kinds];
+  const create = () => act(async () => {
+    const n = (v: string) => (v ? Number(v) : undefined);
+    await api.post(`${RES}/cost-evidence`, {
+      evidence_code: d.evidence_code, cost_family: d.cost_family, amount: d.amount, currency: d.currency, source_kind: d.source_kind, source_ref: d.source_ref, vendor: d.vendor,
+      evidence_date: d.evidence_date || undefined, quote_valid_until: d.quote_valid_until || undefined, effective_from: d.effective_from || undefined, effective_to: d.effective_to || undefined,
+      ...(machine ? { machine_type_code: d.machine_type_code, machine_model_id: n(d.machine_model_id), future_candidate_id: n(d.future_candidate_id), price_basis: d.price_basis || undefined }
+        : { scope_type: d.scope_type, scope_value: d.scope_value, cost_period: d.cost_period }),
+    });
+    setD({ ...EV_EMPTY, cost_family: d.cost_family });
+  }, "Đã tạo cost evidence (Draft).");
+  const addAsset = () => act(async () => { await api.post(`${RES}/asset-refs`, { ...asset, uri: asset.uri || undefined, asset_ref: asset.asset_ref || undefined }); setAsset({ ...asset, uri: "", asset_ref: "" }); }, "Đã thêm asset ref (chỉ tham chiếu).");
+  return (
+    <Modal title="Cost Evidence — giá máy / chi phí lao động (versioned, evidence-only)" onClose={onClose} wide>
+      <p className="text-xs text-slate-500">Cost evidence là <b>bằng chứng có version và hiệu lực</b>, không phải trường giá sống. Chỉ evidence <b>APPROVED</b> (nguồn thuộc allowlist theo loại, reviewer ≠ approver) mới được gắn vào Decision Package. Số tiền lưu Decimal chính xác; không quy đổi tiền tệ/kỳ; machine chỉ tính <span className="font-mono">số lượng × đơn giá</span> (price_basis chỉ mô tả phạm vi thương mại — không cộng thuế/vận chuyển/lắp đặt). Chưa có evidence nào được cấu hình sẵn.</p>
+      <div className="mt-3 max-h-72 overflow-y-auto rounded-xl border border-slate-200">
+        <table className="w-full text-xs" data-testid="roadmap-cost-table"><thead><tr><th className={th}>Evidence</th><th className={th}>Loại / đối tượng</th><th className={`${th} text-right`}>Đơn giá</th><th className={th}>Hiệu lực</th><th className={th}>Nguồn</th><th className={th}>Trạng thái</th><th /></tr></thead>
+          <tbody>{rows.map((r) => (
+            <tr key={r.id} className="border-t border-slate-100 align-top">
+              <td className="px-3 py-1.5 font-mono">{r.evidence_code}@v{r.evidence_version}</td>
+              <td className="px-3">{r.cost_family === "MACHINE_UNIT_PRICE" ? `Máy ${r.machine_type_code}${r.machine_model_id ? ` · model#${r.machine_model_id}` : ""}${r.future_candidate_id ? ` · cand#${r.future_candidate_id}` : ""}` : `Lao động ${r.scope_type}${r.scope_value ? `/${r.scope_value}` : ""} · /${r.cost_period}`}<div className="text-[10px] text-slate-400">{r.price_basis}</div></td>
+              <td className="px-3 text-right font-mono">{r.amount} {r.currency}</td>
+              <td className="px-3">{r.effective_from ?? "—"} → {r.effective_to ?? "mở"}{r.quote_valid_until && <div className="text-[10px] text-slate-400">quote đến {r.quote_valid_until}</div>}</td>
+              <td className="px-3">{r.source_kind}<div className="text-[10px] text-slate-400">{r.vendor} {r.source_ref}</div></td>
+              <td className="px-3"><Chip s={r.status} />{r.reviewed_by && <div className="text-[10px] text-slate-400">review: {r.reviewed_by}</div>}{r.approved_by && <div className="text-[10px] text-slate-400">duyệt: {r.approved_by}</div>}</td>
+              <td className="whitespace-nowrap px-3 text-right">
+                {perm.manage && r.status === "DRAFT" && <button className="text-amber-700 hover:underline" onClick={() => void act(() => api.post(`${RES}/cost-evidence/${r.id}/submit-review`), "Đã chuyển UNDER_REVIEW (bạn là reviewer).")}>Gửi review</button>}
+                {perm.approve && r.status === "UNDER_REVIEW" && <button className="ml-2 text-green-700 hover:underline" onClick={() => void act(() => api.post(`${RES}/cost-evidence/${r.id}/approve`), "Đã duyệt evidence.")} data-testid={`roadmap-cost-approve-${r.id}`}>Duyệt</button>}
+                {perm.approve && r.status === "APPROVED" && <button className="ml-2 text-red-600 hover:underline" onClick={() => { const reason = window.prompt("Lý do retire evidence? (bắt buộc)") ?? ""; if (reason.trim()) void act(() => api.post(`${RES}/cost-evidence/${r.id}/retire`, { reason }), "Đã retire evidence."); }}>Retire</button>}
+                {perm.manage && (r.status === "APPROVED" || r.status === "RETIRED") && <button className="ml-2 text-brand hover:underline" onClick={() => void act(() => api.post(`${RES}/cost-evidence/${r.id}/new-version`), "Đã tạo version mới (Draft).")}>Version mới</button>}
+              </td></tr>
+          ))}{rows.length === 0 && <tr><td colSpan={7} className="py-4 text-center text-slate-400">Chưa có cost evidence nào (đúng: production không seed giá/chi phí).</td></tr>}</tbody></table>
+      </div>
+      {perm.manage && (
+        <div className="mt-3 grid grid-cols-4 gap-2 rounded-xl border border-slate-200 p-3">
+          <F label="Mã evidence"><input className={inp} value={d.evidence_code} onChange={(e) => setD({ ...d, evidence_code: e.target.value })} data-testid="roadmap-cost-code" /></F>
+          <F label="Loại chi phí"><select className={inp} value={d.cost_family} onChange={(e) => setD({ ...d, cost_family: e.target.value, source_kind: "" })}>{opts.cost_families.map((f) => <option key={f}>{f}</option>)}</select></F>
+          <F label="Số tiền (Decimal)"><input className={inp} value={d.amount} onChange={(e) => setD({ ...d, amount: e.target.value })} data-testid="roadmap-cost-amount" /></F>
+          <F label="Currency (3 chữ in hoa)"><input className={inp} value={d.currency} maxLength={3} onChange={(e) => setD({ ...d, currency: e.target.value.toUpperCase() })} /></F>
+          {machine ? <>
+            <F label="Loại máy"><input className={inp} value={d.machine_type_code} onChange={(e) => setD({ ...d, machine_type_code: e.target.value })} /></F>
+            <F label="Model id (tùy chọn)"><input className={inp} value={d.machine_model_id} onChange={(e) => setD({ ...d, machine_model_id: e.target.value })} /></F>
+            <F label="Candidate id (tùy chọn)"><input className={inp} value={d.future_candidate_id} onChange={(e) => setD({ ...d, future_candidate_id: e.target.value })} /></F>
+            <F label="Price basis (bắt buộc)"><select className={inp} value={d.price_basis} onChange={(e) => setD({ ...d, price_basis: e.target.value })}><option value="" />{opts.machine_price_bases.map((b) => <option key={b}>{b}</option>)}</select></F>
+          </> : <>
+            <F label="Scope"><select className={inp} value={d.scope_type} onChange={(e) => setD({ ...d, scope_type: e.target.value })}>{opts.scope_types.map((t) => <option key={t}>{t}</option>)}</select></F>
+            <F label="Factory (khi FACTORY)"><input className={inp} value={d.scope_value} disabled={d.scope_type !== "FACTORY"} onChange={(e) => setD({ ...d, scope_value: e.target.value })} /></F>
+            <F label="Kỳ chi phí (khớp kỳ action)"><select className={inp} value={d.cost_period} onChange={(e) => setD({ ...d, cost_period: e.target.value })}>{opts.period_types.map((t) => <option key={t}>{t}</option>)}</select></F>
+          </>}
+          <F label="Loại nguồn"><select className={inp} value={d.source_kind} onChange={(e) => setD({ ...d, source_kind: e.target.value })}><option value="" />{kinds.map((k) => <option key={k} value={k}>{k}{opts.cost_blocked_source_kinds.includes(k) ? " (không duyệt được)" : ""}</option>)}</select></F>
+          <div className="col-span-2"><F label="Source ref"><input className={inp} value={d.source_ref} onChange={(e) => setD({ ...d, source_ref: e.target.value })} /></F></div>
+          <F label="Vendor (bắt buộc với SUPPLIER_QUOTATION)"><input className={inp} value={d.vendor} onChange={(e) => setD({ ...d, vendor: e.target.value })} /></F>
+          <F label="Ngày evidence"><input className={inp} type="date" value={d.evidence_date} onChange={(e) => setD({ ...d, evidence_date: e.target.value })} /></F>
+          <F label="Quote hiệu lực đến"><input className={inp} type="date" value={d.quote_valid_until} onChange={(e) => setD({ ...d, quote_valid_until: e.target.value })} /></F>
+          <F label="Hiệu lực từ"><input className={inp} type="date" value={d.effective_from} onChange={(e) => setD({ ...d, effective_from: e.target.value })} /></F>
+          <F label="Hiệu lực đến"><input className={inp} type="date" value={d.effective_to} onChange={(e) => setD({ ...d, effective_to: e.target.value })} /></F>
+          <div className="col-span-4 text-right"><button className={primary} disabled={!d.evidence_code.trim() || !d.amount} onClick={() => void create()} data-testid="roadmap-cost-save">+ Tạo evidence Draft</button></div>
+        </div>
+      )}
+      {perm.manage && (
+        <div className="mt-3 grid grid-cols-6 gap-2 rounded-xl border border-slate-200 p-3">
+          <div className="col-span-6 text-[11px] font-semibold text-slate-500">Asset ref (chỉ tham chiếu ảnh/datasheet/3D — không upload/tải/render; https:// hoặc asset_ref nội bộ)</div>
+          <F label="Đối tượng"><select className={inp} value={asset.subject_type} onChange={(e) => setAsset({ ...asset, subject_type: e.target.value })}>{opts.asset_subject_types.map((t) => <option key={t}>{t}</option>)}</select></F>
+          <F label="Mã / id"><input className={inp} value={asset.subject_ref} onChange={(e) => setAsset({ ...asset, subject_ref: e.target.value })} /></F>
+          <F label="Loại asset"><select className={inp} value={asset.asset_kind} onChange={(e) => setAsset({ ...asset, asset_kind: e.target.value })}>{opts.asset_kinds.map((t) => <option key={t}>{t}</option>)}</select></F>
+          <div className="col-span-2"><F label="URI https://"><input className={inp} value={asset.uri} onChange={(e) => setAsset({ ...asset, uri: e.target.value })} /></F></div>
+          <F label="hoặc asset_ref"><input className={inp} value={asset.asset_ref} onChange={(e) => setAsset({ ...asset, asset_ref: e.target.value })} /></F>
+          <div className="col-span-6 text-right"><button className={btn} disabled={!asset.subject_ref || (!asset.uri && !asset.asset_ref)} onClick={() => void addAsset()}>+ Thêm asset ref</button></div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+interface PkgRow { id: number; package_code: string; package_no: number; status: string }
+interface PkgLine { item_id: number; proposal_type: string; planned_effective_date: string; selected_quantity: number | null; cost_class: string | null; cost_status: string; cost_status_reason: string; amount: string | null; currency: string | null; cost_period: string | null; milestone_bucket: string; warnings: string[]; evidence: { evidence_code: string; evidence_version: number } | null }
+interface PkgDetail extends PkgRow {
+  frozen: boolean; editable: boolean; reviewed_by: string; approved_by: string; package_fingerprint: string; bindings: { action_item_id: number; evidence_id: number; machine_model_id: number | null; future_candidate_id: number | null }[];
+  live_warnings: { code: string; detail: string; evidence: string }[];
+  package: { completeness: { pricing: string; supported_action_count: number; priced_action_count: number; unresolved_count: number }; warning_codes: string[]; selected_actions: PkgLine[]; unresolved_actions: PkgLine[];
+    machine_details: { item_id: number; machine_type_code: string; selected_quantity: number; price_basis: string | null; details: { machine_type: { name: string; reference_placeholders: { note: string } } | null; machine_model: { brand: string; model: string } | null; future_candidate: { candidate_code: string } | null; asset_refs: { asset_kind: string; uri: string; asset_ref: string }[] } }[];
+    labor_details: { item_id: number; selected_headcount: number; productivity: { value: number; unit: string } }[];
+    direct_cost_summary: { MACHINE_CAPEX: { currency: string; amount: string; by_milestone_bucket: Record<string, string> }[]; LABOR_RECURRING_COST: { currency: string; cost_period: string; amount: string }[]; labor_run_rate_by_milestone: { milestone_code: string; currency: string; cost_period: string; run_rate_per_period: string }[]; UNPRICED_ACTIONS: { item_id: number; proposal_type: string; reason: string }[] } };
+}
+
+/** Task 8: Executive Decision Package của một Action Plan version APPROVED. Bind evidence do user chọn; không auto-pick, không grand total, không ranking. */
+function DecisionPackagePanel({ apVersionId, items, perm, setMsg }: { apVersionId: number; items: ApItem[]; perm: { manage: boolean; approve: boolean }; setMsg: (m: Msg) => void }) {
+  const [pkgs, setPkgs] = useState<PkgRow[]>([]);
+  const [sel, setSel] = useState<number | null>(null);
+  const [det, setDet] = useState<PkgDetail | null>(null);
+  const [evs, setEvs] = useState<CostEv[]>([]);
+  const [b, setB] = useState({ item: "", evidence: "", model: "", cand: "" });
+  const [drawer, setDrawer] = useState<{ title: string; data: unknown } | null>(null);
+  const loadList = useCallback(async () => setPkgs((await api.get<PkgRow[]>(`${RES}/decision-packages?action_plan_version_id=${apVersionId}`)).data), [apVersionId]);
+  const loadDet = useCallback(async (id: number) => setDet((await api.get<PkgDetail>(`${RES}/decision-packages/${id}`)).data), []);
+  useEffect(() => { loadList().catch((e) => setMsg({ ok: false, text: errorMessage(e) })); api.get<CostEv[]>(`${RES}/cost-evidence?status=APPROVED`).then((r) => setEvs(r.data)).catch(() => undefined); }, [loadList, setMsg]);
+  useEffect(() => { if (sel !== null) loadDet(sel).catch((e) => setMsg({ ok: false, text: errorMessage(e) })); else setDet(null); }, [sel, loadDet, setMsg]);
+  const act = async (fn: () => Promise<unknown>, ok: string) => { try { await fn(); setMsg({ ok: true, text: ok }); await loadList(); if (sel !== null) await loadDet(sel); } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); } };
+  const create = async () => { try { const v = (await api.post<PkgDetail>(`${RES}/action-plan-versions/${apVersionId}/decision-packages`, {})).data; await loadList(); setSel(v.id); setMsg({ ok: true, text: `Đã tạo ${v.package_code} (Draft).` }); } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); } };
+  const counted = items.filter((i) => i.inclusion_status === "COUNTED");
+  const pickedItem = counted.find((i) => String(i.id) === b.item);
+  const fam = pickedItem?.proposal_type === "MACHINE_PURCHASE" ? "MACHINE_UNIT_PRICE" : "LABOR_COST_PER_WORKER_PERIOD";
+  const s = det?.package;
+  const compare = async (otherId: number) => { try { setDrawer({ title: `So sánh package #${det?.id} ↔ #${otherId} (không xếp hạng)`, data: (await api.get(`${RES}/decision-package-compare/${det!.id}/${otherId}`)).data }); } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); } };
+  return (
+    <div className="space-y-3 rounded-xl border border-indigo-200 p-3" data-testid="roadmap-decision-package">
+      <div className="flex flex-wrap items-center gap-2">
+        <h5 className="text-xs font-bold">Executive Decision Package (evidence chi phí — không tối ưu, không xếp hạng, không ROI)</h5><span className="flex-1" />
+        {perm.manage && <button className={btn} onClick={() => void create()} data-testid="roadmap-pkg-create">+ Tạo Decision Package</button>}
+      </div>
+      <div className="flex flex-wrap gap-2 text-xs">{pkgs.length === 0 && <span className="text-slate-400">Chưa có package.</span>}{pkgs.map((p) => <button key={p.id} onClick={() => setSel(p.id)} className={`rounded-full border px-3 py-1 ${sel === p.id ? "border-brand bg-brand/10" : "border-slate-300"}`}>{p.package_code} <Chip s={p.status} /></button>)}</div>
+      {det && s && (
+        <div className="space-y-3" data-testid="roadmap-pkg-detail">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <b>{det.package_code}</b><Chip s={det.status} /><Chip s={s.completeness.pricing} /><span className="text-slate-400">{det.frozen ? `đóng băng · fp ${det.package_fingerprint}` : "preview (tính lại từ evidence hiện tại)"} · {s.completeness.priced_action_count}/{s.completeness.supported_action_count} action đã định giá · {s.completeness.unresolved_count} unresolved</span><span className="flex-1" />
+            {perm.manage && det.status === "DRAFT" && <button className={btn} onClick={() => void act(() => api.post(`${RES}/decision-packages/${det.id}/submit-review`), "Đã đóng băng & chuyển UNDER_REVIEW (bạn là reviewer).")} data-testid="roadmap-pkg-review">Gửi review (đóng băng)</button>}
+            {perm.approve && det.status === "UNDER_REVIEW" && <button className={primary} onClick={() => void act(() => api.post(`${RES}/decision-packages/${det.id}/approve`), "Đã duyệt package (không thực thi mua/tuyển).")} data-testid="roadmap-pkg-approve">Duyệt</button>}
+            {perm.approve && det.status === "APPROVED" && <button className={btn} onClick={() => { const reason = window.prompt("Lý do archive? (bắt buộc)") ?? ""; if (reason.trim()) void act(() => api.post(`${RES}/decision-packages/${det.id}/archive`, { reason }), "Đã archive."); }}>Archive</button>}
+            <select className={`${inp} !w-44`} value="" onChange={(e) => { if (e.target.value) void compare(Number(e.target.value)); }}><option value="">So sánh với…</option>{pkgs.filter((p) => p.id !== det.id).map((p) => <option key={p.id} value={p.id}>{p.package_code}</option>)}</select>
+          </div>
+          {det.live_warnings.map((w) => <p key={w.evidence} className="rounded-lg border border-amber-300/60 px-3 py-1 text-xs text-amber-700">{w.code}: {w.evidence} — {w.detail}</p>)}
+          {det.editable && perm.manage && (
+            <div className="grid grid-cols-5 gap-2 rounded-lg border border-slate-200 p-2">
+              <div className="col-span-2"><F label="Item COUNTED (labor/machine)"><select className={inp} value={b.item} onChange={(e) => setB({ ...b, item: e.target.value, evidence: "" })} data-testid="roadmap-pkg-item"><option value="" />{counted.map((i) => <option key={i.id} value={i.id}>{PTYPE_LABEL[i.proposal_type]} · {i.source_milestone_code} · {i.selected_quantity} {i.unit} · {i.planned_effective_date}</option>)}</select></F></div>
+              <div className="col-span-2"><F label="Evidence APPROVED (user chọn tường minh)"><select className={inp} value={b.evidence} onChange={(e) => setB({ ...b, evidence: e.target.value })} data-testid="roadmap-pkg-evidence"><option value="" />{evs.filter((e) => e.cost_family === fam).map((e) => <option key={e.id} value={e.id}>{e.evidence_code}@v{e.evidence_version} · {e.amount} {e.currency}{e.cost_period ? `/${e.cost_period}` : ""}</option>)}</select></F></div>
+              <div className="flex items-end"><button className={primary} disabled={!b.item || !b.evidence} data-testid="roadmap-pkg-bind" onClick={() => void act(() => api.post(`${RES}/decision-packages/${det.id}/bindings`, { action_item_id: Number(b.item), evidence_id: Number(b.evidence), machine_model_id: b.model ? Number(b.model) : undefined, future_candidate_id: b.cand ? Number(b.cand) : undefined }), "Đã bind evidence.")}>Bind</button></div>
+              {fam === "MACHINE_UNIT_PRICE" && <><F label="Model id (tùy chọn)"><input className={inp} value={b.model} onChange={(e) => setB({ ...b, model: e.target.value })} /></F><F label="Candidate id (tùy chọn)"><input className={inp} value={b.cand} onChange={(e) => setB({ ...b, cand: e.target.value })} /></F></>}
+              <p className="col-span-5 text-[11px] text-slate-500">Mỗi item dùng đúng 1 evidence do bạn chọn (không tự chọn “mới nhất/rẻ nhất”). Thiếu evidence ⇒ UNPRICED. Bỏ bind: xóa bằng nút “Bỏ bind” ở bảng dưới.</p>
+            </div>
+          )}
+          <div className="overflow-x-auto"><table className="w-full text-xs" data-testid="roadmap-pkg-lines">
+            <thead><tr><th className={th}>Action</th><th className={th}>Ngày / bucket</th><th className={`${th} text-right`}>Số lượng</th><th className={th}>Evidence</th><th className={`${th} text-right`}>Chi phí trực tiếp</th><th className={th}>Định giá</th><th /></tr></thead>
+            <tbody>{[...s.selected_actions, ...s.unresolved_actions].map((l) => (
+              <tr key={l.item_id} className="border-t border-slate-100 align-top">
+                <td className="px-3 py-1.5">{PTYPE_LABEL[l.proposal_type] ?? l.proposal_type}<div className="text-[10px] text-slate-400">{l.cost_class ?? "không hỗ trợ giá"}</div></td>
+                <td className="px-3">{l.planned_effective_date}<div className="text-[10px] text-slate-400">bucket {l.milestone_bucket} (planning, không phải ngày thanh toán)</div></td>
+                <td className="px-3 text-right">{l.selected_quantity ?? "—"}</td>
+                <td className="px-3 font-mono text-[11px]">{l.evidence ? `${l.evidence.evidence_code}@v${l.evidence.evidence_version}` : "—"}</td>
+                <td className="px-3 text-right font-mono">{l.amount ? `${l.amount} ${l.currency}${l.cost_period ? `/${l.cost_period}` : ""}` : "—"}</td>
+                <td className="px-3"><Chip s={l.cost_status} />{l.cost_status_reason && <div className="text-[10px] text-amber-700">{l.cost_status_reason}</div>}</td>
+                <td className="whitespace-nowrap px-3 text-right">{det.editable && perm.manage && det.bindings.some((x) => x.action_item_id === l.item_id) && <button className="text-red-600 hover:underline" onClick={() => void act(() => api.delete(`${RES}/decision-packages/${det.id}/bindings/${l.item_id}`), "Đã bỏ bind.")}>Bỏ bind</button>}</td>
+              </tr>
+            ))}</tbody></table></div>
+          <div className="grid gap-3 md:grid-cols-2" data-testid="roadmap-pkg-summary">
+            <div className="rounded-lg border border-slate-200 p-2 text-xs"><b>Machine CAPEX</b> (theo currency)
+              {s.direct_cost_summary.MACHINE_CAPEX.length === 0 ? <div className="text-slate-400">chưa có action máy nào được định giá</div> : s.direct_cost_summary.MACHINE_CAPEX.map((g) => <div key={g.currency}>{g.currency}: <span className="font-mono">{g.amount}</span><div className="text-[10px] text-slate-400">{Object.entries(g.by_milestone_bucket).map(([k, v]) => `${k}: ${v}`).join(" · ")}</div></div>)}</div>
+            <div className="rounded-lg border border-slate-200 p-2 text-xs"><b>Labor Recurring Cost</b> (run-rate mỗi kỳ, theo currency + kỳ; không nhân số kỳ)
+              {s.direct_cost_summary.LABOR_RECURRING_COST.length === 0 ? <div className="text-slate-400">chưa có action lao động nào được định giá</div> : s.direct_cost_summary.LABOR_RECURRING_COST.map((g) => <div key={`${g.currency}${g.cost_period}`}>{g.currency}/{g.cost_period}: <span className="font-mono">{g.amount}</span></div>)}</div>
+          </div>
+          <p className="text-[11px] text-slate-500">Không có “Total Investment”: CAPEX máy và chi phí lao động định kỳ được giữ riêng; không cộng khác currency/kỳ; không ROI/NPV/IRR/payback.</p>
+          {s.direct_cost_summary.UNPRICED_ACTIONS.length > 0 && <p className="text-xs text-amber-700">Unpriced: {s.direct_cost_summary.UNPRICED_ACTIONS.map((u) => `${PTYPE_LABEL[u.proposal_type] ?? u.proposal_type} (${u.reason})`).join(", ")}</p>}
+          {s.warning_codes.length > 0 && <p className="text-xs text-amber-700" data-testid="roadmap-pkg-warnings">Cảnh báo: {s.warning_codes.join(", ")}</p>}
+          <div className="flex flex-wrap gap-2 text-xs">
+            {s.machine_details.map((m) => <button key={m.item_id} className={btn} onClick={() => setDrawer({ title: `Chi tiết máy — ${m.machine_type_code}`, data: m })}>Máy {m.machine_type_code} ×{m.selected_quantity}{m.details?.machine_model ? ` · ${m.details.machine_model.brand} ${m.details.machine_model.model}` : ""}{m.details && m.details.asset_refs.length > 0 ? ` · ${m.details.asset_refs.length} asset` : ""}</button>)}
+            {s.labor_details.map((l) => <button key={l.item_id} className={btn} onClick={() => setDrawer({ title: "Chi tiết lao động", data: l })}>Lao động ×{l.selected_headcount} · năng suất {l.productivity.value} {l.productivity.unit}</button>)}
+            <button className={btn} onClick={() => setDrawer({ title: "Package JSON (snapshot)", data: det.package })}>Snapshot / evidence</button>
+          </div>
         </div>
       )}
       {drawer && <Modal title={drawer.title} onClose={() => setDrawer(null)} wide><J v={drawer.data} /></Modal>}

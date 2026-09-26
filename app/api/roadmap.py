@@ -13,6 +13,13 @@ from app.db.session import get_db
 from app.models.core import User
 from app.models.roadmap import (
     ACTION_PLAN_STATUSES,
+    ASSET_KINDS,
+    ASSET_SUBJECT_TYPES,
+    COST_APPROVABLE_SOURCE_KINDS,
+    COST_BLOCKED_SOURCE_KINDS,
+    COST_FAMILIES,
+    MACHINE_PRICE_BASES,
+    PACKAGE_STATUSES,
     BASELINE_BASES,
     CANONICAL_UNITS,
     EXEC_APPROVABLE_SOURCE_KINDS,
@@ -31,6 +38,8 @@ from app.models.roadmap import (
 from app.services import roadmap as rm
 from app.services import roadmap_action_plan as ap
 from app.services import roadmap_adapters as ad
+from app.services import roadmap_cost as rc
+from app.services import roadmap_decision_package as dp
 from app.services import roadmap_exec_rules as xr
 from app.services import roadmap_baseline as rb
 from app.services import roadmap_engine as eng
@@ -53,7 +62,9 @@ def options(_: User = View):
             "period_types": list(PERIOD_TYPES), "baseline_bases": {k: list(v) for k, v in BASELINE_BASES.items()}, "canonical_units": CANONICAL_UNITS,
             "proposal_types": list(PROPOSAL_TYPES), "rule_proposal_types": list(RULE_PROPOSAL_TYPES), "proposal_decisions": list(PROPOSAL_DECISIONS), "tech_link_types": list(TECH_LINK_TYPES),
             "exec_rule_statuses": list(EXEC_RULE_STATUSES), "exec_approvable_source_kinds": list(EXEC_APPROVABLE_SOURCE_KINDS),
-            "exec_blocked_source_kinds": list(EXEC_BLOCKED_SOURCE_KINDS), "action_plan_statuses": list(ACTION_PLAN_STATUSES), "adapters": [a.contract() for a in ad.ADAPTERS.values()]}
+            "exec_blocked_source_kinds": list(EXEC_BLOCKED_SOURCE_KINDS), "action_plan_statuses": list(ACTION_PLAN_STATUSES), "cost_families": list(COST_FAMILIES),
+            "cost_approvable_source_kinds": {k: list(v) for k, v in COST_APPROVABLE_SOURCE_KINDS.items()}, "cost_blocked_source_kinds": list(COST_BLOCKED_SOURCE_KINDS),
+            "machine_price_bases": list(MACHINE_PRICE_BASES), "package_statuses": list(PACKAGE_STATUSES), "asset_kinds": list(ASSET_KINDS), "asset_subject_types": list(ASSET_SUBJECT_TYPES), "adapters": [a.contract() for a in ad.ADAPTERS.values()]}
 
 
 # ------------------------------------------------------------------ scenario
@@ -449,3 +460,168 @@ def action_plan_history(version_id: int, db: Session = Depends(get_db), _: User 
 @router.get("/action-plan-compare/{a_id}/{b_id}")
 def compare_action_plans(a_id: int, b_id: int, db: Session = Depends(get_db), _: User = View):
     return ap.compare(db, a_id, b_id)
+
+
+# ------------------------------------------------------------------ cost evidence / asset refs / decision package (Task 8)
+class CostEvidenceBody(BaseModel):
+    evidence_code: str | None = Field(None, max_length=40)
+    cost_family: str | None = None
+    machine_type_code: str | None = Field(None, max_length=20)
+    machine_model_id: int | None = None
+    future_candidate_id: int | None = None
+    scope_type: str | None = None
+    scope_value: str | None = Field(None, max_length=20)
+    cost_period: str | None = None
+    amount: str | float | int | None = None
+    currency: str | None = Field(None, max_length=3)
+    price_basis: str | None = Field(None, max_length=40)
+    vendor: str | None = Field(None, max_length=150)
+    source_kind: str | None = Field(None, max_length=30)
+    source_ref: str | None = Field(None, max_length=300)
+    evidence_date: str | None = None
+    quote_valid_until: str | None = None
+    effective_from: str | None = None
+    effective_to: str | None = None
+    note: str | None = Field(None, max_length=300)
+
+
+@router.get("/cost-evidence")
+def list_cost_evidence(cost_family: str = "", status: str = "", db: Session = Depends(get_db), _: User = View):
+    return [rc.evidence_view(e) for e in rc.list_evidence(db, cost_family, status)]
+
+
+@router.post("/cost-evidence")
+def create_cost_evidence(body: CostEvidenceBody, db: Session = Depends(get_db), user: User = Manage):
+    return rc.evidence_view(rc.create_evidence(db, user, body.model_dump(exclude_unset=True)))
+
+
+@router.get("/cost-evidence/{evidence_id}")
+def get_cost_evidence(evidence_id: int, db: Session = Depends(get_db), _: User = View):
+    return rc.evidence_view(rc.get_evidence(db, evidence_id))
+
+
+@router.put("/cost-evidence/{evidence_id}")
+def update_cost_evidence(evidence_id: int, body: CostEvidenceBody, db: Session = Depends(get_db), user: User = Manage):
+    return rc.evidence_view(rc.update_evidence(db, user, evidence_id, body.model_dump(exclude_unset=True)))
+
+
+@router.post("/cost-evidence/{evidence_id}/new-version")
+def new_cost_evidence_version(evidence_id: int, db: Session = Depends(get_db), user: User = Manage):
+    return rc.evidence_view(rc.new_version(db, user, evidence_id))
+
+
+@router.post("/cost-evidence/{evidence_id}/submit-review")
+def submit_cost_evidence_review(evidence_id: int, db: Session = Depends(get_db), user: User = Manage):
+    return rc.evidence_view(rc.submit_review(db, user, evidence_id))
+
+
+@router.post("/cost-evidence/{evidence_id}/approve")
+def approve_cost_evidence(evidence_id: int, db: Session = Depends(get_db), user: User = Manage):
+    _need_approve(user, "duyệt cost evidence")
+    return rc.evidence_view(rc.approve_evidence(db, user, evidence_id))
+
+
+@router.post("/cost-evidence/{evidence_id}/retire")
+def retire_cost_evidence(evidence_id: int, body: RetireBody, db: Session = Depends(get_db), user: User = Manage):
+    _need_approve(user, "retire cost evidence")
+    return rc.evidence_view(rc.retire_evidence(db, user, evidence_id, body.reason))
+
+
+@router.get("/cost-evidence/{evidence_id}/history")
+def cost_evidence_history(evidence_id: int, db: Session = Depends(get_db), _: User = View):
+    rc.get_evidence(db, evidence_id)
+    return rm.list_history(db, "COST_EVID", evidence_id)
+
+
+class AssetRefBody(BaseModel):
+    subject_type: str | None = None
+    subject_ref: str | None = Field(None, max_length=30)
+    asset_kind: str | None = None
+    uri: str | None = Field(None, max_length=500)
+    asset_ref: str | None = Field(None, max_length=200)
+    source_ref: str | None = Field(None, max_length=300)
+    note: str | None = Field(None, max_length=300)
+
+
+class ActiveBody(BaseModel):
+    active: bool
+
+
+@router.get("/asset-refs")
+def list_asset_refs(subject_type: str = "", subject_ref: str = "", db: Session = Depends(get_db), _: User = View):
+    return [rc.asset_view(a) for a in rc.list_assets(db, subject_type, subject_ref)]
+
+
+@router.post("/asset-refs")
+def create_asset_ref(body: AssetRefBody, db: Session = Depends(get_db), user: User = Manage):
+    return rc.asset_view(rc.create_asset(db, user, body.model_dump(exclude_unset=True)))
+
+
+@router.post("/asset-refs/{asset_id}/active")
+def set_asset_ref_active(asset_id: int, body: ActiveBody, db: Session = Depends(get_db), user: User = Manage):
+    return rc.asset_view(rc.set_asset_active(db, user, asset_id, body.active))
+
+
+class PackageBody(BaseModel):
+    note: str | None = Field(None, max_length=300)
+
+
+class BindingBody(BaseModel):
+    action_item_id: int
+    evidence_id: int
+    machine_model_id: int | None = None
+    future_candidate_id: int | None = None
+
+
+@router.get("/decision-packages")
+def list_decision_packages(action_plan_version_id: int | None = None, db: Session = Depends(get_db), _: User = View):
+    return [dp.package_view(db, p, detail=False) for p in dp.list_packages(db, action_plan_version_id)]
+
+
+@router.post("/action-plan-versions/{version_id}/decision-packages")
+def create_decision_package(version_id: int, body: PackageBody, db: Session = Depends(get_db), user: User = Manage):
+    return dp.package_view(db, dp.create_package(db, user, version_id, body.model_dump(exclude_unset=True)))
+
+
+@router.get("/decision-packages/{package_id}")
+def get_decision_package(package_id: int, db: Session = Depends(get_db), _: User = View):
+    return dp.package_view(db, dp.get_package(db, package_id))
+
+
+@router.post("/decision-packages/{package_id}/bindings")
+def bind_package_evidence(package_id: int, body: BindingBody, db: Session = Depends(get_db), user: User = Manage):
+    dp.bind(db, user, package_id, body.model_dump(exclude_unset=True))
+    return dp.package_view(db, dp.get_package(db, package_id))
+
+
+@router.delete("/decision-packages/{package_id}/bindings/{action_item_id}")
+def unbind_package_evidence(package_id: int, action_item_id: int, db: Session = Depends(get_db), user: User = Manage):
+    dp.unbind(db, user, package_id, action_item_id)
+    return dp.package_view(db, dp.get_package(db, package_id))
+
+
+@router.post("/decision-packages/{package_id}/submit-review")
+def submit_decision_package_review(package_id: int, db: Session = Depends(get_db), user: User = Manage):
+    return dp.package_view(db, dp.submit_review(db, user, package_id))
+
+
+@router.post("/decision-packages/{package_id}/approve")
+def approve_decision_package(package_id: int, db: Session = Depends(get_db), user: User = Manage):
+    _need_approve(user, "duyệt Decision Package")
+    return dp.package_view(db, dp.approve(db, user, package_id))
+
+
+@router.post("/decision-packages/{package_id}/archive")
+def archive_decision_package(package_id: int, body: RetireBody, db: Session = Depends(get_db), user: User = Manage):
+    _need_approve(user, "archive Decision Package")
+    return dp.package_view(db, dp.archive(db, user, package_id, body.reason))
+
+
+@router.get("/decision-packages/{package_id}/history")
+def decision_package_history(package_id: int, db: Session = Depends(get_db), _: User = View):
+    return dp.history(db, package_id)
+
+
+@router.get("/decision-package-compare/{a_id}/{b_id}")
+def compare_decision_packages(a_id: int, b_id: int, db: Session = Depends(get_db), _: User = View):
+    return dp.compare(db, a_id, b_id)

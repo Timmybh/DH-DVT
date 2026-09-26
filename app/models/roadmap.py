@@ -6,8 +6,9 @@ Không hard-delete scenario/version/run. Decision của proposal tách khỏi n�
 """
 
 from datetime import date, datetime
+from decimal import Decimal
 
-from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base, utcnow
@@ -377,6 +378,116 @@ class RoadmapActionPlanItem(Base):
     rule_effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
     source_run_fingerprint: Mapped[str] = mapped_column(String(64), default="")
     notes: Mapped[str] = mapped_column(String(300), default="")
+    snapshot_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_by: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+# --- Task 8 (Issue #17, GPT APPROVED_TO_IMPLEMENT WITH COST/EVIDENCE CONTRACT): cost evidence + asset refs + Executive Decision Package
+COST_FAMILIES = ("MACHINE_UNIT_PRICE", "LABOR_COST_PER_WORKER_PERIOD")
+COST_APPROVABLE_SOURCE_KINDS = {
+    "MACHINE_UNIT_PRICE": ("SUPPLIER_QUOTATION", "APPROVED_CONTRACT_PRICE", "APPROVED_BUDGET_STANDARD", "CONTROLLED_PURCHASE_HISTORY"),
+    "LABOR_COST_PER_WORKER_PERIOD": ("HR_APPROVED_COST_STANDARD", "APPROVED_BUDGET_STANDARD"),
+}
+COST_BLOCKED_SOURCE_KINDS = ("BROCHURE", "CLAIMED", "ESTIMATE", "DEFAULT", "PLACEHOLDER", "UNVERIFIED_WEB_PRICE")  # lưu được ở DRAFT/UNDER_REVIEW, không APPROVE
+MACHINE_PRICE_BASES = ("EX_WORKS_MACHINE_ONLY", "DELIVERED_MACHINE_ONLY", "CONTRACT_UNIT_PRICE_AS_QUOTED", "BUDGET_STANDARD_UNIT_PRICE", "PURCHASE_HISTORY_UNIT_PRICE")
+COST_EVIDENCE_STATUSES = ("DRAFT", "UNDER_REVIEW", "APPROVED", "RETIRED")
+ASSET_KINDS = ("IMAGE", "DATASHEET", "MODEL_3D")
+ASSET_SUBJECT_TYPES = ("MACHINE_TYPE", "MACHINE_MODEL", "FUTURE_CANDIDATE")
+PACKAGE_STATUSES = ("DRAFT", "UNDER_REVIEW", "APPROVED", "ARCHIVED")
+
+
+class RoadmapCostEvidence(Base):
+    """Cost evidence versioned/effective-dated (BR-801). APPROVED bất biến (sửa = version mới). KHÔNG seed. Amount = Decimal chính xác; không FX/annualize."""
+
+    __tablename__ = "roadmap_cost_evidence"
+    __table_args__ = (UniqueConstraint("evidence_code", "evidence_version", name="uq_roadmap_cost_evidence_ver"), Index("ix_roadmap_cost_evidence_fam", "cost_family", "status"))
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    evidence_code: Mapped[str] = mapped_column(String(40), index=True)
+    evidence_version: Mapped[int] = mapped_column(Integer, default=1)
+    cost_family: Mapped[str] = mapped_column(String(30))
+    machine_type_code: Mapped[str | None] = mapped_column(ForeignKey("machine_types.code"), nullable=True)  # machine: bắt buộc
+    machine_model_id: Mapped[int | None] = mapped_column(ForeignKey("machine_models.id"), nullable=True)
+    future_candidate_id: Mapped[int | None] = mapped_column(ForeignKey("future_technology_candidates.id"), nullable=True)
+    scope_type: Mapped[str] = mapped_column(String(10), default="")  # labor: TOTAL|FACTORY exact
+    scope_value: Mapped[str] = mapped_column(String(20), default="")
+    cost_period: Mapped[str] = mapped_column(String(6), default="")  # labor: MONTH|YEAR
+    amount: Mapped[Decimal] = mapped_column(Numeric(24, 6))
+    currency: Mapped[str] = mapped_column(String(3))
+    price_basis: Mapped[str] = mapped_column(String(40), default="")  # machine bắt buộc
+    vendor: Mapped[str] = mapped_column(String(150), default="")
+    source_kind: Mapped[str] = mapped_column(String(30), default="")
+    source_ref: Mapped[str] = mapped_column(String(300), default="")
+    evidence_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    quote_valid_until: Mapped[date | None] = mapped_column(Date, nullable=True)
+    effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
+    effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    note: Mapped[str] = mapped_column(String(300), default="")
+    status: Mapped[str] = mapped_column(String(12), default="DRAFT", index=True)
+    reviewed_by: Mapped[str] = mapped_column(String(100), default="")
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    approved_by: Mapped[str] = mapped_column(String(100), default="")
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    retire_reason: Mapped[str] = mapped_column(String(300), default="")
+    created_by: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class RoadmapAssetRef(Base):
+    """Tham chiếu asset CHỈ-LINK (không upload/download/generate/render). Không phải evidence tài chính; không bắt buộc."""
+
+    __tablename__ = "roadmap_asset_refs"
+    __table_args__ = (Index("ix_roadmap_asset_subject", "subject_type", "subject_ref"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    subject_type: Mapped[str] = mapped_column(String(16))
+    subject_ref: Mapped[str] = mapped_column(String(30))  # machine_type.code | machine_model.id | candidate.id
+    asset_kind: Mapped[str] = mapped_column(String(10))
+    uri: Mapped[str] = mapped_column(String(500), default="")  # https:// only
+    asset_ref: Mapped[str] = mapped_column(String(200), default="")  # opaque/internal
+    source_ref: Mapped[str] = mapped_column(String(300), default="")
+    note: Mapped[str] = mapped_column(String(300), default="")
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class RoadmapDecisionPackage(Base):
+    """Snapshot đóng băng của 1 Action Plan version APPROVED + cost bindings. Không grand_total/ROI/ranking."""
+
+    __tablename__ = "roadmap_decision_packages"
+    __table_args__ = (UniqueConstraint("action_plan_version_id", "package_no", name="uq_roadmap_pkg_no"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    package_code: Mapped[str] = mapped_column(String(20), unique=True, index=True)
+    action_plan_version_id: Mapped[int] = mapped_column(ForeignKey("roadmap_action_plan_versions.id"), index=True)
+    package_no: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(12), default="DRAFT", index=True)
+    note: Mapped[str] = mapped_column(String(300), default="")
+    package_json: Mapped[dict] = mapped_column(JSON, default=dict)  # DRAFT: preview; đóng băng từ UNDER_REVIEW
+    package_fingerprint: Mapped[str] = mapped_column(String(64), default="")
+    reviewed_by: Mapped[str] = mapped_column(String(100), default="")
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    approved_by: Mapped[str] = mapped_column(String(100), default="")
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    archive_reason: Mapped[str] = mapped_column(String(300), default="")
+    created_by: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class RoadmapPackageBinding(Base):
+    """User chọn tường minh 1 evidence cho 1 COUNTED item (không auto-pick). snapshot_json đóng băng khi freeze."""
+
+    __tablename__ = "roadmap_package_bindings"
+    __table_args__ = (UniqueConstraint("package_id", "action_item_id", name="uq_roadmap_pkg_binding"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    package_id: Mapped[int] = mapped_column(ForeignKey("roadmap_decision_packages.id"), index=True)
+    action_item_id: Mapped[int] = mapped_column(Integer)
+    evidence_id: Mapped[int] = mapped_column(ForeignKey("roadmap_cost_evidence.id"))
+    machine_model_id: Mapped[int | None] = mapped_column(ForeignKey("machine_models.id"), nullable=True)
+    future_candidate_id: Mapped[int | None] = mapped_column(ForeignKey("future_technology_candidates.id"), nullable=True)
     snapshot_json: Mapped[dict] = mapped_column(JSON, default=dict)
     created_by: Mapped[str] = mapped_column(String(100), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
