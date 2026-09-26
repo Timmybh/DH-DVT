@@ -188,3 +188,26 @@ def productivity_efficiency(db, day):
     from app.services import productivity
 
     return productivity.efficiency_daily(db, day, ["XN1", "XN2"])
+
+
+def test_nsbq_monthly_by_brand_and_customer(db):
+    from datetime import date as D
+
+    from app.services import productivity
+
+    db.query(LineOutputDaily).delete()
+    db.add_all([BrandCustomer(brand="Q", customer="DECATHLON"), BrandCustomer(brand="P", customer="ITOCHU"),
+                StyleSam(style_cc="A", sam_minutes=1, brand="Q"), StyleSam(style_cc="B", sam_minutes=1, brand="Q"), StyleSam(style_cc="C", sam_minutes=1, brand="P"),
+                StylePrice(style_cc="A", unit_price=1.0, effective_from=D(2026, 1, 1)), StylePrice(style_cc="B", unit_price=2.0, effective_from=D(2026, 1, 1)),
+                StylePrice(style_cc="C", unit_price=3.0, effective_from=D(2026, 5, 23))])                                  # C chỉ có giá từ 23/5
+    for day in (D(2026, 5, 22), D(2026, 5, 23)):
+        db.add(LaborDaily(factory_code="XN1", line="1", day=day, total=40, present=9, outside=0, work_minutes=500))
+        for st, q in (("A", 100), ("B", 100), ("C", 100)):
+            db.add(LineOutputDaily(day=day, factory_code="XN1", line="1", style=st, po="", qty=q))
+    db.commit()
+    res = productivity.nsbq_monthly(db, D(2026, 5, 23), ["XN1"])
+    b = {x["label"]: x for x in res["by_brand"]}                                                                             # 9 người chia đều 3 mã hàng → 3 người/dòng
+    assert res["month"] == "2026-05" and b["Q"]["days"] == 2 and b["P"]["days"] == 1                                          # P chỉ có giá ngày 23/5 → 1 ngày
+    assert b["Q"]["value"] == round(((100 / 3 + 200 / 3) / 2), 2) and b["P"]["value"] == round(300 / 3, 2)                   # Q: trung bình 2 dòng; P: 300 ÷ 3
+    assert [x["label"] for x in res["by_brand"]] == ["P", "Q"]                                                                # sắp giảm dần
+    assert {x["label"] for x in res["by_customer"]} == {"DECATHLON", "ITOCHU"}

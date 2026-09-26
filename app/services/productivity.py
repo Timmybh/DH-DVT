@@ -44,7 +44,23 @@ def compute_row(r: dict) -> dict:
     }
 
 
-def rows_for_day(db: Session, day: date, codes: list[str], light: bool = False, ctx: dict | None = None) -> list[dict]:
+def _price(db: Session, ctx: dict, style: str, day: date):
+    """Giá áp dụng ngày `day`; nạp sẵn bảng giá vào ctx để tính nhiều ngày không phải truy vấn từng dòng."""
+    if "prices" not in ctx:
+        from app.models.resources import StylePrice
+
+        by: dict[str, list] = defaultdict(list)
+        for r in db.query(StylePrice).filter(StylePrice.status == "ACTIVE").order_by(StylePrice.effective_from, StylePrice.id):
+            by[r.style_cc].append((r.effective_from, r.unit_price))
+        ctx["prices"] = by
+    best = None
+    for eff, price in ctx["prices"].get(style.strip().upper(), []):
+        if eff <= day:
+            best = price
+    return best
+
+
+def rows_for_day(db: Session, day: date, codes: list[str], light: bool = False, ctx: dict | None = None, with_price: bool | None = None) -> list[dict]:
     """light=True: chỉ để tính hiệu suất (bỏ kế hoạch và giá); ctx dùng chung danh mục mã hàng/khách hàng giữa nhiều ngày."""
     out_q: dict[tuple, int] = {}
     for c, ln, st, q in db.query(LineOutputDaily.factory_code, LineOutputDaily.line, LineOutputDaily.style, func.sum(LineOutputDaily.qty)).filter(LineOutputDaily.day == day, LineOutputDaily.factory_code.in_(codes)).group_by(LineOutputDaily.factory_code, LineOutputDaily.line, LineOutputDaily.style):
@@ -79,7 +95,7 @@ def rows_for_day(db: Session, day: date, codes: list[str], light: bool = False, 
         hs = (present + (lab.outside or 0)) if lab and present is not None else None
         may_alloc = round(present * share, 2) if present is not None and share is not None else None
         hs_alloc = round(hs * share, 2) if hs is not None and share is not None else None
-        price = None if light else sp.price_on(db, style, day)
+        price = _price(db, ctx, style, day) if (with_price if with_price is not None else not light) else None
         base = {"factory": fac, "line": line, "style": style, "brand": brand, "customer": customer, "price": price, "qty": qty,
                 "plan_qty": round(pl.plan_qty) if pl else None, "basis": ("SAM" if is_dcl else "SOT") if basis else None, "basis_minutes": basis,
                 "production_days": ((pl.sew_end - pl.in_line_from).days + 1) if pl and pl.in_line_from and pl.sew_end else None,
@@ -201,3 +217,30 @@ def efficiency_daily(db: Session, day: date, codes: list[str]) -> list[dict]:
             out.append({"date": d.isoformat(), **{c: sm[c]["efficiency_avg"] for c in codes}, "TONG": sm["TONG"]["efficiency_avg"]})
         d += timedelta(days=1)
     return out
+
+
+def nsbq_monthly(db: Session, day: date, codes: list[str]) -> dict:
+    """NSBQ lao động hiện diện (USD/người) theo Brand và theo Khách hàng, trung bình các ngày từ đầu tháng đến ngày chọn (sheet "TỔNG NSBQ THEO BRAND"):
+    giá trị ngày của một brand = trung bình NS/LĐ hiện diện của các dòng tổ × mã hàng thuộc brand đó (pivot "Average of NSLĐBQ ... hiện diện");
+    giá trị tháng = trung bình các ngày có số liệu. Dòng chưa có brand/giá/lao động không được tính. Sắp giảm dần."""
+    from datetime import timedelta
+
+    ctx: dict = {}
+    days_brand: dict[str, list[float]] = defaultdict(list)
+    days_cust: dict[str, list[float]] = defaultdict(list)
+    d = date(day.year, day.month, 1)
+    while d <= day:
+        rows = rows_for_day(db, d, codes, light=True, ctx=ctx, with_price=True)
+        for key, bucket in (("brand", days_brand), ("customer", days_cust)):
+            per: dict[str, list[float]] = defaultdict(list)
+            for r in rows:
+                if r[key] and r["ns_present"] is not None:
+                    per[r[key]].append(r["ns_present"])
+            for name, vals in per.items():
+                bucket[name].append(sum(vals) / len(vals))
+        d += timedelta(days=1)
+
+    def fin(bucket):
+        return sorted(({"label": k, "value": round(sum(v) / len(v), 2), "days": len(v)} for k, v in bucket.items()), key=lambda x: -x["value"])
+
+    return {"month": f"{day.year}-{day.month:02d}", "by_brand": fin(days_brand), "by_customer": fin(days_cust)}

@@ -116,4 +116,5 @@ def build(db: Session, day: date) -> dict:
         "line_summaries": summaries,
         "dtbq_charts": charts,
         "efficiency_daily": productivity.efficiency_daily(db, day, codes),
+        "nsbq": productivity.nsbq_monthly(db, day, codes),
     }

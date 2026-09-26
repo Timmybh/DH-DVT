@@ -11,7 +11,8 @@ interface Summ { labor_may: number | null; labor_hs: number | null; plan_qty: nu
 interface Bar1 { label: string; value: number | null; status: "TARGET" | "ACHIEVED" | "MISSED" | null }
 interface Charts { targets: Record<string, number>; may_by_day: Bar1[]; hieu_suat: Bar1[]; hien_dien: Bar1[] }
 interface EffDay { date: string; TONG: number | null; [xn: string]: number | string | null }
-interface Page2 { efficiency_daily: EffDay[]; dtbq_charts: Charts | null; line_summaries: Record<string, Summ> | null; lines: LineRow[]; date: string; has_data: boolean; unit: string; factories: string[]; day: Record<string, Cell> | null; series: { date: string; cells: Record<string, Cell> }[] }
+interface NsbqItem { label: string; value: number; days: number }
+interface Page2 { nsbq: { month: string; by_brand: NsbqItem[]; by_customer: NsbqItem[] } | null; efficiency_daily: EffDay[]; dtbq_charts: Charts | null; line_summaries: Record<string, Summ> | null; lines: LineRow[]; date: string; has_data: boolean; unit: string; factories: string[]; day: Record<string, Cell> | null; series: { date: string; cells: Record<string, Cell> }[] }
 
 const COLORS: Record<string, string> = { TONG: "#4c9aff", XN1: "#16a34a", XN2: "#f59e0b", XN3: "#a855f7" };
 const th = "px-2 py-2 text-right text-xs font-semibold text-slate-400";
@@ -59,6 +60,7 @@ export default function DashboardPage2() {
   const [scope, setScope] = useState("TONG");
   const { can } = useAuth();
   const [reload, setReload] = useState(0);
+  const [nsbqBy, setNsbqBy] = useState<"by_brand" | "by_customer">("by_brand");
 
   useEffect(() => {
     let alive = true;
@@ -194,6 +196,28 @@ export default function DashboardPage2() {
                   onEdit={can("resource.manage") ? async (v) => { try { await api.put("/dashboard/productivity-targets", { [code]: v }); setReload((n) => n + 1); } catch (e) { setError(errorMessage(e)); } } : undefined} />
               ))}
             </div>
+          )}
+
+          {data.nsbq && (data.nsbq.by_brand.length > 0 || data.nsbq.by_customer.length > 0) && (
+            <section className="rounded-2xl border border-slate-200 bg-white p-3" data-testid="chart-nsbq">
+              <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-sm font-bold text-slate-700">NSBQ LĐ theo {nsbqBy === "by_brand" ? "brand hàng" : "khách hàng"} tháng {data.nsbq.month.slice(5)}/{data.nsbq.month.slice(0, 4)} <span className="font-normal text-slate-400">(USD/người, trung bình các ngày)</span></h2>
+                <div className="flex gap-1 text-xs">
+                  {([["by_brand", "Brand"], ["by_customer", "Khách hàng"]] as const).map(([k, l]) => <button key={k} onClick={() => setNsbqBy(k)} className={`rounded-full px-3 py-1 ${nsbqBy === k ? "bg-brand text-white" : "border border-slate-300 text-slate-600"}`} data-testid={`nsbq-${k}`}>{l}</button>)}
+                </div>
+              </div>
+              <div className="h-72">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={data.nsbq[nsbqBy]} margin={{ top: 22, right: 8, left: 0, bottom: 28 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#94a3b833" vertical={false} />
+                    <XAxis dataKey="label" tick={{ fontSize: 10 }} interval={0} angle={-30} textAnchor="end" height={54} /><YAxis tick={{ fontSize: 11 }} />
+                    <Tooltip formatter={(v: unknown, _n: unknown, p: { payload?: NsbqItem }) => [`${Number(v).toFixed(2)} (${p.payload?.days ?? 0} ngày)`, "NSBQ"]} />
+                    <Bar dataKey="value" fill="#4c9aff" isAnimationActive={false}><LabelList dataKey="value" position="top" formatter={(v: unknown) => Number(v).toFixed(2)} style={{ fontSize: 10, fontWeight: 700 }} /></Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <p className="mt-1 text-[11px] text-slate-400">Mỗi ngày: trung bình NS/LĐ hiện diện của các dòng tổ × mã hàng thuộc {nsbqBy === "by_brand" ? "brand" : "khách hàng"}; dòng chưa có brand, giá hoặc lao động không được tính.</p>
+            </section>
           )}
 
           {data.efficiency_daily.some((r) => codes.some((c) => r[c] !== null && r[c] !== undefined)) && (
