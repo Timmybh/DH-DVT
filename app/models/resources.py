@@ -185,6 +185,13 @@ class LaborStandard(Base):
     factory_code: Mapped[str] = mapped_column(String(20))
     line: Mapped[str] = mapped_column(String(20), default="")
     total_labor: Mapped[int] = mapped_column(Integer)  # Standard Labor — không bị ghi đè bởi hệ số
+    # Cơ cấu theo chức danh (tổng = total_labor): CN may + QL + KH + ĐG + Ủi + Khác. SLĐ tính hiệu suất = CN may + QL + KH + ĐG + Ủi; gián tiếp = total − CN may
+    cn_may: Mapped[int] = mapped_column(Integer, default=0)
+    ql: Mapped[int] = mapped_column(Integer, default=0)
+    kh: Mapped[int] = mapped_column(Integer, default=0)
+    dg: Mapped[int] = mapped_column(Integer, default=0)
+    ui: Mapped[int] = mapped_column(Integer, default=0)
+    khac: Mapped[int] = mapped_column(Integer, default=0)
     effective_from: Mapped[date] = mapped_column(Date)
     effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
     status: Mapped[str] = mapped_column(String(10), default="ACTIVE")  # ACTIVE | RETIRED (bị thay bởi phiên bản mới) | INACTIVE
@@ -272,6 +279,33 @@ class MachineModel(Base):
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class BrandCustomer(Base):
+    """Brand → Khách hàng (bảng "brand + khách hàng" của báo cáo năng suất). Khách hàng ≠ DECATHLON được tính hiệu suất theo SOT ("hiệu suất hàng khác")."""
+
+    __tablename__ = "brand_customers"
+
+    brand: Mapped[str] = mapped_column(String(60), primary_key=True)
+    customer: Mapped[str] = mapped_column(String(60), default="")
+
+
+class StylePrice(Base):
+    """Bảng giá công ty theo mã hàng (USD/sản phẩm). Đổi giá = dòng mới với ngày hiệu lực mới; giá áp dụng ngày D = dòng ACTIVE có effective_from lớn nhất ≤ D."""
+
+    __tablename__ = "style_prices"
+    __table_args__ = (Index("ix_style_prices_lookup", "style_cc", "effective_from"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    style_cc: Mapped[str] = mapped_column(String(60))
+    unit_price: Mapped[float] = mapped_column(Float)
+    currency: Mapped[str] = mapped_column(String(3), default="USD")
+    effective_from: Mapped[date] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(String(10), default="ACTIVE")  # ACTIVE | INACTIVE
+    source: Mapped[str] = mapped_column(String(10), default="MANUAL")  # MANUAL | EXCEL (mẫu điền sẵn từ báo cáo năng suất)
+    note: Mapped[str] = mapped_column(String(300), default="")
+    updated_by: Mapped[str] = mapped_column(String(100), default="")
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class StyleSam(Base):
     """SAM (Standard Allowed Minute — phút chuẩn/sản phẩm) theo mã hàng. Giá trị ban đầu là ƯỚC LƯỢNG (không chuẩn) để có sẵn bảng; sẽ được huấn luyện/hiệu chỉnh sau."""
 
@@ -284,4 +318,8 @@ class StyleSam(Base):
     samples: Mapped[int] = mapped_column(Integer, default=0)  # số dòng kế hoạch dùng để ước lượng
     note: Mapped[str] = mapped_column(String(300), default="")
     updated_by: Mapped[str] = mapped_column(String(100), default="")
+    brand: Mapped[str] = mapped_column(String(60), default="")  # Brand hàng (Thông tin sản phẩm)
+    sam_kt: Mapped[float | None] = mapped_column(Float, nullable=True)  # SAM KT: SAM kỹ thuật, đồng bộ từ ERP (LCD_Truc_QUan_ChuyenMay_MaHang_Sam)
+    sam_tt: Mapped[float | None] = mapped_column(Float, nullable=True)  # SAM TT: SAM bình quân thực tế (nhập từ sheet SAM của báo cáo năng suất)
+    sot_minutes: Mapped[float | None] = mapped_column(Float, nullable=True)  # SOT (phút/sp), nhập từ sheet SOT; hàng không có SAM (VD Puma) dùng SOT
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

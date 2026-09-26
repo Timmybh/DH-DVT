@@ -100,13 +100,36 @@ def composition(db: Session, std: LaborStandard, day: date | None = None, grades
         eq_total += eq
         head_total += d.headcount
     return {"lines": lines, "standard_labor": std.total_labor, "headcount": head_total, "effective_equivalent": round(eq_total, 4),
-            "weighted_factor": round(eq_total / std.total_labor, 6) if std.total_labor else None}
+            "weighted_factor": round(eq_total / std.total_labor, 6) if std.total_labor and std.details else None}  # không quản lý bậc ⇒ chưa có hệ số
+
+
+ROLE_FIELDS = ("cn_may", "ql", "kh", "dg", "ui", "khac")
+DEFAULT_QL = 6  # mỗi chuyền tách 6 người sang QL (quy ước ban đầu), CN may = phần còn lại
+
+
+def roles_view(std: LaborStandard) -> dict:
+    r = {k: int(getattr(std, k) or 0) for k in ROLE_FIELDS}
+    return {**r, "efficiency_labor": r["cn_may"] + r["ql"] + r["kh"] + r["dg"] + r["ui"], "indirect_labor": std.total_labor - r["cn_may"]}
+
+
+def _roles_from(d: dict, total: int) -> dict:
+    """Không gửi chức danh nào ⇒ mặc định QL = 6 (tối đa bằng tổng), CN may = còn lại. Có gửi ⇒ tổng các chức danh phải bằng tổng lao động."""
+    given = {k: int(d[k]) for k in ROLE_FIELDS if d.get(k) is not None}
+    if not given:
+        ql = min(DEFAULT_QL, total)
+        return {"cn_may": total - ql, "ql": ql, "kh": 0, "dg": 0, "ui": 0, "khac": 0}
+    roles = {k: given.get(k, 0) for k in ROLE_FIELDS}
+    if any(v < 0 for v in roles.values()):
+        raise HTTPException(422, "Số người theo chức danh không được âm")
+    if sum(roles.values()) != total:
+        raise HTTPException(422, f"Tổng CN may + QL + KH + ĐG + Ủi + Khác ({sum(roles.values())}) phải bằng tổng lao động ({total})")
+    return roles
 
 
 def standard_view(db: Session, std: LaborStandard, day: date | None = None) -> dict:
     return {"id": std.id, "factory_code": std.factory_code, "line": std.line, "total_labor": std.total_labor, "effective_from": std.effective_from.isoformat() if std.effective_from else None,
             "effective_to": std.effective_to.isoformat() if std.effective_to else None, "status": std.status, "version": std.version, "note": std.note, "created_by": std.created_by,
-            "composition": composition(db, std, day)}
+            "roles": roles_view(std), "composition": composition(db, std, day)}
 
 
 def _validate_standard(db: Session, d: dict, exclude_id: int | None = None) -> list[tuple[int, int]]:
@@ -116,6 +139,10 @@ def _validate_standard(db: Session, d: dict, exclude_id: int | None = None) -> l
         raise HTTPException(422, "Cần ngày hiệu lực từ")
     if d.get("effective_to") and d["effective_to"] < d["effective_from"]:
         raise HTTPException(422, "Hiệu lực đến phải sau hoặc bằng hiệu lực từ")
+    if d.get("no_grades"):  # tạm không quản lý bậc nghề: chỉ khai báo tổng lao động (+ cơ cấu chức danh)
+        if int(d.get("total_labor") or 0) < 0:
+            raise HTTPException(422, "Tổng lao động không được âm")
+        return []
     details = [(int(x["grade"]), int(x["headcount"])) for x in d.get("details") or []]
     if not details:
         raise HTTPException(422, "Cần ít nhất một bậc")
@@ -148,7 +175,7 @@ def create_standard(db: Session, user: User, d: dict) -> LaborStandard:
     if _overlaps(db, d, None):
         raise HTTPException(409, "Đã có cơ cấu lao động hiệu lực trong khoảng này cho XN/chuyền — dùng 'Sửa' để tạo phiên bản mới")
     std = LaborStandard(factory_code=d["factory_code"], line=d["line"], total_labor=int(d["total_labor"]), effective_from=d["effective_from"], effective_to=d.get("effective_to"),
-                        note=d.get("note") or "", created_by=user.username)
+                        note=d.get("note") or "", created_by=user.username, **_roles_from(d, int(d["total_labor"])))
     std.details = [LaborStandardGradeDetail(grade=g, headcount=h) for g, h in details]
     db.add(std)
     db.commit()
@@ -169,12 +196,40 @@ def revise_standard(db: Session, user: User, sid: int, d: dict) -> LaborStandard
     old.effective_to = d["effective_from"] - timedelta(days=1)
     old.status = "RETIRED"
     new = LaborStandard(factory_code=old.factory_code, line=old.line, total_labor=int(d["total_labor"]), effective_from=d["effective_from"], effective_to=d.get("effective_to"),
-                        version=old.version + 1, note=d.get("note") or old.note, created_by=user.username)
+                        version=old.version + 1, note=d.get("note") or old.note, created_by=user.username,
+                        **_roles_from({**{k: getattr(old, k) for k in ROLE_FIELDS}, **{k: d[k] for k in ROLE_FIELDS if d.get(k) is not None}} if int(d["total_labor"]) == old.total_labor else d, int(d["total_labor"])))
     new.details = [LaborStandardGradeDetail(grade=g, headcount=h) for g, h in details]
     db.add(new)
     db.commit()
     write_audit("LABOR_STANDARD_REVISE", user=user, object_type="LaborStandard", object_id=str(new.id), detail=f"v{new.version} thay v{old.version}")
     return new
+
+
+def bulk_update_roles(db: Session, user: User, items: list[dict]) -> list[LaborStandard]:
+    """Sửa tại chỗ toàn bảng cơ cấu (không tạo phiên bản): tổng lao động = tổng các chức danh. Chỉ dòng ACTIVE. Tổng đổi ⇒ bỏ chi tiết bậc (không còn khớp)."""
+    out, changes = [], []
+    for it in items:
+        std = db.get(LaborStandard, int(it["id"]))
+        if std is None or std.status != "ACTIVE":
+            raise HTTPException(404, f"Không tìm thấy cơ cấu đang áp dụng (id {it.get('id')})")
+        roles = {k: int(it.get(k) or 0) for k in ROLE_FIELDS}
+        if any(v < 0 for v in roles.values()):
+            raise HTTPException(422, "Số người theo chức danh không được âm")
+        total = sum(roles.values())
+        before = (std.total_labor, *(getattr(std, k) for k in ROLE_FIELDS))
+        if before == (total, *roles.values()):
+            continue
+        if total != std.total_labor:
+            std.details = []  # tổng đã đổi: số người từng bậc cũ không còn đúng
+        std.total_labor = total
+        for k, v in roles.items():
+            setattr(std, k, v)
+        changes.append(f"{std.factory_code}/{std.line or '*'}: {before[0]}→{total}")
+        out.append(std)
+    db.commit()
+    if changes:
+        write_audit("LABOR_STANDARD_BULK_EDIT", user=user, object_type="LaborStandard", object_id="bulk", detail="; ".join(changes)[:900])
+    return out
 
 
 def set_standard_status(db: Session, user: User, sid: int, active: bool) -> LaborStandard:

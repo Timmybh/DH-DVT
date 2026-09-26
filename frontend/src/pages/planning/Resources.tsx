@@ -5,6 +5,7 @@ import { useAuth } from "../../context/AuthContext";
 import { dateVi, num } from "../../lib/format";
 import { isoWeek, weekRange } from "../../lib/weeks";
 import SamPanel from "./SamPanel";
+import StylePricePanel from "./StylePricePanel";
 import { GradesPanel, LaborStandardsPanel, MachineSharingMaintenancePanel, MachineTypesPanel } from "./ResourceMaster";
 import TechnologyProcessPanel from "./TechnologyProcessPanel";
 
@@ -12,11 +13,13 @@ const SECTIONS = [
   { key: "capacity", label: "Năng suất (Capacity)" },
   { key: "machines", label: "Máy móc" },
   { key: "labor", label: "Lao động" },
-  { key: "sam", label: "SAM mã hàng" },
+  { key: "sam", label: "Thông tin sản phẩm" },
+  { key: "price", label: "Bảng giá mã hàng" },
   { key: "tech-process", label: "Quy trình công nghệ" },
   { key: "release", label: "Lịch nguồn lực rảnh" },
 ];
 const SHOW_STYLE_REQUIREMENTS = false;
+const SHOW_GRADES_TAB = false; // tạm ẩn quản lý bậc nghề lao động
 const input = "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm";
 const chip = "pg-chip";
 
@@ -487,7 +490,7 @@ function LaborTab({ canManage }: { canManage: boolean }) {
   const [sub, setSub] = useState<"std" | "grades" | "present">("std");
   return (
     <div className="space-y-4">
-      <SubTabs value={sub} onChange={setSub} items={[{ key: "std", label: "Cơ cấu theo XN/chuyền" }, { key: "grades", label: "Bậc lao động" }, { key: "present", label: "Có mặt (ERP)" }]} />
+      <SubTabs value={sub} onChange={setSub} items={[{ key: "std", label: "Cơ cấu theo XN/chuyền" }, ...(SHOW_GRADES_TAB ? [{ key: "grades" as const, label: "Bậc lao động" }] : []), { key: "present", label: "Có mặt (ERP)" }]} />
       {sub === "grades" && <GradesPanel canManage={canManage} />}
       {sub === "std" && <LaborStandardsPanel canManage={canManage} />}
       {sub === "present" && <LaborPresentTab />}
@@ -515,6 +518,7 @@ export default function Resources() {
       {current.key === "machines" && <MachinesTab canManage={can("resource.manage")} />}
       {current.key === "labor" && <LaborTab canManage={can("resource.manage")} />}
       {current.key === "sam" && <SamPanel canManage={can("resource.manage")} />}
+      {current.key === "price" && <StylePricePanel canManage={can("resource.manage")} />}
       {current.key === "tech-process" && <TechnologyProcessPanel perm={{ manage: can("technology_process.manage"), review: can("technology_process.review"), approve: can("technology_process.approve"), syncView: can("sync.view"), syncRun: can("sync.run") }} />}
       {current.key === "release" && <ReleaseTab />}
     </div>

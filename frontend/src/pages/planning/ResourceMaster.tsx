@@ -185,7 +185,7 @@ export function MachineSharingMaintenancePanel({ canManage }: { canManage: boole
                 const isOpen = !collapsed.has(g.key);
                 return [
                   <tr key={g.key} className="cursor-pointer border-t border-slate-100 bg-slate-500/5 hover:bg-slate-500/10" onClick={() => toggleGroup(g.key)}>
-                    <td className="px-3 py-1.5 font-semibold" colSpan={3}><span className="mr-1 text-slate-400">{isOpen ? "▾" : "▸"}</span>{g.line ? `Chuyền ${g.line}` : "Chưa gắn chuyền"}<span className="ml-2 text-xs font-normal text-slate-400">{g.items.length} đăng ký</span></td>
+                    <td className="px-3 py-1.5 font-semibold" colSpan={3}>{SHOW_GRADES && <span className="mr-1 text-slate-400">{isOpen ? "▾" : "▸"}</span>}{g.line ? `Chuyền ${g.line}` : "Chưa gắn chuyền"}<span className="ml-2 text-xs font-normal text-slate-400">{g.items.length} đăng ký</span></td>
                     <td className="px-3 text-right font-semibold">{g.items.reduce((t, e) => t + (e.dir === "LEND" ? -e.r.quantity : e.r.quantity), 0)}</td><td colSpan={4} className="px-3 text-xs text-slate-400">ròng (nhận − cho mượn)</td>
                   </tr>,
                   ...(isOpen ? g.items.map((e) => (
@@ -367,8 +367,13 @@ export function GradesPanel({ canManage }: { canManage: boolean }) {
 
 // ================================================================ LAO ĐỘNG — cấp 2: số lao động theo XN/chuyền và từng bậc
 interface Comp { lines: { grade: number; factor: number | null; headcount: number; equivalent: number }[]; standard_labor: number; headcount: number; effective_equivalent: number; weighted_factor: number | null }
-interface Std { id: number; factory_code: string; line: string; total_labor: number; effective_from: string; effective_to: string | null; status: string; version: number; note: string; composition: Comp }
-type Draft = { id?: number; factory_code: string; line: string; effective_from: string; note: string; heads: Record<number, string> };
+const SHOW_GRADES = false; // tạm tắt quản lý bậc nghề lao động (khai báo theo tổng + chức danh); bật lại để hiện bậc
+const ROLES = [["cn_may", "CN may"], ["ql", "QL"], ["kh", "KH"], ["dg", "ĐG"], ["ui", "Ủi"], ["khac", "Khác"]] as const;
+type RoleKey = (typeof ROLES)[number][0];
+interface Roles { cn_may: number; ql: number; kh: number; dg: number; ui: number; khac: number; efficiency_labor: number; indirect_labor: number }
+const autoRoles = (total: number): Record<RoleKey, string> => { const ql = Math.min(6, total); return { cn_may: String(total - ql), ql: String(ql), kh: "0", dg: "0", ui: "0", khac: "0" }; }; // mỗi chuyền tách 6 người sang QL
+interface Std { roles: Roles; id: number; factory_code: string; line: string; total_labor: number; effective_from: string; effective_to: string | null; status: string; version: number; note: string; composition: Comp }
+type Draft = { id?: number; factory_code: string; line: string; effective_from: string; note: string; heads: Record<number, string>; total: string; roles: Record<RoleKey, string> | null };
 
 export function LaborStandardsPanel({ canManage }: { canManage: boolean }) {
   const [factory, setFactory] = useState("XN1");
@@ -377,6 +382,7 @@ export function LaborStandardsPanel({ canManage }: { canManage: boolean }) {
   const [rows, setRows] = useState<Std[]>([]);
   const [grades, setGrades] = useState<Grade[]>([]);
   const [d, setD] = useState<Draft | null>(null);
+  const [edit, setEdit] = useState<Record<number, Record<RoleKey, string>> | null>(null); // chế độ sửa toàn bảng (tại chỗ, không tạo phiên bản)
   const load = useCallback(async () => {
     const [s, g] = await Promise.all([api.get<Std[]>(`${RES}/labor-standards`, { params: { factory: factory || undefined, include_history: hist } }), api.get<Grade[]>(`${RES}/productivity-grades`)]);
     setRows(s.data); setGrades(g.data);
@@ -384,49 +390,63 @@ export function LaborStandardsPanel({ canManage }: { canManage: boolean }) {
   const { msg, setMsg, act } = useAct(load);
   useEffect(() => { load().catch((e) => setMsg({ ok: false, text: errorMessage(e) })); }, [load, setMsg]);
   const today = new Date().toISOString().slice(0, 10);
+  const startEdit = () => { setHist(false); setEdit(Object.fromEntries(rows.filter((r) => r.status === "ACTIVE").map((r) => [r.id, Object.fromEntries(ROLES.map(([k]) => [k, String(r.roles[k])])) as Record<RoleKey, string>]))); };
+  const num0 = (v: string | undefined) => Math.max(0, Number(v) || 0);
+  const saveAll = async () => {
+    if (!edit) return;
+    const items = Object.entries(edit).map(([id, r]) => ({ id: Number(id), ...Object.fromEntries(ROLES.map(([k]) => [k, num0(r[k])])) }));
+    if (await act(() => api.put(`${RES}/labor-standards/bulk`, { items }), "Đã lưu toàn bảng cơ cấu lao động.")) setEdit(null);
+  };
   const nat = (x: string) => x.padStart(6, "0");
   const sorted = [...rows].sort((a, b) => nat(a.line).localeCompare(nat(b.line)) || b.effective_from.localeCompare(a.effective_from));
   const sum = rows.filter((r) => r.status === "ACTIVE").reduce((t, r) => ({ total: t.total + r.composition.standard_labor, eq: t.eq + r.composition.effective_equivalent }), { total: 0, eq: 0 });
   const gradeNums = [...new Set(grades.map((g) => g.grade))].sort((a, b) => b - a);
   const factorOf = (n: number) => grades.filter((g) => g.grade === n && (!g.effective_from || g.effective_from <= (d?.effective_from || today))).sort((a, b) => (b.effective_from ?? "").localeCompare(a.effective_from ?? ""))[0]?.productivity_factor ?? 0;
-  const total = d ? Object.values(d.heads).reduce((s, v) => s + (Number(v) || 0), 0) : 0;
+  const total = d ? (SHOW_GRADES ? Object.values(d.heads).reduce((s, v) => s + (Number(v) || 0), 0) : Number(d.total) || 0) : 0;
+  const rolesShown: Record<RoleKey, string> = d ? (d.roles ?? autoRoles(total)) : autoRoles(0);
+  const rolesSum = ROLES.reduce((s, [k]) => s + (Number(rolesShown[k]) || 0), 0);
   const equiv = d ? Object.entries(d.heads).reduce((s, [g, v]) => s + (Number(v) || 0) * factorOf(Number(g)), 0) : 0;
   const open = (s?: Std) => setD(s
-    ? { id: s.id, factory_code: s.factory_code, line: s.line, effective_from: today > s.effective_from ? today : s.effective_from, note: s.note, heads: Object.fromEntries(s.composition.lines.map((l) => [l.grade, String(l.headcount)])) }
-    : { factory_code: factory, line: "", effective_from: today, note: "", heads: {} });
+    ? { id: s.id, factory_code: s.factory_code, line: s.line, effective_from: today > s.effective_from ? today : s.effective_from, note: s.note, heads: Object.fromEntries(s.composition.lines.map((l) => [l.grade, String(l.headcount)])), total: String(s.total_labor), roles: Object.fromEntries(ROLES.map(([k]) => [k, String(s.roles[k])])) as Record<RoleKey, string> }
+    : { factory_code: factory, line: "", effective_from: today, note: "", heads: {}, total: "", roles: null });
   // Chuyền đã có cơ cấu đang áp dụng: không tạo mới (sẽ trùng) mà chuyển sang sửa, nạp sẵn số người hiện tại để bổ sung thêm bậc
   const existing = d && !d.id ? rows.find((r) => r.status === "ACTIVE" && r.factory_code === d.factory_code && r.line === d.line) : undefined;
-  const editExisting = () => existing && open(existing);
   // Chọn/nhập chuyền đã có cơ cấu: nạp sẵn số người từng bậc để chỉnh (chuyền chưa có thì để trống)
   const pickLine = (line: string) => {
     if (!d || d.id) return;
     const ex = rows.find((r) => r.status === "ACTIVE" && r.factory_code === d.factory_code && r.line === line.trim());
-    setD({ ...d, line, heads: ex ? Object.fromEntries(ex.composition.lines.map((l) => [l.grade, String(l.headcount)])) : d.heads });
+    setD({ ...d, line, total: ex ? String(ex.total_labor) : d.total, heads: ex ? Object.fromEntries(ex.composition.lines.map((l) => [l.grade, String(l.headcount)])) : d.heads, roles: ex ? (Object.fromEntries(ROLES.map(([k]) => [k, String(ex.roles[k])])) as Record<RoleKey, string>) : d.roles });
   };
   const save = async () => {
     if (!d) return;
     const details = Object.entries(d.heads).filter(([, v]) => Number(v) > 0).map(([g, v]) => ({ grade: Number(g), headcount: Number(v) }));
-    const body = { factory_code: d.factory_code, line: d.line, total_labor: total, effective_from: d.effective_from, note: d.note, details };
+    const roleBody = d.roles ? Object.fromEntries(ROLES.map(([k]) => [k, Number(d.roles![k]) || 0])) : {};
     const target = d.id ?? existing?.id;
+    const cur = rows.find((r) => r.id === target);
+    // Không quản lý bậc: giữ nguyên số người từng bậc nếu tổng không đổi; tổng đổi thì bỏ chi tiết bậc (chưa có hiệu suất BQ)
+    const keep = !SHOW_GRADES && cur && cur.total_labor === total ? cur.composition.lines.map((l) => ({ grade: l.grade, headcount: l.headcount })) : null;
+    const body = { factory_code: d.factory_code, line: d.line, total_labor: total, effective_from: d.effective_from, note: d.note, details: SHOW_GRADES ? details : keep ?? [], no_grades: !SHOW_GRADES && !keep, ...roleBody };
     if (await act(() => (target ? api.post(`${RES}/labor-standards/${target}/revise`, body) : api.post(`${RES}/labor-standards`, body)), target ? "Đã cập nhật cơ cấu (tạo phiên bản mới)." : "Đã lưu cơ cấu lao động.")) setD(null);
   };
   return (
     <div className="space-y-3">
-      <p className="text-xs text-slate-500">Số lao động theo từng xí nghiệp / chuyền và từng bậc. Hệ số TB của chuyền = trung bình gia quyền theo số người từng bậc. Không ghi đè: sửa = phiên bản mới có ngày hiệu lực. Chuyền để trống = áp cho cả xí nghiệp.</p>
+      <p className="text-xs text-slate-500">Số lao động theo từng xí nghiệp / chuyền và cơ cấu theo chức danh (quản lý bậc nghề tạm thời tắt). Không ghi đè: sửa = phiên bản mới có ngày hiệu lực. Chuyền để trống = áp cho cả xí nghiệp.</p>
       <Notice msg={msg} />
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex gap-1" role="tablist" aria-label="Xí nghiệp">
           {XNS.map((f) => <button key={f} role="tab" aria-selected={factory === f} onClick={() => { setFactory(f); setOpenIds(new Set()); }} className={`rounded-full border px-4 py-1.5 text-xs font-semibold ${factory === f ? "border-brand bg-indigo-500/20 text-brand" : "border-slate-200 text-slate-500"}`} data-testid={`std-xn-${f}`}>{f}</button>)}
         </div>
-        <span className="text-xs text-slate-500" data-testid="std-summary">{rows.filter((r) => r.status === "ACTIVE").length} chuyền · {num(sum.total)} người · hệ số TB {sum.total ? `${Math.round((sum.eq / sum.total) * 10000) / 100}%` : "—"}</span>
+        <span className="text-xs text-slate-500" data-testid="std-summary">{rows.filter((r) => r.status === "ACTIVE").length} chuyền · {num(sum.total)} người · hiệu suất BQ {sum.total ? `${Math.round((sum.eq / sum.total) * 10000) / 100}%` : "—"}</span>
         <label className="flex items-center gap-1 text-xs text-slate-500"><input type="checkbox" checked={hist} onChange={(e) => setHist(e.target.checked)} /> Hiện lịch sử phiên bản</label>
         <span className="flex-1" />
-        <button onClick={() => setOpenIds(openIds.size ? new Set() : new Set(sorted.map((r) => r.id)))} className={btn}>{openIds.size ? "Thu gọn tất cả" : "Mở tất cả"}</button>
-        {canManage && <button onClick={() => open()} className={primary} data-testid="std-add">Khai báo LĐ</button>}
+        {SHOW_GRADES && <button onClick={() => setOpenIds(openIds.size ? new Set() : new Set(sorted.map((r) => r.id)))} className={btn}>{openIds.size ? "Thu gọn tất cả" : "Mở tất cả"}</button>}
+        {canManage && !edit && <button onClick={startEdit} className={btn} data-testid="std-edit-mode">Sửa</button>}
+        {canManage && edit && <><button onClick={() => setEdit(null)} className={btn}>Hủy</button><button onClick={saveAll} className={primary} data-testid="std-save-all">Lưu</button></>}
+        {canManage && !edit && <button onClick={() => open()} className={primary} data-testid="std-add">Khai báo LĐ</button>}
       </div>
       <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
-        <table className="w-full min-w-[720px] text-sm" data-testid="std-list">
-          <thead><tr><th className={th}>Chuyền</th><th className={`${th} text-right`}>Tổng lao động</th><th className={`${th} text-right`}>Hệ số TB</th><th className={th}>Hiệu lực</th><th className={th} /></tr></thead>
+        <table className="w-full min-w-[980px] text-sm" data-testid="std-list">
+          <thead><tr><th className={th}>Chuyền</th><th className={`${th} text-right`}>Tổng lao động</th>{ROLES.map(([k, l]) => <th key={k} className={`${th} text-right`}>{l}</th>)}<th className={`${th} text-right`} title="CN may + QL + KH + ĐG + Ủi">SLĐ hiệu suất</th><th className={`${th} text-right`} title="Tổng − CN may">Gián tiếp</th><th className={`${th} text-right`}>Hiệu suất BQ</th><th className={th}>Hiệu lực</th><th className={th} /></tr></thead>
           <tbody>
             {sorted.map((s) => {
               const isOpen = openIds.has(s.id);
@@ -434,23 +454,36 @@ export function LaborStandardsPanel({ canManage }: { canManage: boolean }) {
               return [
                 <tr key={s.id} className={`cursor-pointer border-t border-slate-100 hover:bg-slate-500/5 ${s.status !== "ACTIVE" ? "opacity-60" : ""}`} onClick={() => setOpenIds((cur) => { const n = new Set(cur); if (n.has(s.id)) n.delete(s.id); else n.add(s.id); return n; })} data-testid={`std-${s.id}`}>
                   <td className="px-3 py-1.5 font-semibold"><span className="mr-1 text-slate-400">{isOpen ? "▾" : "▸"}</span>{s.line ? `Chuyền ${s.line}` : "Cả xí nghiệp"}{hist && <span className="ml-2 text-xs font-normal text-slate-400">v{s.version}</span>}</td>
-                  <td className="px-3 text-right font-semibold">{c.standard_labor}</td>
+                  {(() => {
+                    const ed = edit && s.status === "ACTIVE" ? edit[s.id] : undefined;
+                    if (!ed) return (<>
+                      <td className="px-3 text-right font-semibold">{c.standard_labor}</td>
+                      {ROLES.map(([k]) => <td key={k} className="px-3 text-right" data-testid={`std-${s.id}-${k}`}>{s.roles[k]}</td>)}
+                      <td className="px-3 text-right font-semibold">{s.roles.efficiency_labor}</td><td className="px-3 text-right">{s.roles.indirect_labor}</td>
+                    </>);
+                    const tot = ROLES.reduce((t, [k]) => t + num0(ed[k]), 0);  // tổng lao động = tổng các chức danh
+                    return (<>
+                      <td className="px-3 text-right font-semibold" data-testid={`std-${s.id}-total`}>{tot}</td>
+                      {ROLES.map(([k, l]) => <td key={k} className="px-1 text-right"><input type="number" min={0} value={ed[k]} onChange={(e) => setEdit({ ...edit!, [s.id]: { ...ed, [k]: e.target.value } })} onClick={(e) => e.stopPropagation()} className="w-16 rounded border border-slate-300 px-1 py-0.5 text-right" aria-label={`${l} chuyền ${s.line}`} data-testid={`edit-${s.id}-${k}`} /></td>)}
+                      <td className="px-3 text-right font-semibold">{tot - num0(ed.khac)}</td><td className="px-3 text-right">{tot - num0(ed.cn_may)}</td>
+                    </>);
+                  })()}
                   <td className="px-3 text-right">{c.weighted_factor !== null ? `${Math.round(c.weighted_factor * 10000) / 100}%` : "—"}</td>
                   <td className="whitespace-nowrap px-3 text-xs text-slate-500">{dateVi(s.effective_from)}{s.effective_to ? ` → ${dateVi(s.effective_to)}` : ""}{s.status !== "ACTIVE" && <span className="ml-2 pg-chip bg-slate-500/20 text-slate-500">{s.status === "RETIRED" ? "Đã thay" : "Ngưng"}</span>}</td>
                   <td className="whitespace-nowrap px-3 text-right text-xs" onClick={(e) => e.stopPropagation()}>
-                    {canManage && s.status === "ACTIVE" && <><button onClick={() => open(s)} className="text-brand hover:underline">Sửa</button><button onClick={() => act(() => api.post(`${RES}/labor-standards/${s.id}/deactivate`), "Đã ngưng cơ cấu.")} className="ml-3 text-slate-500 hover:underline">Ngưng</button></>}
+                    {canManage && !edit && s.status === "ACTIVE" && <button onClick={() => act(() => api.post(`${RES}/labor-standards/${s.id}/deactivate`), "Đã ngưng cơ cấu.")} className="text-slate-500 hover:underline">Ngưng</button>}
                     {canManage && s.status === "INACTIVE" && <button onClick={() => act(() => api.post(`${RES}/labor-standards/${s.id}/activate`), "Đã áp dụng lại.")} className="text-slate-500 hover:underline">Áp dụng lại</button>}
                   </td>
                 </tr>,
-                ...(isOpen ? c.lines.map((l) => (
+                ...(SHOW_GRADES && isOpen ? c.lines.map((l) => (
                   <tr key={`${s.id}-${l.grade}`} className="bg-slate-500/5 text-xs text-slate-600">
                     <td className="py-1 pl-10">Bậc {l.grade}</td><td className="px-3 text-right">{l.headcount}</td>
-                    <td className="px-3 text-right">{l.factor !== null ? `${Math.round(l.factor * 1000) / 10}%` : "—"}</td><td />
+                    <td colSpan={ROLES.length + 2} /><td className="px-3 text-right">{l.factor !== null ? `${Math.round(l.factor * 1000) / 10}%` : "—"}</td><td />
                   </tr>
                 )) : []),
               ];
             })}
-            {rows.length === 0 && <tr><td colSpan={5} className="py-6 text-center text-slate-400">{factory} chưa khai báo cơ cấu lao động theo bậc.</td></tr>}
+            {rows.length === 0 && <tr><td colSpan={11} className="py-6 text-center text-slate-400">{factory} chưa khai báo cơ cấu lao động theo bậc.</td></tr>}
           </tbody>
         </table>
       </div>
@@ -462,7 +495,13 @@ export function LaborStandardsPanel({ canManage }: { canManage: boolean }) {
             <datalist id="std-lines">{rows.filter((r) => r.status === "ACTIVE" && r.line).map((r) => <option key={r.id} value={r.line} />)}</datalist>
             <Field label="Hiệu lực từ"><input type="date" className={input} value={d.effective_from} onChange={(e) => setD({ ...d, effective_from: e.target.value })} /></Field>
           </div>
-          {existing && <p className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{d?.factory_code} chuyền {d?.line} đã có cơ cấu ({existing.composition.standard_labor} người). Lưu sẽ tạo phiên bản mới thay thế bằng số liệu dưới đây. <button onClick={editExisting} className="font-semibold underline" data-testid="std-edit-existing">Nạp số người hiện có để chỉnh</button></p>}
+          {existing && <p className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{d?.factory_code} chuyền {d?.line} đã có cơ cấu ({existing.composition.standard_labor} người). Hãy đóng cửa sổ này và bấm <b>Sửa</b> ở bảng để chỉnh trực tiếp.</p>}
+          {!SHOW_GRADES && (
+            <label className="mt-4 block text-sm text-slate-600">Tổng lao động (người)
+              <input type="number" min={0} className="mt-1 w-32 rounded border border-slate-200 px-2 py-1 text-right" value={d.total} onChange={(e) => setD({ ...d, total: e.target.value })} aria-label="Tổng lao động" data-testid="std-total-input" />
+            </label>
+          )}
+          {SHOW_GRADES && (
           <table className="mt-4 w-full text-sm">
             <thead><tr className="text-xs text-slate-400"><th className="text-left">Bậc</th><th className="text-right">Hệ số (Tổng = TB)</th><th className="text-right">Số lượng (người)</th></tr></thead>
             <tbody>
@@ -475,8 +514,20 @@ export function LaborStandardsPanel({ canManage }: { canManage: boolean }) {
               <tr className="border-t border-slate-300 font-bold"><td className="py-1">Tổng</td><td className="text-right">{total ? `${Math.round((equiv / total) * 10000) / 100}%` : "—"}</td><td className="text-right" data-testid="std-total">{total}</td></tr>
             </tbody>
           </table>
+          )}
+          <div className="mt-4 rounded-lg border border-slate-200 p-3" data-testid="std-roles">
+            <p className="mb-2 flex items-center justify-between text-xs font-semibold text-slate-500"><span>Cơ cấu theo chức danh (tổng phải bằng {total})</span><span className={rolesSum === total ? "text-slate-400" : "text-red-600"}>đang nhập {rolesSum}</span></p>
+            <div className="grid grid-cols-6 gap-2">
+              {ROLES.map(([k, l]) => (
+                <label key={k} className="text-center text-[11px] text-slate-500">{l}
+                  <input type="number" min={0} className="mt-1 w-full rounded border border-slate-200 px-1 py-1 text-right text-sm" value={rolesShown[k]} onChange={(e) => setD({ ...d, roles: { ...rolesShown, [k]: e.target.value } })} aria-label={`Số người ${l}`} data-testid={`role-${k}`} />
+                </label>
+              ))}
+            </div>
+            <p className="mt-2 text-[11px] text-slate-400">Mặc định mỗi chuyền tách 6 người sang QL, CN may là phần còn lại. SLĐ tính hiệu suất = CN may + QL + KH + ĐG + Ủi ({ROLES.slice(0, 5).reduce((s, [k]) => s + (Number(rolesShown[k]) || 0), 0)}); gián tiếp = tổng − CN may ({total - (Number(rolesShown.cn_may) || 0)}).</p>
+          </div>
           <div className="mt-5 flex justify-end gap-2"><button onClick={() => setD(null)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm">Hủy</button>
-            <button onClick={save} disabled={!total} className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white disabled:opacity-40" data-testid="std-save">Lưu</button></div>
+            <button onClick={save} disabled={!total || rolesSum !== total || !!existing} className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white disabled:opacity-40" data-testid="std-save">Lưu</button></div>
         </Modal>
       )}
     </div>
