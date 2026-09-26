@@ -12,6 +12,7 @@ from app.core.permissions import ROLE_PERMISSIONS
 from app.db.session import get_db
 from app.models.core import User
 from app.models.roadmap import (
+    ACTION_PLAN_STATUSES,
     BASELINE_BASES,
     CANONICAL_UNITS,
     EXEC_APPROVABLE_SOURCE_KINDS,
@@ -28,6 +29,7 @@ from app.models.roadmap import (
     TECH_LINK_TYPES,
 )
 from app.services import roadmap as rm
+from app.services import roadmap_action_plan as ap
 from app.services import roadmap_adapters as ad
 from app.services import roadmap_exec_rules as xr
 from app.services import roadmap_baseline as rb
@@ -51,7 +53,7 @@ def options(_: User = View):
             "period_types": list(PERIOD_TYPES), "baseline_bases": {k: list(v) for k, v in BASELINE_BASES.items()}, "canonical_units": CANONICAL_UNITS,
             "proposal_types": list(PROPOSAL_TYPES), "rule_proposal_types": list(RULE_PROPOSAL_TYPES), "proposal_decisions": list(PROPOSAL_DECISIONS), "tech_link_types": list(TECH_LINK_TYPES),
             "exec_rule_statuses": list(EXEC_RULE_STATUSES), "exec_approvable_source_kinds": list(EXEC_APPROVABLE_SOURCE_KINDS),
-            "exec_blocked_source_kinds": list(EXEC_BLOCKED_SOURCE_KINDS), "adapters": [a.contract() for a in ad.ADAPTERS.values()]}
+            "exec_blocked_source_kinds": list(EXEC_BLOCKED_SOURCE_KINDS), "action_plan_statuses": list(ACTION_PLAN_STATUSES), "adapters": [a.contract() for a in ad.ADAPTERS.values()]}
 
 
 # ------------------------------------------------------------------ scenario
@@ -365,3 +367,85 @@ def retire_exec_rule(rule_id: int, body: RetireBody, db: Session = Depends(get_d
 def exec_rule_history(rule_id: int, db: Session = Depends(get_db), _: User = View):
     xr.get_rule(db, rule_id)
     return rm.list_history(db, "EXEC_RULE", rule_id)
+
+
+# ------------------------------------------------------------------ action plan (Task 7)
+class ActionPlanBody(BaseModel):
+    name: str | None = Field(None, max_length=150)
+    note: str | None = Field(None, max_length=300)
+
+
+class ActionItemBody(BaseModel):
+    proposal_id: int | None = None
+    planned_effective_date: str | None = None
+    selected_quantity: int | None = None
+    as_unresolved: bool | None = None
+    notes: str | None = Field(None, max_length=300)
+
+
+@router.get("/action-plans")
+def list_action_plans(scenario_version_id: int | None = None, source_run_id: int | None = None, db: Session = Depends(get_db), _: User = View):
+    return [ap.plan_view(db, p) for p in ap.list_plans(db, scenario_version_id, source_run_id)]
+
+
+@router.post("/runs/{run_id}/action-plans")
+def create_action_plan(run_id: int, body: ActionPlanBody, db: Session = Depends(get_db), user: User = Manage):
+    return ap.version_view(db, ap.create_plan(db, user, run_id, body.model_dump(exclude_unset=True)))
+
+
+@router.get("/action-plans/{plan_id}")
+def get_action_plan(plan_id: int, db: Session = Depends(get_db), _: User = View):
+    return ap.plan_view(db, ap.get_plan(db, plan_id))
+
+
+@router.get("/action-plan-versions/{version_id}")
+def get_action_plan_version(version_id: int, db: Session = Depends(get_db), _: User = View):
+    return ap.version_view(db, ap.get_version(db, version_id))
+
+
+@router.post("/action-plan-versions/{version_id}/items")
+def add_action_item(version_id: int, body: ActionItemBody, db: Session = Depends(get_db), user: User = Manage):
+    return ap.item_view(db, ap.add_item(db, user, version_id, body.model_dump(exclude_unset=True)))
+
+
+@router.put("/action-plan-items/{item_id}")
+def update_action_item(item_id: int, body: ActionItemBody, db: Session = Depends(get_db), user: User = Manage):
+    return ap.item_view(db, ap.update_item(db, user, item_id, body.model_dump(exclude_unset=True)))
+
+
+@router.delete("/action-plan-items/{item_id}")
+def remove_action_item(item_id: int, db: Session = Depends(get_db), user: User = Manage):
+    ap.remove_item(db, user, item_id)
+    return {"ok": True}
+
+
+@router.post("/action-plan-versions/{version_id}/submit-review")
+def submit_action_plan_review(version_id: int, db: Session = Depends(get_db), user: User = Manage):
+    return ap.version_view(db, ap.submit_review(db, user, version_id))
+
+
+@router.post("/action-plan-versions/{version_id}/approve")
+def approve_action_plan(version_id: int, db: Session = Depends(get_db), user: User = Manage):
+    _need_approve(user, "duyệt Action Plan")
+    return ap.version_view(db, ap.approve(db, user, version_id))
+
+
+@router.post("/action-plan-versions/{version_id}/archive")
+def archive_action_plan(version_id: int, body: RetireBody, db: Session = Depends(get_db), user: User = Manage):
+    _need_approve(user, "archive Action Plan")
+    return ap.version_view(db, ap.archive(db, user, version_id, body.reason))
+
+
+@router.post("/action-plan-versions/{version_id}/new-version")
+def new_action_plan_version(version_id: int, db: Session = Depends(get_db), user: User = Manage):
+    return ap.version_view(db, ap.new_version(db, user, version_id))
+
+
+@router.get("/action-plan-versions/{version_id}/history")
+def action_plan_history(version_id: int, db: Session = Depends(get_db), _: User = View):
+    return ap.version_history(db, version_id)
+
+
+@router.get("/action-plan-compare/{a_id}/{b_id}")
+def compare_action_plans(a_id: int, b_id: int, db: Session = Depends(get_db), _: User = View):
+    return ap.compare(db, a_id, b_id)

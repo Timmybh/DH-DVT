@@ -306,3 +306,77 @@ class RoadmapExecutableRule(Base):
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_by: Mapped[str] = mapped_column(String(100), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+# --- Task 7 (Issue #15, GPT APPROVED_TO_IMPLEMENT): Roadmap Action Plan & Milestone Coverage
+ACTION_PLAN_STATUSES = ("DRAFT", "UNDER_REVIEW", "APPROVED", "ARCHIVED")
+ACTION_PLAN_PERSISTENCE = ("PERSISTENT", "UNSPECIFIED", "ONE_TIME")  # ONE_TIME chỉ reserve: Task 7 không count numeric
+ACTION_ITEM_STATUSES = ("COUNTED", "UNRESOLVED")
+COUNTABLE_PROPOSAL_TYPES = ("LABOR_RECRUITMENT", "MACHINE_PURCHASE")  # persistence CHỐT theo type = PERSISTENT
+COVERAGE_STATUSES = ("NOT_COVERED", "PARTIALLY_COVERED", "COVERED", "OVER_COVERED")
+
+
+class RoadmapActionPlan(Base):
+    """Family. Gắn 1 source run cố định (không rebase sang run khác — tạo family mới)."""
+
+    __tablename__ = "roadmap_action_plans"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    action_plan_code: Mapped[str] = mapped_column(String(20), unique=True, index=True)  # sinh tự động, bất biến
+    name: Mapped[str] = mapped_column(String(150), default="")
+    scenario_id: Mapped[int] = mapped_column(ForeignKey("roadmap_scenarios.id"), index=True)
+    scenario_version_id: Mapped[int] = mapped_column(ForeignKey("roadmap_scenario_versions.id"), index=True)
+    source_run_id: Mapped[int] = mapped_column(ForeignKey("roadmap_runs.id"), index=True)
+    created_by: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class RoadmapActionPlanVersion(Base):
+    __tablename__ = "roadmap_action_plan_versions"
+    __table_args__ = (UniqueConstraint("plan_id", "version_no", name="uq_roadmap_ap_version_no"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    plan_id: Mapped[int] = mapped_column(ForeignKey("roadmap_action_plans.id"), index=True)
+    version_no: Mapped[int] = mapped_column(Integer)
+    source_run_id: Mapped[int] = mapped_column(ForeignKey("roadmap_runs.id"))
+    source_run_fingerprint: Mapped[str] = mapped_column(String(64), default="")
+    status: Mapped[str] = mapped_column(String(12), default="DRAFT", index=True)
+    note: Mapped[str] = mapped_column(String(300), default="")
+    copied_from_version_id: Mapped[int | None] = mapped_column(ForeignKey("roadmap_action_plan_versions.id"), nullable=True)
+    coverage_json: Mapped[dict] = mapped_column(JSON, default=dict)  # DRAFT: preview; đóng băng từ UNDER_REVIEW; APPROVED không recompute từ nguồn sống
+    reviewed_by: Mapped[str] = mapped_column(String(100), default="")
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    approved_by: Mapped[str] = mapped_column(String(100), default="")
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    archive_reason: Mapped[str] = mapped_column(String(300), default="")
+    created_by: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class RoadmapActionPlanItem(Base):
+    __tablename__ = "roadmap_action_plan_items"
+    __table_args__ = (UniqueConstraint("plan_version_id", "proposal_id", "planned_effective_date", name="uq_roadmap_ap_item"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    plan_version_id: Mapped[int] = mapped_column(ForeignKey("roadmap_action_plan_versions.id"), index=True)
+    proposal_id: Mapped[int] = mapped_column(Integer)  # tham chiếu lúc chọn; giá trị nằm trong snapshot_json (không phụ thuộc proposal sống)
+    proposal_type: Mapped[str] = mapped_column(String(20))
+    target_result_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_milestone_code: Mapped[str] = mapped_column(String(40), default="")
+    planned_effective_date: Mapped[date] = mapped_column(Date)
+    selected_quantity: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    planned_increment: Mapped[float | None] = mapped_column(Float, nullable=True)  # = selected_quantity × productivity_value (Decimal exact)
+    unit: Mapped[str] = mapped_column(String(30), default="")
+    impact_persistence: Mapped[str] = mapped_column(String(12), default="UNSPECIFIED")
+    inclusion_status: Mapped[str] = mapped_column(String(12), default="UNRESOLVED")
+    source_proposal_calc_status: Mapped[str] = mapped_column(String(14), default="")
+    source_proposal_decision_snapshot: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    productivity_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    productivity_unit: Mapped[str] = mapped_column(String(30), default="")
+    rule_effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
+    rule_effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    source_run_fingerprint: Mapped[str] = mapped_column(String(64), default="")
+    notes: Mapped[str] = mapped_column(String(300), default="")
+    snapshot_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_by: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
