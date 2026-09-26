@@ -89,7 +89,8 @@ def _qa_queries(since: date) -> dict[str, str]:
 
 
 LABOR_SQL = """
-SELECT XiNghiep AS xn, TenChuyen AS line, CAST(Ngay AS date) AS d, MAX(TongSoLaoDong) AS total, MAX(SoLaoDongHienDien) AS present
+SELECT XiNghiep AS xn, TenChuyen AS line, CAST(Ngay AS date) AS d, MAX(TongSoLaoDong) AS total, MAX(SoLaoDongHienDien) AS present,
+       MAX(ThoiGianLamViec) AS work_minutes, MAX(SoLaoDongNgoai) AS outside, MAX(TongSoLaoDongThamGiaThucTe) AS participating
 FROM dbo.LCD_Truc_Quan_ChuyenMay_LaoDong WHERE Ngay >= :since AND TenChuyen IS NOT NULL GROUP BY XiNghiep, TenChuyen, CAST(Ngay AS date)"""
 
 MACHINE_TYPE_SQL = "SELECT MaLoaiMay AS code, TenLoai AS name FROM dbo.Lib_ChungLoaiMay"
@@ -281,7 +282,9 @@ def sync_ops(db: Session, run: SyncRun, conn: Connection, fmap: dict[int, int]) 
             ma = normalize_xn(r.xn)
             if ma is None or r.d is None:
                 continue
-            labor.append(dict(factory_code=f"XN{ma}", line=str(r.line).strip()[:20], day=r.d, total=int(r.total or 0), present=int(r.present or 0), sync_run_id=run.id))
+            labor.append(dict(factory_code=f"XN{ma}", line=str(r.line).strip()[:20], day=r.d, total=int(r.total or 0), present=int(r.present or 0),
+                          work_minutes=(int(r.work_minutes) if r.work_minutes else None), outside=(int(r.outside) if r.outside is not None else None),
+                          participating=(int(r.participating) if r.participating else None), sync_run_id=run.id))
         types = [] if not MACHINE_SYNC_ENABLED else [dict(code=str(r.code).strip()[:20], name=(r.name or "")[:100], source="EGMF") for r in conn.execute(text(MACHINE_TYPE_SQL)) if r.code]
         reqs = [] if not MACHINE_SYNC_ENABLED else [dict(style_cc=str(r.style).strip()[:60], machine_type=str(r.machine).strip().upper()[:20], machine_name=str(r.machine)[:100], quantity=int(r.qty), source="QTCN")
                 for r in conn.execute(text(QTCN_SQL))]
@@ -289,7 +292,8 @@ def sync_ops(db: Session, run: SyncRun, conn: Connection, fmap: dict[int, int]) 
             labor_snapshot.take_snapshot(db, run.id, labor)  # ảnh chụp riêng cho Dashboard
             for part in _chunks(labor, 1000):
                 stmt = pg_insert(LaborDaily).values(part)
-                db.execute(stmt.on_conflict_do_update(constraint="uq_labor_daily", set_={"total": stmt.excluded.total, "present": stmt.excluded.present, "sync_run_id": stmt.excluded.sync_run_id}))
+                db.execute(stmt.on_conflict_do_update(constraint="uq_labor_daily", set_={"total": stmt.excluded.total, "present": stmt.excluded.present, "work_minutes": stmt.excluded.work_minutes, "outside": stmt.excluded.outside,
+                                                                       "participating": stmt.excluded.participating, "sync_run_id": stmt.excluded.sync_run_id}))
             for part in _chunks(types, 200):
                 stmt = pg_insert(MachineType).values(part)
                 db.execute(stmt.on_conflict_do_update(index_elements=["code"], set_={"name": stmt.excluded.name}))
@@ -304,6 +308,34 @@ def sync_ops(db: Session, run: SyncRun, conn: Connection, fmap: dict[int, int]) 
         log.exception("Đồng bộ nguồn lực lỗi")
         errors.append(("Nguồn lực", f"Không đồng bộ được: {str(exc)[:180]}", {}))
         objects.append({"name": "Nguồn lực (lao động / máy)", "read": 0, "matched": 0, "unmatched": 1})
+
+    # ---- Kế hoạch theo tổ × mã hàng × ngày (eGMF OMM_KeHoachThang), từ đầu tháng đến hết ngày mai (kế hoạch dời sang ngày sau vẫn thấy)
+    try:
+        from app.services import omm_plan
+
+        plan_rows = omm_plan.fetch_rows(conn, since, date.today() + timedelta(days=1))
+        with db.begin_nested():
+            st_plan = omm_plan.apply_line_plan(db, plan_rows, since, run.id)
+        objects.append({"name": f"Kế hoạch theo tổ × mã hàng × ngày (OMM_KeHoachThang) — mới {st_plan['inserted']}, đổi {st_plan['updated']}, xoá {st_plan['deleted']}", "read": st_plan["read"], "matched": st_plan["read"], "unmatched": 0})
+        total_rows += st_plan["read"]
+    except Exception as exc:  # noqa: BLE001
+        log.exception("Đồng bộ kế hoạch theo tổ-ngày lỗi")
+        errors.append(("Kế hoạch theo tổ-ngày (OMM_KeHoachThang)", f"Không đồng bộ được: {str(exc)[:180]}", {}))
+        objects.append({"name": "Kế hoạch theo tổ × mã hàng × ngày (OMM_KeHoachThang)", "read": 0, "matched": 0, "unmatched": 1})
+
+    # ---- Sản lượng từng chuyền × mã hàng × ngày (DB HiPro, bảng pro_nscl)
+    try:
+        from app.services import hipro
+
+        with db.begin_nested():
+            st_line = hipro.sync_line_output(db, since, run.id)
+        n_line = st_line["read"]
+        objects.append({"name": f"Sản lượng theo chuyền × mã hàng × ngày (HiPro pro_nscl) — mới {st_line['inserted']}, đổi {st_line['updated']}, xoá {st_line['deleted']}", "read": n_line, "matched": n_line, "unmatched": 0})
+        total_rows += n_line
+    except Exception as exc:  # noqa: BLE001
+        log.exception("Đồng bộ sản lượng chuyền từ HiPro lỗi")
+        errors.append(("Sản lượng chuyền (HiPro)", f"Không đồng bộ được: {str(exc)[:180]}", {}))
+        objects.append({"name": "Sản lượng theo chuyền × mã hàng × ngày (HiPro pro_nscl)", "read": 0, "matched": 0, "unmatched": 1})
 
     if unmatched_names:
         add_items(db, run.id, "UNMATCHED", "QA / Tiến độ ERP", [(k, f"Không gán được xí nghiệp — {v:,} bản ghi/lỗi bị bỏ qua (phòng ban hoặc tên lạ)", {"count": v}) for k, v in unmatched_names.items()])

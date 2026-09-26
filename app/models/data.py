@@ -41,6 +41,31 @@ class SyncRun(Base):
     summary: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
+class SyncSchedule(Base):
+    """Đăng ký tần suất đồng bộ của một nguồn dữ liệu (snapshot): DAILY (giờ cố định) hoặc INTERVAL (mỗi N phút trong khung giờ)."""
+
+    __tablename__ = "sync_schedules"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(120), default="")
+    description: Mapped[str] = mapped_column(String(300), default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    mode: Mapped[str] = mapped_column(String(10), default="INTERVAL")  # DAILY | INTERVAL
+    daily_time: Mapped[str] = mapped_column(String(5), default="05:00")
+    interval_minutes: Mapped[int] = mapped_column(Integer, default=30)
+    window_start: Mapped[str] = mapped_column(String(5), default="06:00")
+    window_end: Mapped[str] = mapped_column(String(5), default="20:00")
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_status: Mapped[str] = mapped_column(String(10), default="")  # SUCCEEDED | FAILED
+    last_rows: Mapped[int] = mapped_column(Integer, default=0)
+    last_changed: Mapped[int] = mapped_column(Integer, default=0)  # số dòng mới/đổi/xoá ở lần chạy gần nhất
+    last_duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str] = mapped_column(String(400), default="")
+    updated_by: Mapped[str] = mapped_column(String(100), default="")
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class SyncRunItem(Base):
     __tablename__ = "sync_run_items"
 

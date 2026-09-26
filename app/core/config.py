@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     sqlserver_password: str = ""
     sqlserver_timeout: int = 15
     sqlserver_driver: str = "ODBC Driver 18 for SQL Server"
+    hipro_db: str = "HiPro"  # database HiPro trên cùng máy chủ SQL Server (sản lượng từng chuyền × mã hàng × ngày)
 
     revenue_unit: str = "USD"
     # Khách hàng KHÔNG quản lý nhập kho thành phẩm (phân tách bằng dấu phẩy) -> loại khỏi yêu cầu "nhập kho hoàn tất"

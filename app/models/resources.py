@@ -98,6 +98,39 @@ class MachineRequirement(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class LineOutputDaily(Base):
+    """Sản lượng từng chuyền × mã hàng × PO × ngày, đồng bộ từ HiPro (pro_nscl → kế hoạch sản xuất → chuyền/sản phẩm)."""
+
+    __tablename__ = "line_output_daily"
+    __table_args__ = (UniqueConstraint("day", "factory_code", "line", "style", "po", name="uq_line_output_daily"), Index("ix_line_output_day_fac", "day", "factory_code"))
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    day: Mapped[date] = mapped_column(Date)
+    factory_code: Mapped[str] = mapped_column(String(20))
+    line: Mapped[str] = mapped_column(String(20))
+    style: Mapped[str] = mapped_column(String(60))
+    po: Mapped[str] = mapped_column(String(80), default="")
+    qty: Mapped[int] = mapped_column(Integer, default=0)
+    sync_run_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class LinePlanDaily(Base):
+    """Kế hoạch theo tổ × mã hàng × ngày, dựng từ eGMF OMM_KeHoachThang (xem app/services/omm_plan.py). in_line_from → sew_end = "Ngày SX" của mã hàng trên chuyền."""
+
+    __tablename__ = "line_plan_daily"
+    __table_args__ = (UniqueConstraint("day", "factory_code", "line", "style", name="uq_line_plan_daily"), Index("ix_line_plan_day_fac", "day", "factory_code"))
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    day: Mapped[date] = mapped_column(Date)
+    factory_code: Mapped[str] = mapped_column(String(20))
+    line: Mapped[str] = mapped_column(String(20))
+    style: Mapped[str] = mapped_column(String(60))
+    plan_qty: Mapped[float] = mapped_column(Float, default=0)
+    in_line_from: Mapped[date | None] = mapped_column(Date, nullable=True)  # ngày bắt đầu vào chuyền (kế hoạch)
+    sew_end: Mapped[date | None] = mapped_column(Date, nullable=True)  # ngày kết thúc may (kế hoạch)
+    sync_run_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
 class LaborDaily(Base):
     """Lao động theo chuyền/ngày (eGMF LCD_Truc_Quan_ChuyenMay_LaoDong): nguồn cho kiểm tra nhân lực khả dụng."""
 
@@ -110,6 +143,9 @@ class LaborDaily(Base):
     day: Mapped[date] = mapped_column(Date, index=True)
     total: Mapped[int] = mapped_column(Integer, default=0)
     present: Mapped[int] = mapped_column(Integer, default=0)
+    work_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)  # ThoiGianLamViec: thời gian làm việc của chuyền trong ngày (phút)
+    outside: Mapped[int | None] = mapped_column(Integer, nullable=True)  # SoLaoDongNgoai: lao động ngoài chuyền (QL...) tham gia chuyền
+    participating: Mapped[int | None] = mapped_column(Integer, nullable=True)  # TongSoLaoDongThamGiaThucTe
     sync_run_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 

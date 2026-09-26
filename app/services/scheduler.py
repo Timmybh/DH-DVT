@@ -17,7 +17,19 @@ log = logging.getLogger(__name__)
 _scheduler: BackgroundScheduler | None = None
 
 
+def _tick_light() -> None:
+    """Các nguồn nhẹ đăng ký ở sync_schedules (vd HiPro sản lượng hôm nay) — độc lập với lượt eGMF đầy đủ."""
+    try:
+        from app.services import sync_schedule
+
+        with SessionLocal() as db:
+            sync_schedule.run_due(db)
+    except Exception:  # noqa: BLE001
+        log.exception("Lỗi job đồng bộ nhẹ")
+
+
 def _tick() -> None:
+    _tick_light()
     try:
         with SessionLocal() as db:
             cfg = db.get(SyncConfig, 1)

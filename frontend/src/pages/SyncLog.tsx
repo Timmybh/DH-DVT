@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, errorMessage, SyncRun } from "../api/client";
 import { StatusBadge } from "../components/Section";
+import SyncSchedulePanel from "../components/SyncSchedulePanel";
 import { useAuth } from "../context/AuthContext";
 import { dateTimeVi, duration, num, SOURCE_LABEL } from "../lib/format";
 
@@ -120,6 +121,8 @@ export default function SyncLog() {
           </div>
         </div>
       )}
+
+      <SyncSchedulePanel />
 
       {message && (
         <div className={`rounded-xl border p-3 text-sm ${message.ok ? "border-green-200 bg-green-50 text-green-800" : "border-red-200 bg-red-50 text-red-700"}`}>{message.text}</div>

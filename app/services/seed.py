@@ -60,6 +60,9 @@ def _upgrade_schema() -> None:
             "ALTER TABLE labor_standards ADD COLUMN IF NOT EXISTS ui INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE labor_standards ADD COLUMN IF NOT EXISTS khac INTEGER NOT NULL DEFAULT 0",
             "UPDATE labor_standards SET ql = LEAST(6, total_labor), cn_may = total_labor - LEAST(6, total_labor) WHERE total_labor > 0 AND cn_may = 0 AND ql = 0 AND kh = 0 AND dg = 0 AND ui = 0 AND khac = 0",
+            "ALTER TABLE labor_daily ADD COLUMN IF NOT EXISTS work_minutes INTEGER",
+            "ALTER TABLE labor_daily ADD COLUMN IF NOT EXISTS outside INTEGER",
+            "ALTER TABLE labor_daily ADD COLUMN IF NOT EXISTS participating INTEGER",
             "ALTER TABLE style_sam ADD COLUMN IF NOT EXISTS sam_kt DOUBLE PRECISION",
             "ALTER TABLE style_sam ADD COLUMN IF NOT EXISTS sam_tt DOUBLE PRECISION",
             "UPDATE style_sam SET sam_kt = sam_minutes WHERE source = 'ERP' AND sam_kt IS NULL",
@@ -136,6 +139,9 @@ def run_seed() -> None:
         if not db.get(SyncConfig, 1):
             db.add(SyncConfig(id=1))
         db.commit()
+        from app.services import sync_schedule
+
+        sync_schedule.ensure_defaults(db)
         from app.services import formula_service  # tránh vòng import khi nạp module
 
         formula_service.seed_columns_and_formulas(db)
