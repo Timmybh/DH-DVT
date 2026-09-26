@@ -293,8 +293,14 @@ def build_package(db: Session, pkg: RoadmapDecisionPackage, frozen: bool = False
     }
 
 
+def effective_package_json(db: Session, pkg: RoadmapDecisionPackage) -> dict:
+    """DRAFT => preview LIVE (build từ bindings/evidence/details hiện tại, không lưu DB, không giả lập frozen); UNDER_REVIEW/APPROVED/ARCHIVED => chỉ trả package_json đã đóng băng."""
+    return build_package(db, pkg, frozen=False) if pkg.status == "DRAFT" else (pkg.package_json or {})
+
+
 def _refresh_preview(db: Session, pkg: RoadmapDecisionPackage) -> None:
-    pkg.package_json = build_package(db, pkg, frozen=False)
+    """DRAFT không lưu preview: package_json rỗng + fingerprint rỗng cho tới khi freeze (tránh nhầm với snapshot đã đóng băng)."""
+    pkg.package_json = {}
     pkg.package_fingerprint = ""
 
 
@@ -321,7 +327,7 @@ def package_view(db: Session, pkg: RoadmapDecisionPackage, detail: bool = True) 
            "approved_by": pkg.approved_by, "approved_at": _iso(pkg.approved_at), "archive_reason": pkg.archive_reason, "created_by": pkg.created_by, "created_at": _iso(pkg.created_at),
            "editable": pkg.status == "DRAFT", "frozen": pkg.status != "DRAFT"}
     if detail:
-        out["package"] = pkg.package_json or {}
+        out["package"] = effective_package_json(db, pkg)
         out["live_warnings"] = _live_warnings(db, pkg)
         out["bindings"] = [{"id": b.id, "action_item_id": b.action_item_id, "evidence_id": b.evidence_id, "machine_model_id": b.machine_model_id, "future_candidate_id": b.future_candidate_id}
                            for b in package_bindings(db, pkg.id)]
@@ -524,7 +530,7 @@ def compare(db: Session, a_id: int, b_id: int) -> dict:
     (va, pa), (vb, pb) = _ctx(db, a), _ctx(db, b)
     if pa.id != pb.id and pa.scenario_version_id != pb.scenario_version_id:
         raise _bad("Chỉ so sánh package cùng Action Plan family hoặc cùng scenario_version_id", 409)
-    ja, jb = a.package_json or {}, b.package_json or {}
+    ja, jb = effective_package_json(db, a), effective_package_json(db, b)  # DRAFT => live preview; còn lại => frozen
 
     def cov(j):
         return {(t["milestone_code"], t["metric_code"], t["period_label"], t["scope_type"], t["scope_value"]): {"original_gap": t["original_gap"], "overall_combined_status": t["overall_combined_status"],

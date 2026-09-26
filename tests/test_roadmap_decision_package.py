@@ -69,12 +69,20 @@ def _base(db, machine_qty=2, labor_qty=3, date="2026-08-20", extra=False):
     return s, v, run, apv, items
 
 
+_DB = [None]
+
+
+def _pj(pkg):
+    return dp.effective_package_json(_DB[0], pkg)
+
+
 def _pkg(db, apv):
+    _DB[0] = db
     return dp.create_package(db, ADMIN, apv.id, {"note": "t"})
 
 
 def _line(pkg, item_id):
-    pj = pkg.package_json
+    pj = dp.effective_package_json(_DB[0], pkg)
     return [x for x in pj["selected_actions"] + pj["unresolved_actions"] if x["item_id"] == item_id][0]
 
 
@@ -207,7 +215,7 @@ def test_package_only_from_approved_action_plan(cdb):
 def test_without_evidence_everything_unpriced_no_invented_numbers(cdb):
     _s, _v, _run, apv, items = _base(cdb)
     pkg = _pkg(cdb, apv)
-    pj = pkg.package_json
+    pj = _pj(pkg)
     assert pj["completeness"]["pricing"] == "UNPRICED" and pj["direct_cost_summary"]["MACHINE_CAPEX"] == [] and pj["direct_cost_summary"]["LABOR_RECURRING_COST"] == []
     assert _line(pkg, items["mac"].id)["cost_status_reason"] == "MISSING_PRICE_EVIDENCE" and _line(pkg, items["lab"].id)["cost_status_reason"] == "MISSING_LABOR_COST_BASIS"
     assert {"MISSING_PRICE_EVIDENCE", "MISSING_LABOR_COST_BASIS", "UNPRICED_ACTION", "UNRESOLVED_ACTION"} <= set(pj["warning_codes"])
@@ -252,11 +260,11 @@ def test_machine_and_labor_exact_multiplication_and_grouping(cdb):
     ml, ll = _line(pkg, items["mac"].id), _line(pkg, items["lab"].id)
     assert ml["cost_status"] == "PRICED" and ml["amount"] == "3001.000000" and ml["cost_class"] == "MACHINE_CAPEX" and ml["currency"] == "USD" and ml["price_basis"] == "EX_WORKS_MACHINE_ONLY"
     assert ll["amount"] == "2400.750000" and ll["cost_class"] == "LABOR_RECURRING_COST" and ll["cost_period"] == "MONTH"
-    s = pkg.package_json["direct_cost_summary"]
+    s = _pj(pkg)["direct_cost_summary"]
     assert s["MACHINE_CAPEX"][0]["currency"] == "USD" and s["MACHINE_CAPEX"][0]["amount"] == "3001.000000" and s["LABOR_RECURRING_COST"][0]["amount"] == "2400.750000"  # tách, không cộng CAPEX+OPEX
-    assert pkg.package_json["completeness"] == {"pricing": "COMPLETE_PRICING", "supported_action_count": 2, "priced_action_count": 2, "unresolved_count": 2}
+    assert _pj(pkg)["completeness"] == {"pricing": "COMPLETE_PRICING", "supported_action_count": 2, "priced_action_count": 2, "unresolved_count": 2}
     assert [u["reason"] for u in s["UNPRICED_ACTIONS"]] == ["UNSUPPORTED_COST_FAMILY", "UNSUPPORTED_COST_FAMILY"]
-    _no_forbidden(pkg.package_json)
+    _no_forbidden(_pj(pkg))
 
 
 def test_decimal_arithmetic_has_no_float_error(cdb):
@@ -274,7 +282,7 @@ def test_milestone_buckets_run_rate_and_mixed_currency_groups(cdb):
     for item, ev in ((items["mac"], usd_m), (items["lab"], usd_l), (items["lab2"], vnd_l), (items["mac2"], vnd_m)):
         dp.bind(cdb, ADMIN, pkg.id, {"action_item_id": item.id, "evidence_id": ev.id})
     pkg = dp.get_package(cdb, pkg.id)
-    pj = pkg.package_json
+    pj = _pj(pkg)
     assert _line(pkg, items["mac"].id)["milestone_bucket"] == "M1" and _line(pkg, items["lab2"].id)["milestone_bucket"] == "M2" and _line(pkg, items["mac2"].id)["milestone_bucket"] == "AFTER_LAST_MILESTONE"
     cap = {g["currency"]: g for g in pj["direct_cost_summary"]["MACHINE_CAPEX"]}
     assert set(cap) == {"USD", "VND"} and cap["USD"]["amount"] == "3001.000000" and cap["VND"]["by_milestone_bucket"] == {"AFTER_LAST_MILESTONE": "30000000.000000"}
@@ -291,7 +299,7 @@ def test_multiple_approved_quotes_no_auto_choice_until_user_binds(cdb):
     _s, _v, _run, apv, items = _base(cdb)
     _ev(cdb, _mev("Q1", amount="1000")), _ev(cdb, _mev("Q2", amount="900"))  # 2 evidence cùng match
     pkg = _pkg(cdb, apv)
-    assert _line(pkg, items["mac"].id)["cost_status"] == "UNPRICED" and pkg.package_json["direct_cost_summary"]["MACHINE_CAPEX"] == []  # không chọn "rẻ nhất/mới nhất"
+    assert _line(pkg, items["mac"].id)["cost_status"] == "UNPRICED" and _pj(pkg)["direct_cost_summary"]["MACHINE_CAPEX"] == []  # không chọn "rẻ nhất/mới nhất"
     q1 = [e for e in rc.list_evidence(cdb) if e.evidence_code == "Q1"][0]
     dp.bind(cdb, ADMIN, pkg.id, {"action_item_id": items["mac"].id, "evidence_id": q1.id})
     assert _line(dp.get_package(cdb, pkg.id), items["mac"].id)["amount"] == "2000.000000"
@@ -323,7 +331,7 @@ def test_labor_period_mismatch_no_conversion(cdb):
     dp.bind(cdb, ADMIN, pkg.id, {"action_item_id": items["lab"].id, "evidence_id": yearly.id})
     ln = _line(dp.get_package(cdb, pkg.id), items["lab"].id)
     assert ln["cost_status"] == "UNPRICED" and ln["cost_status_reason"] == "COST_PERIOD_MISMATCH" and ln["amount"] is None
-    assert "COST_PERIOD_MISMATCH" in dp.get_package(cdb, pkg.id).package_json["warning_codes"] and dp.get_package(cdb, pkg.id).package_json["direct_cost_summary"]["LABOR_RECURRING_COST"] == []
+    assert "COST_PERIOD_MISMATCH" in _pj(dp.get_package(cdb, pkg.id))["warning_codes"] and _pj(dp.get_package(cdb, pkg.id))["direct_cost_summary"]["LABOR_RECURRING_COST"] == []
 
 
 def test_model_and_candidate_identity_binding(cdb):
@@ -357,7 +365,7 @@ def test_model_and_candidate_identity_binding(cdb):
     rc.create_asset(cdb, ADMIN, {"subject_type": "MACHINE_MODEL", "subject_ref": "1", "asset_kind": "MODEL_3D", "asset_ref": "assets/x1.glb"})
     rc.create_asset(cdb, ADMIN, {"subject_type": "FUTURE_CANDIDATE", "subject_ref": "1", "asset_kind": "DATASHEET", "uri": "https://x.example.com/ds.pdf"})
     dp.bind(cdb, ADMIN, pkg.id, {"action_item_id": items["mac"].id, "evidence_id": generic.id, "machine_model_id": 1, "future_candidate_id": 1})  # thay binding
-    det = dp.get_package(cdb, pkg.id).package_json["machine_details"][0]
+    det = _pj(dp.get_package(cdb, pkg.id))["machine_details"][0]
     assert det["machine_type_code"] == "1K" and det["bound_model_id"] == 1 and det["bound_candidate_id"] == 1
     assert det["details"]["machine_type"]["reference_placeholders"]["note"] and det["details"]["machine_model"]["brand"] == "B1"
     assert det["details"]["future_candidate"]["evidence"][0]["source_ref"] == "SPEC-1" and {a["asset_kind"] for a in det["details"]["asset_refs"]} == {"IMAGE", "MODEL_3D", "DATASHEET"}
@@ -365,23 +373,75 @@ def test_model_and_candidate_identity_binding(cdb):
 
 def test_machine_detail_valid_at_type_level_without_model_or_assets(cdb):
     _s, _v, _run, apv, items = _base(cdb)
-    det = _pkg(cdb, apv).package_json["machine_details"][0]
+    det = _pj(_pkg(cdb, apv))["machine_details"][0]
     assert det["bound_model_id"] is None and det["details"]["machine_type"]["code"] == "1K" and det["details"]["asset_refs"] == [] and det["details"]["machine_model"] is None
 
 
 # =================================================================== freeze / retire / verify
-def test_evidence_retired_before_freeze_cannot_freeze_as_priced(cdb):
+def test_draft_preview_is_live_and_never_faked_as_frozen(cdb):
     _s, _v, _run, apv, items = _base(cdb)
     e = _ev(cdb, _mev())
     pkg = _pkg(cdb, apv)
     dp.bind(cdb, ADMIN, pkg.id, {"action_item_id": items["mac"].id, "evidence_id": e.id})
-    assert _line(dp.get_package(cdb, pkg.id), items["mac"].id)["cost_status"] == "PRICED"
-    rc.retire_evidence(cdb, ADMIN2, e.id, "sai giá")
-    assert _line(dp.get_package(cdb, pkg.id), items["mac"].id)["cost_status"] == "PRICED"  # preview chưa refresh
-    pkg = _freeze(cdb, pkg)
+    assert _line(dp.get_package(cdb, pkg.id), items["mac"].id)["cost_status"] == "PRICED"  # 1) bound APPROVED evidence => PRICED
+    rc.retire_evidence(cdb, ADMIN2, e.id, "sai giá")  # 2) retire trước freeze — KHÔNG bind/unbind lại
+    live = dp.package_view(cdb, dp.get_package(cdb, pkg.id))
+    ln = [x for x in live["package"]["selected_actions"] if x["item_id"] == items["mac"].id][0]
+    assert ln["cost_status"] == "UNPRICED" and ln["cost_status_reason"] == "PRICE_NOT_APPROVED" and live["package"]["direct_cost_summary"]["MACHINE_CAPEX"] == []
+    raw = dp.get_package(cdb, pkg.id)  # 3) GET DRAFT không lưu/giả lập snapshot đóng băng
+    assert raw.package_json == {} and raw.package_fingerprint == "" and live["package_fingerprint"] == "" and live["frozen"] is False and live["live_warnings"] == []
+    pkg = _freeze(cdb, pkg)  # freeze thành UNPRICED
     ln = _line(pkg, items["mac"].id)
-    assert ln["cost_status"] == "UNPRICED" and ln["cost_status_reason"] == "PRICE_NOT_APPROVED" and pkg.package_json["direct_cost_summary"]["MACHINE_CAPEX"] == []
+    assert ln["cost_status"] == "UNPRICED" and ln["cost_status_reason"] == "PRICE_NOT_APPROVED" and pkg.package_fingerprint
     assert dp.approve(cdb, ADMIN2, pkg.id).status == "APPROVED"  # unpriced không chặn approve
+
+
+def test_asset_changes_reflected_in_draft_but_not_in_frozen(cdb):
+    _s, _v, _run, apv, items = _base(cdb)
+    pkg = _pkg(cdb, apv)
+    assert dp.effective_package_json(cdb, pkg)["machine_details"][0]["details"]["asset_refs"] == []
+    a = rc.create_asset(cdb, ADMIN, {"subject_type": "MACHINE_TYPE", "subject_ref": "1K", "asset_kind": "IMAGE", "uri": "https://x.example.com/1k.png"})
+    assert [x["uri"] for x in dp.package_view(cdb, dp.get_package(cdb, pkg.id))["package"]["machine_details"][0]["details"]["asset_refs"]] == ["https://x.example.com/1k.png"]  # DRAFT live
+    rc.set_asset_active(cdb, ADMIN, a.id, False)
+    assert dp.package_view(cdb, dp.get_package(cdb, pkg.id))["package"]["machine_details"][0]["details"]["asset_refs"] == []
+    rc.set_asset_active(cdb, ADMIN, a.id, True)
+    pkg = _freeze(cdb, pkg)
+    frozen = json.dumps(pkg.package_json, sort_keys=True)
+    rc.set_asset_active(cdb, ADMIN, a.id, False)  # đổi sau freeze
+    rc.create_asset(cdb, ADMIN, {"subject_type": "MACHINE_TYPE", "subject_ref": "1K", "asset_kind": "DATASHEET", "uri": "https://x.example.com/ds.pdf"})
+    view = dp.package_view(cdb, dp.get_package(cdb, pkg.id))
+    assert json.dumps(view["package"], sort_keys=True) == frozen and [x["uri"] for x in view["package"]["machine_details"][0]["details"]["asset_refs"]] == ["https://x.example.com/1k.png"]
+    assert dp.verify(cdb, dp.get_package(cdb, pkg.id)) == []
+
+
+def test_frozen_get_never_recomputes_from_live_evidence(cdb):
+    _s, _v, _run, apv, items = _base(cdb)
+    e = _ev(cdb, _mev())
+    pkg = _pkg(cdb, apv)
+    dp.bind(cdb, ADMIN, pkg.id, {"action_item_id": items["mac"].id, "evidence_id": e.id})
+    pkg = _freeze(cdb, pkg)
+    rc.retire_evidence(cdb, ADMIN2, e.id, "x")
+    v = dp.package_view(cdb, dp.get_package(cdb, pkg.id))  # UNDER_REVIEW: arithmetic frozen + chỉ live-overlay warning
+    ln = [x for x in v["package"]["selected_actions"] if x["item_id"] == items["mac"].id][0]
+    assert ln["cost_status"] == "PRICED" and ln["amount"] == "3001.000000" and [w["code"] for w in v["live_warnings"]] == ["SOURCE_EVIDENCE_RETIRED_AFTER_SNAPSHOT"]
+    assert "SOURCE_EVIDENCE_RETIRED_AFTER_SNAPSHOT" not in v["package"]["warning_codes"] and v["package_fingerprint"] == pkg.package_fingerprint
+
+
+def test_compare_draft_uses_live_preview(cdb):
+    _s, _v, _run, apv, items = _base(cdb)
+    e = _ev(cdb, _mev())
+    p1 = _pkg(cdb, apv)
+    dp.bind(cdb, ADMIN, p1.id, {"action_item_id": items["mac"].id, "evidence_id": e.id})
+    _freeze(cdb, p1)
+    dp.approve(cdb, ADMIN2, p1.id)
+    dp.archive(cdb, ADMIN2, p1.id, "phương án khác")
+    p2 = _pkg(cdb, apv)
+    e2 = _ev(cdb, _mev("M-2", amount="10"))
+    dp.bind(cdb, ADMIN, p2.id, {"action_item_id": items["mac"].id, "evidence_id": e2.id})
+    c = dp.compare(cdb, p1.id, p2.id)
+    assert c["machine_capex"]["b"][0]["amount"] == "20.000000" and c["machine_capex"]["a"][0]["amount"] == "3001.000000"  # DRAFT phía B lấy live preview
+    rc.retire_evidence(cdb, ADMIN2, e2.id, "x")  # retire khi B còn DRAFT => compare phản ánh ngay
+    assert dp.compare(cdb, p1.id, p2.id)["machine_capex"]["b"] == []
 
 
 def test_frozen_package_unchanged_after_evidence_retire_only_live_warning(cdb):
@@ -390,14 +450,14 @@ def test_frozen_package_unchanged_after_evidence_retire_only_live_warning(cdb):
     pkg = _pkg(cdb, apv)
     dp.bind(cdb, ADMIN, pkg.id, {"action_item_id": items["mac"].id, "evidence_id": e.id})
     pkg = _freeze(cdb, pkg)
-    before, fp = json.dumps(pkg.package_json, sort_keys=True), pkg.package_fingerprint
+    before, fp = json.dumps(_pj(pkg), sort_keys=True), pkg.package_fingerprint
     assert _line(pkg, items["mac"].id)["amount"] == "3001.000000"
     rc.retire_evidence(cdb, ADMIN2, e.id, "thay bằng báo giá mới")  # retire SAU freeze
     rc.new_version(cdb, ADMIN, e.id)
     pkg = dp.get_package(cdb, pkg.id)
-    assert json.dumps(pkg.package_json, sort_keys=True) == before and pkg.package_fingerprint == fp  # số học + fingerprint không đổi
+    assert json.dumps(_pj(pkg), sort_keys=True) == before and pkg.package_fingerprint == fp  # số học + fingerprint không đổi
     view = dp.package_view(cdb, pkg)
-    assert [w["code"] for w in view["live_warnings"]] == ["SOURCE_EVIDENCE_RETIRED_AFTER_SNAPSHOT"] and "SOURCE_EVIDENCE_RETIRED_AFTER_SNAPSHOT" not in pkg.package_json["warning_codes"]
+    assert [w["code"] for w in view["live_warnings"]] == ["SOURCE_EVIDENCE_RETIRED_AFTER_SNAPSHOT"] and "SOURCE_EVIDENCE_RETIRED_AFTER_SNAPSHOT" not in _pj(pkg)["warning_codes"]
     assert dp.approve(cdb, ADMIN2, pkg.id).status == "APPROVED"  # không auto-invalidate
     assert dp.verify(cdb, dp.get_package(cdb, pkg.id)) == []
     assert _line(dp.get_package(cdb, pkg.id), items["mac"].id)["amount"] == "3001.000000"
@@ -436,7 +496,7 @@ def test_tampered_frozen_package_fails_verify_and_approve(cdb):
     pkg = _pkg(cdb, apv)
     dp.bind(cdb, ADMIN, pkg.id, {"action_item_id": items["mac"].id, "evidence_id": e.id})
     pkg = _freeze(cdb, pkg)
-    pj = json.loads(json.dumps(pkg.package_json))
+    pj = json.loads(json.dumps(_pj(pkg)))
     pj["direct_cost_summary"]["MACHINE_CAPEX"][0]["amount"] = "1.000000"
     pkg.package_json = pj
     cdb.commit()
@@ -499,7 +559,7 @@ def test_package_reproducible_from_same_snapshot(cdb):
     pkg = _freeze(cdb, pkg)
     again = dp.build_package(cdb, pkg, frozen=True)  # build lại từ binding snapshot (không evidence sống)
     rc.retire_evidence(cdb, ADMIN2, e.id, "x")
-    assert dp.build_package(cdb, pkg, frozen=True) == again == pkg.package_json
+    assert dp.build_package(cdb, pkg, frozen=True) == again == _pj(pkg)
     assert dp._hash(again) == pkg.package_fingerprint
 
 
