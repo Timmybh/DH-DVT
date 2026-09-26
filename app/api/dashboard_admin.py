@@ -205,6 +205,7 @@ class SectionBody(BaseModel):
     preset: str = '100'
     custom_spans: list[float] | None = None
     is_visible: bool = True
+    zone: str = 'MAIN'
 
 
 class LayoutBody(BaseModel):

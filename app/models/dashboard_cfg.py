@@ -130,6 +130,7 @@ class DashboardLayoutSection(Base):
     preset: Mapped[str] = mapped_column(String(16), default="100")  # preset cố định, hoặc "CUSTOM" (tỉ lệ % tự do — xem custom_spans)
     custom_spans: Mapped[list | None] = mapped_column(JSON, nullable=True)  # preset=CUSTOM: [%cột1, %cột2, ...], tổng 100
     is_visible: Mapped[bool] = mapped_column(Boolean, default=True)
+    zone: Mapped[str] = mapped_column(String(14), default="MAIN")  # MAIN | SIDEBAR_LEFT | SIDEBAR_RIGHT (sidebar: một cột hẹp chạy dọc cạnh vùng chính)
 
 
 class SignalRule(Base):

@@ -342,3 +342,19 @@ def test_layout_designer_custom_percentage_columns(db):
             m.update_layout(db, ADMIN, l.id, {"sections": [{"ref": "s1", "preset": "CUSTOM", **bad}], "items": [{"indicator_code": "A", "section_ref": "s1", "column_no": 0}]})
     draft = m.clone_layout(db, ADMIN, l.id)
     assert m.layout_view(db, draft, True)["sections"][0]["custom_spans"] == [70, 30]
+
+
+def test_layout_designer_sidebar_zone(db):
+    m.save_indicator(db, ADMIN, ind("A"))
+    m.save_indicator(db, ADMIN, ind("B"))
+    secs = [{"ref": "s1", "preset": "66_34"}, {"ref": "s2", "preset": "100", "zone": "SIDEBAR_RIGHT"}]
+    items = [{"indicator_code": "A", "section_ref": "s1", "column_no": 0}, {"indicator_code": "B", "section_ref": "s2", "column_no": 0}]
+    l = m.create_layout(db, ADMIN, {"layout_code": "SB", "layout_name": "SB", "sections": secs, "items": items})
+    zones = [s["zone"] for s in m.layout_view(db, l, True)["sections"]]
+    assert zones == ["MAIN", "SIDEBAR_RIGHT"]                                                                                    # mặc định MAIN
+    for bad in ({"zone": "TOP"}, {"zone": "SIDEBAR_LEFT", "preset": "50_50"}):                                                    # zone lạ / sidebar nhiều cột
+        with pytest.raises(HTTPException):
+            m.update_layout(db, ADMIN, l.id, {"sections": [{"ref": "s1", **bad}], "items": [{"indicator_code": "A", "section_ref": "s1", "column_no": 0}]})
+    m.publish_layout(db, ADMIN, l.id)
+    draft = m.clone_layout(db, ADMIN, l.id)
+    assert [s["zone"] for s in m.layout_view(db, draft, True)["sections"]] == ["MAIN", "SIDEBAR_RIGHT"]                          # clone giữ zone
