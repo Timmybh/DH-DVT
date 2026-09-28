@@ -29,8 +29,9 @@ import Calendar from "./pages/admin/Calendar";
 import Sso from "./pages/admin/Sso";
 import Users from "./pages/admin/Users";
 
-/** fullBleed: bỏ giới hạn max-w-[1500px]/padding của main — dùng cho màn full-width riêng (vd Strategic Roadmap). */
-function Protected({ children, perm, fullBleed }: { children: ReactNode; perm?: string; fullBleed?: boolean }) {
+/** fullBleed: bỏ cả max-w-[1500px] lẫn padding của main — dùng cho màn tự lo layout riêng (vd Strategic Roadmap).
+ *  wide: bỏ max-w-[1500px] nhưng vẫn giữ padding lề — dùng cho màn muốn full-width màn hình mà vẫn có lề (vd Dashboard). */
+function Protected({ children, perm, fullBleed, wide }: { children: ReactNode; perm?: string; fullBleed?: boolean; wide?: boolean }) {
   const { user, ready, can } = useAuth();
   const { mode } = useTheme();
   if (!ready) return <p className="p-8 text-sm text-slate-500">Đang tải...</p>;
@@ -40,7 +41,13 @@ function Protected({ children, perm, fullBleed }: { children: ReactNode; perm?: 
   return (
     <div className={`${mode === "dark" ? "dvt-bg dvt-dark" : "dvt-light"} flex min-h-screen flex-col`}>
       <Navbar />
-      {fullBleed ? <main className="flex min-h-0 flex-1 flex-col">{children}</main> : <main className="mx-auto max-w-[1500px] px-4 py-4 sm:px-6">{children}</main>}
+      {fullBleed ? (
+        <main className="flex min-h-0 flex-1 flex-col">{children}</main>
+      ) : wide ? (
+        <main className="px-3 py-2.5 sm:px-4">{children}</main>
+      ) : (
+        <main className="mx-auto max-w-[1500px] px-4 py-4 sm:px-6">{children}</main>
+      )}
     </div>
   );
 }
@@ -58,7 +65,7 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/change-password" element={<ChangePassword />} />
-      <Route path="/" element={<Protected perm="dashboard.view"><Dashboard /></Protected>} />
+      <Route path="/" element={<Protected perm="dashboard.view" wide><Dashboard /></Protected>} />
       <Route path="/dashboard/trang-2" element={<Protected perm="dashboard.view"><DashboardPage2 /></Protected>} />
       <Route path="/planning" element={<Protected perm="planning.view"><SubTabs tabs={PLANNING_TABS}><Planning /></SubTabs></Protected>} />
       <Route path="/planning/versions" element={<Protected perm="planning.view"><SubTabs tabs={PLANNING_TABS}><Versions /></SubTabs></Protected>} />
