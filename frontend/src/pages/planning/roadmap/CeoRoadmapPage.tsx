@@ -137,13 +137,7 @@ export default function CeoRoadmapPage({ perm }: { perm: { manage: boolean } }) 
             </div>
 
             <div className="space-y-5">
-              {layout !== "VERTICAL" && (
-                <div className="rounded-[var(--rm-radius-lg)] border p-4" style={{ background: "var(--rm-surface)", borderColor: "var(--rm-border)", boxShadow: "var(--rm-shadow)" }}>
-                  <div className="mb-2 text-sm font-bold" style={{ color: "var(--rm-text)" }}>View đọc (danh sách theo thời gian)</div>
-                  <RoadmapListView milestones={filtered} onOpen={setDetailId} endLabel={endLabel} endDate={endDate} endProgress={overall} />
-                </div>
-              )}
-              <DisplayOptions windowTime={windowTime} setWindowTime={setWindowTime} pageMode={pageMode} setPageMode={setPageMode} layout={layout} setLayout={setLayout} thisYear={thisYear} />
+              <DisplayOptions windowTime={windowTime} setWindowTime={setWindowTime} pageMode={pageMode} setPageMode={setPageMode} thisYear={thisYear} />
               <a href="/planning/roadmap/setup" className="flex items-center justify-between rounded-[var(--rm-radius-lg)] border p-4 text-sm font-bold" style={{ background: "var(--rm-surface)", borderColor: "var(--rm-border)", color: "var(--rm-text)" }} data-testid="rm-goto-setup">
                 <span className="flex items-center gap-2"><Settings size={16} />Thiết lập &amp; dữ liệu</span><span style={{ color: "var(--rm-cat-dx)" }}>Mở →</span>
               </a>
