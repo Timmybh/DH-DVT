@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from "react";
 import { api, errorMessage } from "../../api/client";
 import { useAuth } from "../../context/AuthContext";
 import { dateVi, num } from "../../lib/format";
-import CeoRoadmap from "./CeoRoadmap";
 
 const RES = "/roadmap";
 const inp = "w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm";
@@ -97,17 +96,11 @@ export default function Roadmap() {
   const [costOpen, setCostOpen] = useState(false);
   const [healthOpen, setHealthOpen] = useState(false);
   const [readyOpen, setReadyOpen] = useState(false);
-  const [tab, setTab] = useState<"ceo" | "sim">("ceo");
   const load = useCallback(async () => setRows((await api.get<Scenario[]>(`${RES}/scenarios`)).data), []);
   useEffect(() => { api.get<Options>(`${RES}/options`).then((r) => setOpts(r.data)).catch((e) => setMsg({ ok: false, text: errorMessage(e) })); load().catch((e) => setMsg({ ok: false, text: errorMessage(e) })); }, [load]);
   return (
     <div className="space-y-3">
-      <div className="flex gap-2 border-b border-slate-200">
-        <button onClick={() => setTab("ceo")} className={`px-3 py-2 text-sm font-semibold ${tab === "ceo" ? "border-b-2 border-slate-900 text-slate-900" : "text-slate-400"}`} data-testid="roadmap-tab-ceo">CEO Roadmap</button>
-        <button onClick={() => setTab("sim")} className={`px-3 py-2 text-sm font-semibold ${tab === "sim" ? "border-b-2 border-slate-900 text-slate-900" : "text-slate-400"}`} data-testid="roadmap-tab-sim">Mô phỏng kỹ thuật</button>
-      </div>
-      {tab === "ceo" && <CeoRoadmap perm={perm} />}
-      {tab === "sim" && <div className="space-y-3">
+      <a href="/planning/roadmap" className="inline-block text-xs text-brand hover:underline">← Strategic Roadmap</a>
       <div>
         <h1 className="text-xl font-bold">ROADMAP SIMULATION</h1>
         <p className="text-xs text-slate-500">Scenario có version/milestone/target; mỗi lần chạy sinh Run bất biến với snapshot đầy đủ: baseline, target, gap, dữ liệu thiếu và proposal. Đây là nền tính toán minh bạch — không tối ưu toàn cục, không xếp hạng, không tự chọn phương án.</p>
@@ -141,7 +134,6 @@ export default function Roadmap() {
       {costOpen && opts && <CostEvidenceModal opts={opts} perm={perm} onClose={() => setCostOpen(false)} setMsg={setMsg} />}
       {execOpen && opts && <ExecRulesModal opts={opts} perm={perm} onClose={() => setExecOpen(false)} setMsg={setMsg} />}
       {rulesOpen && opts && <RulesModal opts={opts} perm={perm} onClose={() => setRulesOpen(false)} setMsg={setMsg} />}
-      </div>}
     </div>
   );
 }

@@ -7,11 +7,11 @@ const inp = "w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text
 const btn = "rounded-full border border-slate-300 px-3 py-1.5 text-xs disabled:opacity-40";
 const primary = "rounded-full bg-slate-900 px-4 py-1.5 text-xs font-semibold text-white disabled:opacity-40";
 
-type Msg = { ok: boolean; text: string } | null;
+export type Msg = { ok: boolean; text: string } | null;
 
 interface ScenarioRow { id: number; scenario_code: string; name: string; status: string; versions?: { id: number; version_no: number; status: string; note: string }[] }
-interface Category { id: number; code: string; name: string; color: string; sort_order: number; active: boolean }
-interface MilestoneCard {
+export interface Category { id: number; code: string; name: string; color: string; sort_order: number; active: boolean }
+export interface MilestoneCard {
   id: number; code: string; name: string; target_date: string; sequence: number;
   category_code: string | null; category_name: string; category_color: string;
   progress_percent: number | null; status: "ON_TRACK" | "AT_RISK" | "BEHIND";
@@ -255,7 +255,7 @@ export default function CeoRoadmap({ perm }: { perm: { manage: boolean } }) {
   );
 }
 
-function AddMilestoneModal({ versionId, categories, onClose, onDone, setMsg }: { versionId: number; categories: Category[]; onClose: () => void; onDone: () => void; setMsg: (m: Msg) => void }) {
+export function AddMilestoneModal({ versionId, categories, onClose, onDone, setMsg }: { versionId: number; categories: Category[]; onClose: () => void; onDone: () => void; setMsg: (m: Msg) => void }) {
   const [d, setD] = useState({ code: "", name: "", target_date: "", category_code: categories[0]?.code ?? "" });
   const submit = async () => {
     try {
@@ -290,7 +290,7 @@ type DetailTab = typeof DETAIL_TABS[number];
 const ACTION_BAR_PCT: Record<string, number> = { COMPLETED: 100, AT_RISK: 60, NOT_COMPLETED: 40, NOT_APPLICABLE: 0 };
 const ACTION_BAR_CLS: Record<string, string> = { COMPLETED: "bg-emerald-500", AT_RISK: "bg-red-500", NOT_COMPLETED: "bg-amber-400", NOT_APPLICABLE: "bg-slate-300" };
 
-function DetailModal({ milestoneId, milestones, editMode, categories, onClose, onChanged, setMsg }: {
+export function DetailModal({ milestoneId, milestones, editMode, categories, onClose, onChanged, setMsg }: {
   milestoneId: number; milestones: MilestoneCard[]; editMode: boolean; categories: Category[]; onClose: () => void; onChanged: () => void; setMsg: (m: Msg) => void;
 }) {
   const m = milestones.find((x) => x.id === milestoneId) ?? null;
