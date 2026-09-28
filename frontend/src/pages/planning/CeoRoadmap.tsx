@@ -27,6 +27,8 @@ interface ActionRow {
   ref_milestone_id: number | null; ref_milestone_code: string; ref_milestone_date: string | null;
   value_type: string; status: "COMPLETED" | "NOT_COMPLETED" | "AT_RISK" | "NOT_APPLICABLE"; note: string; sort_order: number;
 }
+interface DependentRow { action_id: number; milestone_id: number; milestone_code: string; milestone_name: string; milestone_date: string; status: string }
+interface HistoryRow { id: number; action: string; username: string; detail: string; result: string; at: string }
 
 const STATUS_LABEL: Record<string, string> = { ON_TRACK: "Đúng tiến độ", AT_RISK: "Cần chú ý", BEHIND: "Trễ hạn" };
 const STATUS_CLS: Record<string, string> = { ON_TRACK: "bg-emerald-100 text-emerald-700", AT_RISK: "bg-amber-100 text-amber-700", BEHIND: "bg-red-100 text-red-700" };
@@ -276,14 +278,27 @@ function AddMilestoneModal({ versionId, categories, onClose, onDone, setMsg }: {
   );
 }
 
+const DETAIL_TABS = ["Tổng quan", "Tiến độ & Kết quả", "Kế hoạch hành động", "Bằng chứng", "Phụ thuộc/liên kết", "Lịch sử"] as const;
+type DetailTab = typeof DETAIL_TABS[number];
+const ACTION_BAR_PCT: Record<string, number> = { COMPLETED: 100, AT_RISK: 60, NOT_COMPLETED: 40, NOT_APPLICABLE: 0 };
+const ACTION_BAR_CLS: Record<string, string> = { COMPLETED: "bg-emerald-500", AT_RISK: "bg-red-500", NOT_COMPLETED: "bg-amber-400", NOT_APPLICABLE: "bg-slate-300" };
+
 function DetailModal({ milestoneId, milestones, editMode, categories, onClose, onChanged, setMsg }: {
   milestoneId: number; milestones: MilestoneCard[]; editMode: boolean; categories: Category[]; onClose: () => void; onChanged: () => void; setMsg: (m: Msg) => void;
 }) {
   const m = milestones.find((x) => x.id === milestoneId) ?? null;
+  const [tab, setTab] = useState<DetailTab>("Tổng quan");
   const [actions, setActions] = useState<ActionRow[]>([]);
+  const [dependents, setDependents] = useState<DependentRow[] | null>(null);
+  const [history, setHistory] = useState<HistoryRow[] | null>(null);
   const [addingAction, setAddingAction] = useState(false);
   const loadActions = useCallback(async () => setActions((await api.get<ActionRow[]>(`${RES}/milestones/${milestoneId}/actions`)).data), [milestoneId]);
   useEffect(() => { void loadActions(); }, [loadActions]);
+  useEffect(() => {
+    if (tab === "Phụ thuộc/liên kết" && dependents === null) void api.get<DependentRow[]>(`${RES}/milestones/${milestoneId}/dependents`).then((r) => setDependents(r.data)).catch((e) => setMsg({ ok: false, text: errorMessage(e) }));
+    if (tab === "Lịch sử" && history === null) void api.get<HistoryRow[]>(`${RES}/milestones/${milestoneId}/history`).then((r) => setHistory(r.data)).catch((e) => setMsg({ ok: false, text: errorMessage(e) }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, milestoneId]);
 
   const setField = async (patch: Record<string, unknown>) => {
     try { await api.put(`${RES}/milestones/${milestoneId}/ceo-fields`, patch); onChanged(); } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); }
@@ -292,6 +307,9 @@ function DetailModal({ milestoneId, milestones, editMode, categories, onClose, o
     if (!confirm("Xoá milestone này?")) return;
     try { await api.delete(`${RES}/milestones/${milestoneId}`); setMsg({ ok: true, text: "Đã xoá milestone." }); onChanged(); onClose(); } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); }
   };
+
+  const receivedLinks = actions.filter((a) => a.action_type === "MILESTONE_LINK");
+  const plainActions = actions.filter((a) => a.action_type === "ACTION");
 
   if (!m) return null;
   return (
@@ -305,52 +323,136 @@ function DetailModal({ milestoneId, milestones, editMode, categories, onClose, o
         </div>
         <div className="mt-1 text-xs text-slate-400">Milestone · Ngày mục tiêu {dateVi(m.target_date)}</div>
 
-        {editMode ? (
-          <div className="mt-4 grid grid-cols-2 gap-3 rounded-xl border border-slate-200 p-3">
-            <label className="block text-xs text-slate-500">Danh mục
-              <select className={inp} value={m.category_code ?? ""} onChange={(e) => void setField({ category_code: e.target.value || null })}>
-                <option value="">—</option>
-                {categories.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
-              </select>
-            </label>
-            <label className="block text-xs text-slate-500">Tiến độ %<input type="number" min={0} max={100} className={inp} defaultValue={m.progress_percent ?? ""} onBlur={(e) => e.target.value !== "" && void setField({ progress_percent: Number(e.target.value) })} /></label>
-            <label className="col-span-2 block text-xs text-slate-500">Hiện trạng / Baseline<input className={inp} defaultValue={m.baseline_label} onBlur={(e) => void setField({ baseline_label: e.target.value })} /></label>
-            <label className="col-span-2 block text-xs text-slate-500">Gap / Khoảng thiếu<input className={inp} defaultValue={m.gap_label} onBlur={(e) => void setField({ gap_label: e.target.value })} /></label>
-            <label className="col-span-2 block text-xs text-slate-500">Phương án đề xuất<textarea className={inp} rows={2} defaultValue={m.proposal_summary} onBlur={(e) => void setField({ proposal_summary: e.target.value })} /></label>
-            <label className="col-span-2 block text-xs text-slate-500">Ghi chú cảnh báo (rỗng = không cảnh báo)<input className={inp} defaultValue={m.warning_note} onBlur={(e) => void setField({ warning_note: e.target.value })} /></label>
-          </div>
-        ) : (
-          <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50 p-3">
-            <div className="flex items-center justify-between">
-              <div className="text-sm font-bold">{m.name || m.code}</div>
-              <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLS[m.status]}`}>{STATUS_LABEL[m.status]}</span>
+        <div className="mt-3 flex flex-wrap gap-1 border-b border-slate-200">
+          {DETAIL_TABS.map((t) => (
+            <button key={t} onClick={() => setTab(t)} className={`rounded-t-lg px-3 py-1.5 text-xs font-semibold ${tab === t ? "bg-slate-900 text-white" : "text-slate-500 hover:bg-slate-100"}`} data-testid={`ceo-detail-tab-${t}`}>{t}</button>
+          ))}
+        </div>
+
+        {tab === "Tổng quan" && (
+          editMode ? (
+            <div className="mt-4 grid grid-cols-2 gap-3 rounded-xl border border-slate-200 p-3">
+              <label className="block text-xs text-slate-500">Danh mục
+                <select className={inp} value={m.category_code ?? ""} onChange={(e) => void setField({ category_code: e.target.value || null })}>
+                  <option value="">—</option>
+                  {categories.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
+                </select>
+              </label>
+              <label className="block text-xs text-slate-500">Tiến độ %<input type="number" min={0} max={100} className={inp} defaultValue={m.progress_percent ?? ""} onBlur={(e) => e.target.value !== "" && void setField({ progress_percent: Number(e.target.value) })} /></label>
+              <label className="col-span-2 block text-xs text-slate-500">Hiện trạng / Baseline<input className={inp} defaultValue={m.baseline_label} onBlur={(e) => void setField({ baseline_label: e.target.value })} /></label>
+              <label className="col-span-2 block text-xs text-slate-500">Gap / Khoảng thiếu<input className={inp} defaultValue={m.gap_label} onBlur={(e) => void setField({ gap_label: e.target.value })} /></label>
+              <label className="col-span-2 block text-xs text-slate-500">Phương án đề xuất<textarea className={inp} rows={2} defaultValue={m.proposal_summary} onBlur={(e) => void setField({ proposal_summary: e.target.value })} /></label>
+              <label className="col-span-2 block text-xs text-slate-500">Ghi chú cảnh báo (rỗng = không cảnh báo)<input className={inp} defaultValue={m.warning_note} onBlur={(e) => void setField({ warning_note: e.target.value })} /></label>
             </div>
-            <div className="mt-2 grid grid-cols-3 gap-3 border-t border-sky-200 pt-2 text-xs">
-              <div><div className="font-semibold text-slate-500">Hiện trạng / Baseline</div><div className="mt-0.5">{m.baseline_label || "—"}</div></div>
-              <div><div className="font-semibold text-slate-500">Gap / Khoảng thiếu</div><div className="mt-0.5">{m.gap_label || "—"}</div></div>
-              <div><div className="font-semibold text-slate-500">Phương án đề xuất</div><div className="mt-0.5">{m.proposal_summary || "—"}</div></div>
+          ) : (
+            <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50 p-3">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-bold">{m.name || m.code}</div>
+                <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${STATUS_CLS[m.status]}`}>{STATUS_LABEL[m.status]}</span>
+              </div>
+              <div className="mt-2 grid grid-cols-3 gap-3 border-t border-sky-200 pt-2 text-xs">
+                <div><div className="font-semibold text-slate-500">Hiện trạng / Baseline</div><div className="mt-0.5">{m.baseline_label || "—"}</div></div>
+                <div><div className="font-semibold text-slate-500">Gap / Khoảng thiếu</div><div className="mt-0.5">{m.gap_label || "—"}</div></div>
+                <div><div className="font-semibold text-slate-500">Phương án đề xuất</div><div className="mt-0.5">{m.proposal_summary || "—"}</div></div>
+              </div>
             </div>
+          )
+        )}
+
+        {tab === "Tiến độ & Kết quả" && (
+          <div className="mt-4 space-y-3">
+            <div className="rounded-xl border border-slate-200 p-3">
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-semibold">Tiến độ hiện tại</span>
+                <span className="text-lg font-extrabold">{m.progress_percent === null ? "—" : `${Math.round(m.progress_percent)}%`}</span>
+              </div>
+              <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-sky-500" style={{ width: `${m.progress_percent ?? 0}%` }} /></div>
+              <div className="mt-2 flex items-center gap-2 text-xs">
+                <span className={`rounded-full px-2 py-0.5 font-semibold ${STATUS_CLS[m.status]}`}>{STATUS_LABEL[m.status]}</span>
+                {m.has_warning && <span className="text-amber-700">⚠ {m.warning_note}</span>}
+              </div>
+            </div>
+            <p className="text-[11px] text-amber-700">5 nhóm đo lường (Operational/OPEX/Machine/Manual Progress/Manual Value — WF-04) và mapping nguồn dữ liệu tự động chưa triển khai ở phase này; tiến độ hiện đang nhập tay ở tab Tổng quan (Edit Mode).</p>
           </div>
         )}
 
-        <div className="mt-4 flex items-center justify-between">
-          <div className="text-sm font-bold">Hành động</div>
-          {editMode && <button className={btn} onClick={() => setAddingAction(true)}>+ Thêm</button>}
-        </div>
-        <p className="text-[11px] text-amber-700">Mỗi dòng là "Action" (việc rời) hoặc "Milestone" (tham chiếu 1 milestone TRƯỚC ĐÓ dùng làm điều kiện).</p>
-        <div className="mt-2 space-y-1.5">
-          {actions.map((a) => (
-            <div key={a.id} className="flex items-center gap-2 border-b border-slate-100 py-1.5 text-xs">
-              <span className={`rounded px-1.5 py-0.5 text-[9px] font-bold ${a.action_type === "MILESTONE_LINK" ? "bg-sky-100 text-sky-700" : "bg-slate-200 text-slate-600"}`}>{a.action_type === "MILESTONE_LINK" ? "MILESTONE" : "ACTION"}</span>
-              <span className="flex-1">{a.title}{a.action_type === "MILESTONE_LINK" && <span className="text-slate-400"> · {a.ref_milestone_code} {a.ref_milestone_date ? dateVi(a.ref_milestone_date) : ""}</span>}</span>
-              <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${ACTION_STATUS_CLS[a.status]}`}>{ACTION_STATUS_LABEL[a.status]}</span>
-              {editMode && <button className="text-red-500" onClick={() => void api.delete(`${RES}/milestone-actions/${a.id}`).then(() => loadActions())}>✕</button>}
+        {tab === "Kế hoạch hành động" && (
+          <div className="mt-4">
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-bold">Hành động</div>
+              {editMode && <button className={btn} onClick={() => setAddingAction(true)}>+ Thêm</button>}
             </div>
-          ))}
-          {actions.length === 0 && <p className="py-2 text-center text-xs text-slate-400">Chưa có hành động nào.</p>}
-        </div>
+            <p className="text-[11px] text-amber-700">Mỗi dòng là "Action" (việc rời) hoặc "Milestone" (tham chiếu 1 milestone TRƯỚC ĐÓ dùng làm điều kiện).</p>
+            <div className="mt-2 space-y-1.5">
+              {actions.map((a) => (
+                <div key={a.id} className="border-b border-slate-100 py-1.5">
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className={`rounded px-1.5 py-0.5 text-[9px] font-bold ${a.action_type === "MILESTONE_LINK" ? "bg-sky-100 text-sky-700" : "bg-slate-200 text-slate-600"}`}>{a.action_type === "MILESTONE_LINK" ? "MILESTONE" : "ACTION"}</span>
+                    <span className="flex-1">{a.title}{a.action_type === "MILESTONE_LINK" && <span className="text-slate-400"> · {a.ref_milestone_code} {a.ref_milestone_date ? dateVi(a.ref_milestone_date) : ""}</span>}</span>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${ACTION_STATUS_CLS[a.status]}`}>{ACTION_STATUS_LABEL[a.status]}</span>
+                    {editMode && <button className="text-red-500" onClick={() => void api.delete(`${RES}/milestone-actions/${a.id}`).then(() => loadActions())}>✕</button>}
+                  </div>
+                  <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${ACTION_BAR_CLS[a.status]}`} style={{ width: `${ACTION_BAR_PCT[a.status]}%` }} /></div>
+                </div>
+              ))}
+              {actions.length === 0 && <p className="py-2 text-center text-xs text-slate-400">Chưa có hành động nào.</p>}
+            </div>
+            {addingAction && <AddActionForm milestoneId={milestoneId} milestones={milestones} onClose={() => setAddingAction(false)} onDone={() => { setAddingAction(false); void loadActions(); }} setMsg={setMsg} />}
+          </div>
+        )}
 
-        {addingAction && <AddActionForm milestoneId={milestoneId} milestones={milestones} onClose={() => setAddingAction(false)} onDone={() => { setAddingAction(false); void loadActions(); }} setMsg={setMsg} />}
+        {tab === "Bằng chứng" && (
+          <div className="mt-4 rounded-xl border border-dashed border-slate-300 p-4 text-center text-xs text-slate-400">
+            Minh chứng &amp; phân tích đề xuất — để phân tích sau (theo spec, chưa thiết kế cụ thể ở Phase 1).
+          </div>
+        )}
+
+        {tab === "Phụ thuộc/liên kết" && (
+          <div className="mt-4 space-y-3 text-xs">
+            <div>
+              <div className="font-semibold text-slate-500">▶ Là tiền đề cho (chiều đi)</div>
+              {dependents === null ? <p className="mt-1 text-slate-400">Đang tải…</p> : dependents.length === 0 ? <p className="mt-1 text-slate-400">(chưa có)</p> : (
+                <div className="mt-1 space-y-1">
+                  {dependents.map((d) => (
+                    <div key={d.action_id} className="flex items-center justify-between rounded-lg border border-slate-100 px-2 py-1">
+                      <span>{d.milestone_name || d.milestone_code} · {dateVi(d.milestone_date)}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${ACTION_STATUS_CLS[d.status]}`}>{ACTION_STATUS_LABEL[d.status]}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div>
+              <div className="font-semibold text-slate-500">◀ Nhận điều kiện từ (chiều vào)</div>
+              {receivedLinks.length === 0 ? <p className="mt-1 text-slate-400">(chưa có)</p> : (
+                <div className="mt-1 space-y-1">
+                  {receivedLinks.map((a) => (
+                    <div key={a.id} className="flex items-center justify-between rounded-lg border border-slate-100 px-2 py-1">
+                      <span>{a.ref_milestone_code} · {a.ref_milestone_date ? dateVi(a.ref_milestone_date) : ""}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${ACTION_STATUS_CLS[a.status]}`}>{ACTION_STATUS_LABEL[a.status]}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {plainActions.length > 0 && <p className="text-slate-400">({plainActions.length} action tự do không phải liên kết milestone — xem tab Kế hoạch hành động)</p>}
+          </div>
+        )}
+
+        {tab === "Lịch sử" && (
+          <div className="mt-4 text-xs">
+            {history === null ? <p className="text-slate-400">Đang tải…</p> : history.length === 0 ? <p className="text-slate-400">Chưa có lịch sử thay đổi.</p> : (
+              <div className="space-y-1.5">
+                {history.map((h) => (
+                  <div key={h.id} className="flex items-center justify-between border-b border-slate-100 py-1.5">
+                    <div><span className="font-semibold">{h.action}</span><span className="ml-2 text-slate-400">{h.detail}</span></div>
+                    <div className="text-slate-400">{h.username} · {new Date(h.at).toLocaleString("vi-VN")}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {editMode && <div className="mt-5 flex justify-end"><button className="text-xs text-red-500 hover:underline" onClick={() => void del()}>Xoá milestone</button></div>}
       </div>

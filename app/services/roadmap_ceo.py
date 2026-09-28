@@ -15,6 +15,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.db.session import utcnow
+from app.models.core import AuditLog
 from app.models.roadmap import (
     CEO_CATEGORY_SEED,
     MILESTONE_ACTION_STATUSES,
@@ -26,6 +27,7 @@ from app.models.roadmap import (
     RoadmapMilestoneAction,
     RoadmapScenarioVersion,
 )
+from app.services.audit import write_audit
 
 
 def _bad(msg: str, code: int = 422) -> HTTPException:
@@ -136,6 +138,7 @@ def update_milestone_ceo_fields(
         m.warning_note = warning_note
     db.commit()
     db.refresh(m)
+    write_audit("ROADMAP_CEO_MILESTONE_UPDATE", username=actor, object_type="RoadmapMilestone", object_id=str(m.id), detail=f"{m.code}")
     return m
 
 
@@ -185,6 +188,30 @@ def delete_milestone_ceo_ref_check(db: Session, milestone_id: int) -> None:
     refs = db.query(RoadmapMilestoneAction.id).filter(RoadmapMilestoneAction.ref_milestone_id == milestone_id).first()
     if refs is not None:
         raise _bad("Milestone đang được dùng làm điều kiện (MILESTONE_LINK) ở milestone khác — gỡ liên kết trước khi xoá", 409)
+
+
+def list_dependents(db: Session, milestone_id: int) -> list[dict]:
+    """WF-03 tab "Phụ thuộc/liên kết" chiều đi: milestone nào đang dùng milestone này làm điều kiện (MILESTONE_LINK)."""
+    rows = (
+        db.query(RoadmapMilestoneAction, RoadmapMilestone)
+        .join(RoadmapMilestone, RoadmapMilestoneAction.milestone_id == RoadmapMilestone.id)
+        .filter(RoadmapMilestoneAction.ref_milestone_id == milestone_id)
+        .order_by(RoadmapMilestone.target_date)
+        .all()
+    )
+    return [{"action_id": a.id, "milestone_id": m.id, "milestone_code": m.code, "milestone_name": m.name, "milestone_date": _iso(m.target_date), "status": a.status} for a, m in rows]
+
+
+def list_milestone_history(db: Session, milestone_id: int) -> list[dict]:
+    """WF-03 tab "Lịch sử" — đọc trực tiếp AuditLog chung của hệ thống (object_type=RoadmapMilestone), không tạo bảng audit riêng."""
+    rows = (
+        db.query(AuditLog)
+        .filter(AuditLog.object_type == "RoadmapMilestone", AuditLog.object_id == str(milestone_id))
+        .order_by(AuditLog.at.desc())
+        .limit(100)
+        .all()
+    )
+    return [{"id": r.id, "action": r.action, "username": r.username, "detail": r.detail, "result": r.result, "at": _iso(r.at)} for r in rows]
 
 
 # ================================================================== Milestone Action checklist (WF-03)
@@ -238,6 +265,7 @@ def add_action(
     db.add(a)
     db.commit()
     db.refresh(a)
+    write_audit("ROADMAP_CEO_ACTION_ADD", username=actor, object_type="RoadmapMilestone", object_id=str(milestone_id), detail=f"{action_type} · {a.title}")
     ref_by_id = {ref.id: ref} if ref else {}
     return action_view(a, ref_by_id)
 
@@ -262,6 +290,7 @@ def update_action(
     a.updated_at = utcnow()
     db.commit()
     db.refresh(a)
+    write_audit("ROADMAP_CEO_ACTION_UPDATE", username=actor, object_type="RoadmapMilestone", object_id=str(a.milestone_id), detail=f"#{a.id} {a.title}")
     ref_by_id = {}
     if a.ref_milestone_id:
         ref = db.get(RoadmapMilestone, a.ref_milestone_id)
@@ -270,9 +299,11 @@ def update_action(
     return action_view(a, ref_by_id)
 
 
-def remove_action(db: Session, action_id: int) -> None:
+def remove_action(db: Session, action_id: int, actor: str = "") -> None:
     a = db.get(RoadmapMilestoneAction, action_id)
     if a is None:
         raise HTTPException(404, "Không tìm thấy action")
+    milestone_id, title = a.milestone_id, a.title
     db.delete(a)
     db.commit()
+    write_audit("ROADMAP_CEO_ACTION_REMOVE", username=actor, object_type="RoadmapMilestone", object_id=str(milestone_id), detail=title)

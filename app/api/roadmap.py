@@ -281,8 +281,20 @@ def update_milestone_action(action_id: int, body: MilestoneActionUpdateBody, db:
 
 @router.delete("/milestone-actions/{action_id}")
 def remove_milestone_action(action_id: int, db: Session = Depends(get_db), user: User = Manage):
-    ce.remove_action(db, action_id)
+    ce.remove_action(db, action_id, actor=user.username)
     return {"ok": True}
+
+
+@router.get("/milestones/{milestone_id}/dependents")
+def get_milestone_dependents(milestone_id: int, db: Session = Depends(get_db), _: User = View):
+    """WF-03 tab "Phụ thuộc/liên kết" chiều đi: milestone nào dùng milestone này làm điều kiện (MILESTONE_LINK)."""
+    return ce.list_dependents(db, milestone_id)
+
+
+@router.get("/milestones/{milestone_id}/history")
+def get_milestone_history(milestone_id: int, db: Session = Depends(get_db), _: User = View):
+    """WF-03 tab "Lịch sử" — AuditLog chung của hệ thống, không tạo bảng riêng."""
+    return ce.list_milestone_history(db, milestone_id)
 
 
 class LinkBody(BaseModel):
