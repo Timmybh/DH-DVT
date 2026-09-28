@@ -8,7 +8,7 @@ interface Props {
   onDrill: (factoryCode: string) => void;
 }
 
-type Period = "month" | "ytd";
+type Period = "today" | "month" | "ytd";
 
 const TICKS = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
 
@@ -52,7 +52,9 @@ function ComparisonRow({ row, unit, period, onDrill }: { row: RevenueSummaryRow;
             </div>
           </>
         ) : (
-          <div className="flex h-full items-center pl-3 text-xs text-amber-700">{period === "ytd" ? "Chưa khai báo doanh thu năm" : "Chưa khai báo doanh thu tháng"}</div>
+          <div className="flex h-full items-center pl-3 text-xs text-amber-700">
+            {period === "ytd" ? "Chưa khai báo doanh thu năm" : period === "today" ? "Chưa có sản lượng đóng gói hôm nay" : "Chưa khai báo doanh thu tháng"}
+          </div>
         )}
       </div>
 
@@ -70,19 +72,24 @@ function ComparisonRow({ row, unit, period, onDrill }: { row: RevenueSummaryRow;
 export default function RevenueSection({ data, onDrill }: Props) {
   const [y, m] = data.month.split("-");
   const [period, setPeriod] = useState<Period>("month");
-  const rows = period === "ytd" ? data.summary_ytd : data.summary;
+  const rows = period === "today" ? data.summary_today : period === "ytd" ? data.summary_ytd : data.summary;
   const total = rows.find((r) => r.kind === "TOTAL");
   const missing = total?.missing ?? [];
+  const subtitlePeriod = period === "today" ? "Hôm nay" : period === "ytd" ? `Lũy kế năm ${data.year}` : `Tháng ${m}/${y}`;
 
   return (
     <div>
       <Section
         title="Doanh thu / Thực hiện"
-        subtitle={`${period === "ytd" ? `Lũy kế năm ${data.year}` : `Tháng ${m}/${y}`} · % đạt so với kế hoạch ${period === "ytd" ? "năm" : "tháng"} ${period === "ytd" ? "" : `· thời gian đã qua ${data.elapsed_pct.toFixed(0)}% `}· đơn vị ${data.unit}`}
+        subtitle={
+          period === "today"
+            ? `Hôm nay · doanh thu = sản lượng đóng gói × đơn giá mã hàng (khác nguồn với tháng/lũy kế) · đơn vị ${data.unit}`
+            : `${subtitlePeriod} · % đạt so với kế hoạch ${period === "ytd" ? "năm" : "tháng"} ${period === "ytd" ? "" : `· thời gian đã qua ${data.elapsed_pct.toFixed(0)}% `}· đơn vị ${data.unit}`
+        }
         right={
           <div className="flex items-center gap-2">
             <div className="inline-flex overflow-hidden rounded-lg border border-slate-200 text-xs font-medium" role="group" aria-label="Kỳ xem doanh thu">
-              {([["month", "Tháng hiện tại"], ["ytd", "Lũy kế"]] as const).map(([k, label]) => (
+              {([["today", "Hôm nay"], ["month", "Tháng hiện tại"], ["ytd", "Lũy kế"]] as const).map(([k, label]) => (
                 <button
                   key={k}
                   type="button"
@@ -98,27 +105,39 @@ export default function RevenueSection({ data, onDrill }: Props) {
           </div>
         }
       >
-        <div className="flex items-end gap-3 pb-1">
-          <div className="w-24 shrink-0 sm:w-28" />
-          <div className="relative h-4 flex-1">
-            {TICKS.map((t) => (
-              <span key={t} className="absolute top-0 -translate-x-1/2 text-[10px] text-slate-400" style={{ left: `${t}%` }}>
-                {t % 20 === 0 ? `${t}%` : ""}
-                <span className="mx-auto block h-1.5 w-px bg-slate-300" />
-              </span>
-            ))}
+        {period === "today" && data.today_blocked ? (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800" data-testid="revenue-today-blocked">
+            <b>Chưa thể hiển thị doanh thu hôm nay.</b> {data.today_blocked_reason}
           </div>
-          <div className="min-w-[76px] shrink-0 text-center text-[10px] font-semibold uppercase text-slate-400">Kế hoạch</div>
-        </div>
+        ) : (
+          <>
+            <div className="flex items-end gap-3 pb-1">
+              <div className="w-24 shrink-0 sm:w-28" />
+              <div className="relative h-4 flex-1">
+                {TICKS.map((t) => (
+                  <span key={t} className="absolute top-0 -translate-x-1/2 text-[10px] text-slate-400" style={{ left: `${t}%` }}>
+                    {t % 20 === 0 ? `${t}%` : ""}
+                    <span className="mx-auto block h-1.5 w-px bg-slate-300" />
+                  </span>
+                ))}
+              </div>
+              <div className="min-w-[76px] shrink-0 text-center text-[10px] font-semibold uppercase text-slate-400">{period === "today" ? "—" : "Kế hoạch"}</div>
+            </div>
 
-        <div className="space-y-1.5">
-          {rows.map((row) => (
-            <ComparisonRow key={row.code} row={row} unit={data.unit} period={period} onDrill={onDrill} />
-          ))}
-        </div>
+            {period === "today" && rows.length === 0 ? (
+              <p className="rounded-lg border border-dashed border-slate-200 p-3 text-center text-xs text-slate-400" data-testid="revenue-today-empty">Chưa có sản lượng đóng gói nào được đồng bộ cho hôm nay.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {rows.map((row) => (
+                  <ComparisonRow key={row.code} row={row} unit={data.unit} period={period} onDrill={onDrill} />
+                ))}
+              </div>
+            )}
 
-        {missing.length > 0 && total?.declared && (
-          <p className="mt-3 text-[11px] text-amber-600">Tổng công ty chưa gồm {missing.join(", ")} (chưa khai báo doanh thu {period === "ytd" ? "năm" : "tháng"}).</p>
+            {missing.length > 0 && total?.declared && period !== "today" && (
+              <p className="mt-3 text-[11px] text-amber-600">Tổng công ty chưa gồm {missing.join(", ")} (chưa khai báo doanh thu {period === "ytd" ? "năm" : "tháng"}).</p>
+            )}
+          </>
         )}
       </Section>
     </div>

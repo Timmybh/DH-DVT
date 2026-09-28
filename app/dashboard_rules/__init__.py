@@ -54,10 +54,12 @@ def build_revenue_summary(ctx: DashboardContext) -> dict:
     full = svc.revenue_overview(ctx.db, ctx.factories, ctx.year, ctx.mon, ctx.current_date)
     summary = svc.revenue_summary(ctx.db, ctx.all_factories, ctx.factories, ctx.is_total, ctx.year, ctx.mon)
     summary_ytd = svc.revenue_summary(ctx.db, ctx.all_factories, ctx.factories, ctx.is_total, ctx.year, ctx.mon, "ytd")
+    summary_today = svc.revenue_today(ctx.db, ctx.all_factories, ctx.factories, ctx.is_total, ctx.current_date)
     return {
         "unit": full["unit"], "month": full["month"], "elapsed_pct": full["elapsed_pct"], "latest_actual_date": full["latest_actual_date"],
         "has_demo": summary["has_demo"] or summary_ytd["has_demo"] or full["has_demo"], "year": ctx.year,
         "summary": summary["rows"], "summary_ytd": summary_ytd["rows"],
+        "summary_today": summary_today["rows"], "today_blocked": summary_today["blocked"], "today_blocked_reason": summary_today["blocked_reason"],
     }
 
 

@@ -91,6 +91,9 @@ export interface RevenueOverview {
   year: number;
   summary: RevenueSummaryRow[];
   summary_ytd: RevenueSummaryRow[];
+  summary_today: RevenueSummaryRow[];
+  today_blocked: boolean;
+  today_blocked_reason: string;
 }
 
 export interface ProgressOverview {

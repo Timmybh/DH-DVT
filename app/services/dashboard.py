@@ -167,6 +167,74 @@ def revenue_summary(
     return {"rows": rows, "has_demo": any(r.source == "DEMO" for r in (declared if is_total else used + declared))}
 
 
+def revenue_today(db: Session, all_factories: list[Factory], selected: list[Factory], is_total: bool, today: date) -> dict:
+    """Doanh thu "hôm nay" = SUM(sản lượng đóng gói hôm nay × đơn giá mã hàng), KHÁC nguồn với tháng/lũy kế (doanh thu khai
+    báo ERP). po_pack_daily không có mã hàng/XN trực tiếp — tra qua PlanningVersionRow của phiên bản kế hoạch ISSUED mới
+    nhất (cùng pattern actual_service.py dùng cho "current version"), rồi tra đơn giá ACTIVE hiệu lực ≤ hôm nay trong
+    style_prices. Theo quyết định business (2026-09-28): nếu có BẤT KỲ PO nào hôm nay không tra được mã hàng/XN/đơn giá
+    thì KHÔNG hiển thị số (blocked=True kèm lý do), tránh doanh thu hôm nay bị thiếu sót mà không ai biết."""
+    from app.models.planning import PlanningVersion, PlanningVersionRow
+    from app.models.resources import StylePrice
+
+    def blocked(reason: str) -> dict:
+        return {"rows": [], "has_demo": False, "blocked": True, "blocked_reason": reason}
+
+    packs = db.query(PoPackDaily.po, PoPackDaily.qty).filter(PoPackDaily.day == today).all()
+    if not packs:
+        return {"rows": [], "has_demo": False, "blocked": False, "blocked_reason": ""}
+
+    ver = db.query(PlanningVersion).filter(PlanningVersion.status == "ISSUED").order_by(PlanningVersion.id.desc()).first()
+    if ver is None:
+        return blocked("Chưa có phiên bản kế hoạch ISSUED nào để tra mã hàng/xí nghiệp theo PO — chưa thể tính doanh thu hôm nay.")
+
+    po_qty: dict[str, int] = {}
+    for po, qty in packs:
+        po_qty[po] = po_qty.get(po, 0) + (qty or 0)
+
+    pvr_rows = (
+        db.query(PlanningVersionRow.po_number, PlanningVersionRow.style_cc, PlanningVersionRow.factory_code)
+        .filter(PlanningVersionRow.version_id == ver.id, PlanningVersionRow.po_number.in_(list(po_qty)))
+        .all()
+    )
+    lookup: dict[str, tuple[str, str]] = {}
+    for po_number, style_cc, factory_code in pvr_rows:
+        if po_number not in lookup and style_cc and factory_code:
+            lookup[po_number] = (style_cc, factory_code)
+
+    missing_pos = [po for po in po_qty if po not in lookup]
+    if missing_pos:
+        missing_qty = sum(po_qty[po] for po in missing_pos)
+        return blocked(f"{len(missing_pos)} PO ({missing_qty:,.0f} sp) đóng gói hôm nay chưa xác định được mã hàng/xí nghiệp trong kế hoạch hiện hành — chưa thể tính doanh thu hôm nay.")
+
+    style_ccs = {s for s, _ in lookup.values()}
+    price_rows = (
+        db.query(StylePrice)
+        .filter(StylePrice.style_cc.in_(style_ccs), StylePrice.status == "ACTIVE", StylePrice.effective_from <= today)
+        .order_by(StylePrice.effective_from.desc())
+        .all()
+    )
+    price_by_style: dict[str, float] = {}
+    for p in price_rows:
+        price_by_style.setdefault(p.style_cc, p.unit_price)  # đã order desc effective_from -> dòng gặp đầu tiên là giá hiệu lực gần nhất
+    missing_price = style_ccs - set(price_by_style)
+    if missing_price:
+        return blocked(f"{len(missing_price)} mã hàng chưa có đơn giá hiệu lực (style_prices, ACTIVE, effective_from ≤ hôm nay) — chưa thể tính doanh thu hôm nay: {', '.join(sorted(missing_price)[:5])}{'…' if len(missing_price) > 5 else ''}.")
+
+    revenue_by_factory_code: dict[str, float] = {}
+    for po, qty in po_qty.items():
+        style_cc, factory_code = lookup[po]
+        revenue_by_factory_code[factory_code] = revenue_by_factory_code.get(factory_code, 0.0) + qty * price_by_style[style_cc]
+
+    def row(f: Factory) -> dict:
+        actual = revenue_by_factory_code.get(f.code)
+        return {"code": f.code, "label": f.name, "kind": "FACTORY", "declared": actual is not None, "plan": None, "actual": actual, "pct": None, "selected": (not is_total) and f.id == selected[0].id}
+
+    rows = [row(f) for f in (all_factories if is_total else selected)]
+    total_actual = _sum(revenue_by_factory_code.get(f.code) for f in all_factories)
+    rows.append({"code": "TONG", "label": "Tổng công ty", "kind": "TOTAL", "declared": total_actual is not None, "plan": None, "actual": total_actual, "pct": None, "selected": False, "missing": []})
+    return {"rows": rows, "has_demo": False, "blocked": False, "blocked_reason": ""}
+
+
 def current_batch(db: Session) -> PlanImportBatch | None:
     return db.query(PlanImportBatch).filter(PlanImportBatch.is_current.is_(True)).order_by(PlanImportBatch.id.desc()).first()
 
