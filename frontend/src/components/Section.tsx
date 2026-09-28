@@ -9,8 +9,8 @@ interface SectionProps {
 
 export default function Section({ title, subtitle, right, children }: SectionProps) {
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="mb-3 flex items-start justify-between gap-3">
+    <section className="rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
+      <div className="mb-1.5 flex items-start justify-between gap-1.5">
         <div>
           <h2 className="text-sm font-bold text-slate-900">{title}</h2>
           {subtitle && <p className="text-[11px] text-slate-500">{subtitle}</p>}
