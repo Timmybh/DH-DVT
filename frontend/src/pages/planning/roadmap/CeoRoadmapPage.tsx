@@ -73,7 +73,7 @@ export default function CeoRoadmapPage({ perm }: { perm: { manage: boolean } }) 
   const endLabel = "Mục tiêu tổng";
 
   return (
-    <div className="roadmap-shell -mt-4 ml-[calc(50%-50vw)] mr-[calc(50%-50vw)] flex h-screen w-screen flex-col overflow-y-auto px-4 py-5 sm:px-6" data-testid="rm-page">
+    <div className="roadmap-shell flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-5 sm:px-6" data-testid="rm-page">
       <div className="flex w-full flex-1 flex-col gap-5">
         {/* header */}
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--rm-radius-lg)] border p-4" style={{ background: "var(--rm-surface)", borderColor: "var(--rm-border)", boxShadow: "var(--rm-shadow)" }}>
