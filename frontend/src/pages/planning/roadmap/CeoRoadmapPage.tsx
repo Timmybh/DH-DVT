@@ -73,15 +73,15 @@ export default function CeoRoadmapPage({ perm }: { perm: { manage: boolean } }) 
   const endLabel = "Mục tiêu tổng";
 
   return (
-    <div className="roadmap-shell -mx-4 -mt-4 flex min-h-screen flex-col px-4 py-5 sm:-mx-6 sm:px-6" data-testid="rm-page">
+    <div className="roadmap-shell -mt-4 ml-[calc(50%-50vw)] mr-[calc(50%-50vw)] flex h-screen w-screen flex-col overflow-y-auto px-4 py-5 sm:px-6" data-testid="rm-page">
       <div className="flex w-full flex-1 flex-col gap-5">
         {/* header */}
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--rm-radius-lg)] border p-4" style={{ background: "var(--rm-surface)", borderColor: "var(--rm-border)", boxShadow: "var(--rm-shadow)" }}>
-          <div className="flex items-center gap-3">
-            <span className="flex h-11 w-11 items-center justify-center rounded-2xl" style={{ background: "linear-gradient(135deg,#2563eb,#7c3aed)" }}><Map className="text-white" size={22} /></span>
-            <div>
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl" style={{ background: "linear-gradient(135deg,#2563eb,#7c3aed)" }}><Map className="text-white" size={22} /></span>
+            <div className="min-w-0">
               <h1 className="text-lg font-extrabold leading-tight" style={{ color: "var(--rm-text)" }}>Strategic Roadmap</h1>
-              <p className="text-xs" style={{ color: "var(--rm-text-muted)" }}>Quản lý và theo dõi các mục tiêu chiến lược của doanh nghiệp</p>
+              <p className="truncate text-xs sm:whitespace-normal" style={{ color: "var(--rm-text-muted)" }}>Quản lý và theo dõi các mục tiêu chiến lược của doanh nghiệp</p>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
