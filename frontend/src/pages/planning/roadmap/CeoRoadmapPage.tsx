@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { Map, Moon, Pencil, Plus, Settings, Sun } from "lucide-react";
+import { CalendarDays, Layers, Map, Moon, Pencil, Plus, Settings, Sun } from "lucide-react";
 import { api, errorMessage } from "../../../api/client";
 import { useTheme } from "../../../theme/ThemeContext";
 import { AddMilestoneModal, DetailModal, type Category, type MilestoneCard as MilestoneCardT, type Msg } from "../CeoRoadmap";
 import CategoryFilter from "./CategoryFilter";
-import DisplayOptions from "./DisplayOptions";
 import Roadmap3DView from "./Roadmap3DView";
 import RoadmapListView from "./RoadmapListView";
 import RoadmapTimeline from "./RoadmapTimeline";
@@ -83,12 +82,27 @@ export default function CeoRoadmapPage({ perm }: { perm: { manage: boolean } }) 
               <option value="">— Chọn version —</option>
               {scenarios.flatMap((s) => (s.versions ?? []).map((v) => <option key={v.id} value={v.id}>{s.name} · v{v.version_no} ({v.status})</option>))}
             </select>
+
+            <div className="flex items-center gap-1 rounded-xl border p-1" style={{ borderColor: "var(--rm-border)" }} title="Khoảng thời gian (Window time)">
+              <CalendarDays size={13} className="ml-1" style={{ color: "var(--rm-text-muted)" }} />
+              {([["ALL", "Toàn trình"], ["YEAR", "Năm nay"]] as [WindowTime, string][]).map(([v, label]) => (
+                <button key={v} onClick={() => setWindowTime(v)} className="rounded-lg px-2 py-1 text-[11px] font-semibold" style={windowTime === v ? { background: "var(--rm-text)", color: "#fff" } : { color: "var(--rm-text-muted)" }} data-testid={`rm-window-${v.toLowerCase()}`}>{label}</button>
+              ))}
+            </div>
+            <div className="flex items-center gap-1 rounded-xl border p-1" style={{ borderColor: "var(--rm-border)" }} title="Phân trang">
+              <Layers size={13} className="ml-1" style={{ color: "var(--rm-text-muted)" }} />
+              {([["FULL", "Toàn trình"], ["PAGED", "Phân trang"]] as [PageMode, string][]).map(([v, label]) => (
+                <button key={v} onClick={() => setPageMode(v)} className="rounded-lg px-2 py-1 text-[11px] font-semibold" style={pageMode === v ? { background: "var(--rm-text)", color: "#fff" } : { color: "var(--rm-text-muted)" }} data-testid={`rm-page-${v.toLowerCase()}`}>{label}</button>
+              ))}
+            </div>
+
             <button onClick={toggle} className="flex h-9 w-9 items-center justify-center rounded-xl border" style={{ borderColor: "var(--rm-border)", color: "var(--rm-text)" }} aria-label="Đổi chế độ sáng/tối">{mode === "dark" ? <Sun size={16} /> : <Moon size={16} />}</button>
             {perm.manage && (
               <button onClick={() => setEditMode((v) => !v)} className="flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold text-white" style={{ background: editMode ? "var(--rm-status-ontrack)" : "var(--rm-text)" }} data-testid="rm-edit-toggle">
                 <Pencil size={14} />{editMode ? "Đang Edit mode — Xong" : "Edit mode"}
               </button>
             )}
+            <a href="/planning/roadmap/setup" className="flex h-9 w-9 items-center justify-center rounded-xl border" style={{ borderColor: "var(--rm-border)", color: "var(--rm-text)" }} aria-label="Thiết lập & dữ liệu" title="Thiết lập & dữ liệu" data-testid="rm-goto-setup"><Settings size={16} /></a>
           </div>
         </div>
 
@@ -100,7 +114,7 @@ export default function CeoRoadmapPage({ perm }: { perm: { manage: boolean } }) 
         {!view ? (
           <p className="rounded-[var(--rm-radius-lg)] border border-dashed p-10 text-center text-sm" style={{ borderColor: "var(--rm-border)", color: "var(--rm-text-muted)" }}>Chưa có version nào — tạo Scenario/Version ở "Mô phỏng kỹ thuật" trước.</p>
         ) : (
-          <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1fr_340px]">
+          <>
             {/* 1 khu vực view duy nhất — đổi nội dung theo layout đang chọn, không hiện song song 2 kiểu view */}
             <div className="rounded-[var(--rm-radius-lg)] border p-4" style={{ background: "var(--rm-surface)", borderColor: "var(--rm-border)", boxShadow: "var(--rm-shadow)" }}>
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -135,14 +149,7 @@ export default function CeoRoadmapPage({ perm }: { perm: { manage: boolean } }) 
                 </div>
               )}
             </div>
-
-            <div className="space-y-5">
-              <DisplayOptions windowTime={windowTime} setWindowTime={setWindowTime} pageMode={pageMode} setPageMode={setPageMode} thisYear={thisYear} />
-              <a href="/planning/roadmap/setup" className="flex items-center justify-between rounded-[var(--rm-radius-lg)] border p-4 text-sm font-bold" style={{ background: "var(--rm-surface)", borderColor: "var(--rm-border)", color: "var(--rm-text)" }} data-testid="rm-goto-setup">
-                <span className="flex items-center gap-2"><Settings size={16} />Thiết lập &amp; dữ liệu</span><span style={{ color: "var(--rm-cat-dx)" }}>Mở →</span>
-              </a>
-            </div>
-          </div>
+          </>
         )}
       </div>
 
