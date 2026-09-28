@@ -35,9 +35,16 @@ const ACTION_STATUS_CLS: Record<string, string> = { COMPLETED: "bg-emerald-100 t
 
 const Notice = ({ msg }: { msg: Msg }) => (msg ? <p className={`mb-3 rounded-lg border px-3 py-2 text-sm ${msg.ok ? "border-green-300/50 text-green-700" : "border-red-300/50 text-red-700"}`} role="status">{msg.text}</p> : null);
 
-/** WF-01/02/03 (ROADMAP_APPROVED_WIREFRAME_SPEC.md): CEO Roadmap — Horizontal View + Edit Mode + Milestone Detail.
- * Lớp trình bày business-facing, dùng chung version/milestone của Roadmap Simulation (Task 5) làm khung thời gian.
- * 3D/Vertical layout, Setup&Data hub, Data Sources, Demo Mode là phần tiếp theo (chưa làm trong bản này). */
+type Layout = "HORIZONTAL" | "THREED" | "VERTICAL";
+type WindowTime = "ALL" | "YEAR";
+type PageMode = "FULL" | "PAGED";
+const HORIZONTAL_PAGE_SIZE = 5;
+const THREED_PAGE_SIZE = 4; // recipe §8: mỗi trang 3D chỉ vài milestone để card đủ lớn/dễ đọc
+
+/** WF-01/01B/01C/02/03 (ROADMAP_APPROVED_WIREFRAME_SPEC.md + ROADMAP_3D_IMPLEMENTATION_RECIPE.md):
+ * CEO Roadmap — Horizontal/3D/Vertical View (1 data contract dùng chung `ceo-view`) + Edit Mode + Milestone Detail.
+ * 3D là CSS-perspective 2.5D thuần DOM (không Three.js), Presentation Mode only — không kéo/sửa trong 3D.
+ * Setup&Data hub, Data Sources, Demo Mode, 5 nhóm đo lường, Kế hoạch hành động Gantt là phần tiếp theo. */
 export default function CeoRoadmap({ perm }: { perm: { manage: boolean } }) {
   const [scenarios, setScenarios] = useState<ScenarioRow[]>([]);
   const [versionId, setVersionId] = useState<number | null>(null);
@@ -48,6 +55,10 @@ export default function CeoRoadmap({ perm }: { perm: { manage: boolean } }) {
   const [addOpen, setAddOpen] = useState(false);
   const [detailId, setDetailId] = useState<number | null>(null);
   const [msg, setMsg] = useState<Msg>(null);
+  const [layout, setLayout] = useState<Layout>("HORIZONTAL");
+  const [windowTime, setWindowTime] = useState<WindowTime>("ALL");
+  const [pageMode, setPageMode] = useState<PageMode>("FULL");
+  const [page, setPage] = useState(0);
 
   const loadScenarios = useCallback(async () => {
     const list = (await api.get<ScenarioRow[]>(`${RES}/scenarios`)).data;
@@ -71,6 +82,36 @@ export default function CeoRoadmap({ perm }: { perm: { manage: boolean } }) {
 
   const toggleCat = (code: string) => setActiveCats((prev) => { const n = new Set(prev); if (n.has(code)) n.delete(code); else n.add(code); return n; });
   const dimmed = (code: string | null) => activeCats.size > 0 && (!code || !activeCats.has(code));
+  useEffect(() => { setPage(0); }, [layout, windowTime, pageMode, versionId]);
+
+  const thisYear = new Date().getFullYear();
+  const filtered = view ? view.milestones.filter((m) => windowTime === "ALL" || new Date(m.target_date).getFullYear() === thisYear) : [];
+  const paginating = pageMode === "PAGED" && layout !== "VERTICAL";
+  const pageSize = layout === "THREED" ? THREED_PAGE_SIZE : HORIZONTAL_PAGE_SIZE;
+  const pageCount = paginating ? Math.max(1, Math.ceil(filtered.length / pageSize)) : 1;
+  const curPage = Math.min(page, pageCount - 1);
+  const shown = paginating ? filtered.slice(curPage * pageSize, curPage * pageSize + pageSize) : filtered;
+  const isLastPage = curPage >= pageCount - 1;
+  const summaryCard = view && view.summary.length > 0 && isLastPage ? (
+    <div className="relative z-10 w-[230px] shrink-0 rounded-2xl bg-gradient-to-br from-teal-600 to-teal-500 p-3 text-white shadow-sm" data-testid="ceo-roadmap-summary">
+      <div className="text-[11px] uppercase tracking-wide text-teal-100">Mục tiêu tổng</div>
+      <div className="mt-2 space-y-1.5">
+        {view.summary.map((s) => (
+          <div key={s.category_code} className="flex items-center justify-between rounded-lg bg-white/15 px-2 py-1 text-xs">
+            <span>{s.category_name}</span>
+            <span className="font-bold">{s.avg_progress_percent === null ? "—" : `${Math.round(s.avg_progress_percent)}%`}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  ) : null;
+  const PageNav = paginating && pageCount > 1 ? (
+    <div className="mt-2 flex items-center justify-center gap-3 text-xs" data-testid="ceo-roadmap-pagenav">
+      <button className={btn} disabled={curPage === 0} onClick={() => setPage(curPage - 1)}>‹</button>
+      <span>Trang {curPage + 1} / {pageCount}</span>
+      <button className={btn} disabled={curPage >= pageCount - 1} onClick={() => setPage(curPage + 1)}>›</button>
+    </div>
+  ) : null;
 
   return (
     <div className="space-y-3">
@@ -84,6 +125,21 @@ export default function CeoRoadmap({ perm }: { perm: { manage: boolean } }) {
           <option value="">— Chọn version —</option>
           {scenarios.flatMap((s) => (s.versions ?? []).map((v) => <option key={v.id} value={v.id}>{s.name} · v{v.version_no} ({v.status})</option>))}
         </select>
+        <select className={inp + " w-auto"} value={windowTime} onChange={(e) => setWindowTime(e.target.value as WindowTime)} data-testid="ceo-roadmap-window">
+          <option value="ALL">Toàn trình</option>
+          <option value="YEAR">Năm nay ({thisYear})</option>
+        </select>
+        {layout !== "VERTICAL" && (
+          <select className={inp + " w-auto"} value={pageMode} onChange={(e) => setPageMode(e.target.value as PageMode)} data-testid="ceo-roadmap-pagemode">
+            <option value="FULL">Toàn trình (không phân trang)</option>
+            <option value="PAGED">Phân trang ({pageSize}/trang)</option>
+          </select>
+        )}
+        <div className="flex rounded-full border border-slate-300 p-0.5 text-xs">
+          {([["HORIZONTAL", "Ngang"], ["THREED", "3D"], ["VERTICAL", "Dọc"]] as [Layout, string][]).map(([v, label]) => (
+            <button key={v} onClick={() => setLayout(v)} className={`rounded-full px-3 py-1 ${layout === v ? "bg-slate-900 text-white" : "text-slate-500"}`} data-testid={`ceo-roadmap-layout-${v}`}>{label}</button>
+          ))}
+        </div>
         <span className="flex-1" />
         {perm.manage && <button onClick={() => setEditMode((v) => !v)} className={editMode ? primary : btn} data-testid="ceo-roadmap-edit-toggle">{editMode ? "Đang Edit Mode — Xong" : "Edit Mode"}</button>}
         {editMode && perm.manage && <button onClick={() => setAddOpen(true)} className={primary} data-testid="ceo-roadmap-add">+ Milestone</button>}
@@ -96,34 +152,91 @@ export default function CeoRoadmap({ perm }: { perm: { manage: boolean } }) {
         ))}
       </div>
 
-      {!view ? <p className="rounded-2xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400">Chưa có version nào — tạo Scenario/Version ở tab Mô phỏng kỹ thuật trước.</p> : (
-        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white p-4">
-          <div className="relative flex min-w-max gap-5 pb-2 pt-6">
-            <div className="absolute left-0 right-0 top-1/2 h-[3px] -translate-y-1/2 bg-gradient-to-r from-slate-200 via-slate-300 to-slate-200" />
-            {view.milestones.map((m) => (
-              <button key={m.id} onClick={() => setDetailId(m.id)} className="relative z-10 w-[210px] shrink-0 rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-sm transition hover:shadow-md" style={{ opacity: dimmed(m.category_code) ? 0.35 : 1 }} data-testid={`ceo-roadmap-ms-${m.id}`}>
-                {m.has_warning && <span className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full border-2 border-white bg-amber-500 text-xs font-black text-white" title={m.warning_note}>!</span>}
-                <div className="flex items-center gap-1 text-[11px] text-slate-400"><span className="inline-block h-2 w-2 rounded-full" style={{ background: m.category_color }} />{m.category_name || "Chưa phân loại"}</div>
-                <div className="mt-0.5 text-2xl font-extrabold">{m.progress_percent === null ? "—" : `${Math.round(m.progress_percent)}%`}</div>
-                <div className="text-sm font-bold leading-snug">{m.name || m.code}</div>
-                <div className="mt-1 text-[11px] text-slate-400">{dateVi(m.target_date)}</div>
-                <span className={`mt-2 inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${STATUS_CLS[m.status]}`}>{STATUS_LABEL[m.status]}</span>
+      {!view ? <p className="rounded-2xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-400">Chưa có version nào — tạo Scenario/Version ở tab Mô phỏng kỹ thuật trước.</p> : layout === "HORIZONTAL" ? (
+        <div>
+          <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white p-4">
+            <div className="relative flex min-w-max gap-5 pb-2 pt-6">
+              <div className="absolute left-0 right-0 top-1/2 h-[3px] -translate-y-1/2 bg-gradient-to-r from-slate-200 via-slate-300 to-slate-200" />
+              {shown.map((m) => (
+                <button key={m.id} onClick={() => setDetailId(m.id)} className="relative z-10 w-[210px] shrink-0 rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-sm transition hover:shadow-md" style={{ opacity: dimmed(m.category_code) ? 0.35 : 1 }} data-testid={`ceo-roadmap-ms-${m.id}`}>
+                  {m.has_warning && <span className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full border-2 border-white bg-amber-500 text-xs font-black text-white" title={m.warning_note}>!</span>}
+                  <div className="flex items-center gap-1 text-[11px] text-slate-400"><span className="inline-block h-2 w-2 rounded-full" style={{ background: m.category_color }} />{m.category_name || "Chưa phân loại"}</div>
+                  <div className="mt-0.5 text-2xl font-extrabold">{m.progress_percent === null ? "—" : `${Math.round(m.progress_percent)}%`}</div>
+                  <div className="text-sm font-bold leading-snug">{m.name || m.code}</div>
+                  <div className="mt-1 text-[11px] text-slate-400">{dateVi(m.target_date)}</div>
+                  <span className={`mt-2 inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${STATUS_CLS[m.status]}`}>{STATUS_LABEL[m.status]}</span>
+                </button>
+              ))}
+              {summaryCard}
+            </div>
+          </div>
+          {PageNav}
+        </div>
+      ) : layout === "THREED" ? (
+        <div>
+          <div className="rounded-2xl border border-slate-200 bg-gradient-to-b from-white to-sky-50 p-4" data-testid="ceo-roadmap-3d">
+            <div style={{ perspective: 1400, perspectiveOrigin: "50% 30%", overflow: "hidden", height: 380, position: "relative" }}>
+              <div style={{ position: "absolute", left: 0, top: 0, width: Math.max(700, 40 + shown.length * 220 + 230), height: 340, transformStyle: "preserve-3d", transform: "rotateX(58deg) rotateZ(-8deg)", transformOrigin: "20% 60%" }}>
+                {shown.map((m, i) => {
+                  const x = 40 + i * 220 + (i % 2 === 0 ? -30 : 30);
+                  const y = 40 + i * 40;
+                  const z = -i * 120;
+                  const scale = Math.max(0.82, 1 - i * 0.04);
+                  const opacity = Math.max(0.68, 1 - i * 0.06);
+                  return (
+                    <button
+                      key={m.id} onClick={() => setDetailId(m.id)} data-testid={`ceo-roadmap-3d-ms-${m.id}`}
+                      aria-label={`${m.category_name || "Chưa phân loại"}, ${m.name || m.code}, ${dateVi(m.target_date)}, ${m.progress_percent === null ? "chưa có tiến độ" : `${Math.round(m.progress_percent)} phần trăm`}, ${STATUS_LABEL[m.status]}${m.has_warning ? ", cần chú ý" : ""}`}
+                      style={{ position: "absolute", left: 0, top: 0, width: 190, transform: `translate3d(${x}px, ${y}px, ${z}px) rotateZ(8deg) rotateX(-58deg) scale(${scale})`, opacity: dimmed(m.category_code) ? opacity * 0.4 : opacity, transformStyle: "preserve-3d" }}
+                      className="rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-xl"
+                    >
+                      {m.has_warning && <span className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full border-2 border-white bg-amber-500 text-xs font-black text-white">!</span>}
+                      <div className="flex items-center gap-1 text-[11px] text-slate-400"><span className="inline-block h-2 w-2 rounded-full" style={{ background: m.category_color }} />{m.category_name || "Chưa phân loại"}</div>
+                      <div className="mt-0.5 text-xl font-extrabold">{m.progress_percent === null ? "—" : `${Math.round(m.progress_percent)}%`}</div>
+                      <div className="text-sm font-bold leading-snug">{m.name || m.code}</div>
+                      <div className="mt-1 text-[11px] text-slate-400">{dateVi(m.target_date)}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <p className="mt-2 text-[11px] text-slate-400">3D là chế độ trình bày (xem/lọc/phân trang) — kéo thả/sửa vẫn thực hiện ở layout Ngang khi bật Edit Mode.</p>
+          </div>
+          {PageNav}
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-slate-200 bg-white p-4" data-testid="ceo-roadmap-vertical">
+          <div className="relative space-y-4 pl-9">
+            <div className="absolute bottom-2 left-[15px] top-2 w-[3px] bg-slate-200" />
+            {filtered.map((m) => (
+              <button key={m.id} onClick={() => setDetailId(m.id)} className="relative block w-full rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-sm" style={{ opacity: dimmed(m.category_code) ? 0.35 : 1 }} data-testid={`ceo-roadmap-v-ms-${m.id}`}>
+                <span className="absolute -left-[27px] top-4 h-4 w-4 rounded-full border-2 border-white shadow" style={{ background: m.category_color }} />
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-[11px] text-slate-400">{dateVi(m.target_date)} · {m.category_name || "Chưa phân loại"}</div>
+                  {m.has_warning && <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-[10px] font-black text-white" title={m.warning_note}>!</span>}
+                </div>
+                <div className="mt-1 text-sm font-bold">{m.name || m.code}</div>
+                <div className="mt-1 flex items-center gap-2">
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${STATUS_CLS[m.status]}`}>{STATUS_LABEL[m.status]}</span>
+                  <span className="text-xs text-slate-400">{m.progress_percent === null ? "—" : `${Math.round(m.progress_percent)}%`}</span>
+                </div>
               </button>
             ))}
-            {view.summary.length > 0 && (
-              <div className="relative z-10 w-[230px] shrink-0 rounded-2xl bg-gradient-to-br from-teal-600 to-teal-500 p-3 text-white shadow-sm">
-                <div className="text-[11px] uppercase tracking-wide text-teal-100">Mục tiêu tổng</div>
-                <div className="mt-2 space-y-1.5">
-                  {view.summary.map((s) => (
-                    <div key={s.category_code} className="flex items-center justify-between rounded-lg bg-white/15 px-2 py-1 text-xs">
-                      <span>{s.category_name}</span>
-                      <span className="font-bold">{s.avg_progress_percent === null ? "—" : `${Math.round(s.avg_progress_percent)}%`}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+            {filtered.length === 0 && <p className="py-4 text-center text-xs text-slate-400">Không có milestone trong khoảng thời gian này.</p>}
           </div>
+          {view.summary.length > 0 && (
+            <div className="mt-4 rounded-2xl bg-gradient-to-br from-teal-600 to-teal-500 p-3 text-white">
+              <div className="text-[11px] uppercase tracking-wide text-teal-100">Mục tiêu tổng</div>
+              <div className="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+                {view.summary.map((s) => (
+                  <div key={s.category_code} className="flex items-center justify-between rounded-lg bg-white/15 px-2 py-1 text-xs">
+                    <span>{s.category_name}</span>
+                    <span className="font-bold">{s.avg_progress_percent === null ? "—" : `${Math.round(s.avg_progress_percent)}%`}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
