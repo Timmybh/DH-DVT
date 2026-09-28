@@ -24,6 +24,13 @@ LIFECYCLE_TRANSITIONS: dict[str, tuple[str, ...]] = {
 }
 RUNNABLE_VERSION_STATUSES = ("READY", "REVIEWED")  # không chạy trực tiếp DRAFT; khóa từ READY để reproducible
 
+MILESTONE_MANUAL_STATUSES = ("ON_TRACK", "AT_RISK", "BEHIND")
+# WF-04 (spec §6) — Phase 1 "bản đơn giản nhất" theo quyết định user 2026-09-28: chỉ map thẳng Operational Data
+# (REVENUE/OUTPUT_QTY, cùng bảng revenue_monthly/yearly + po_pack_daily mà roadmap_baseline.py đã dùng cho engine cũ).
+# QA_DEFECT_COUNT/Financial-OPEX/Machine Data để sau — chiều "ít lỗi hơn = tốt hơn" chưa được xác nhận, không tự suy diễn.
+MEASUREMENT_FAMILIES = ("MANUAL_PROGRESS", "MANUAL_VALUE", "OPERATIONAL")
+OPERATIONAL_METRICS = ("REVENUE", "OUTPUT_QTY")
+
 SCOPE_TYPES = ("TOTAL", "FACTORY")  # Task 5: không LINE
 METRIC_CODES = ("REVENUE", "OUTPUT_QTY")
 TARGET_KINDS = ("ABSOLUTE", "INCREMENT")
@@ -102,6 +109,24 @@ class RoadmapMilestone(Base):
     target_date: Mapped[date] = mapped_column(Date)
     sequence: Mapped[int] = mapped_column(Integer)
     note: Mapped[str] = mapped_column(String(300), default="")
+    # --- CEO Roadmap Phase 1 (WF-01/02/03): thuộc tính business-facing, không ảnh hưởng lifecycle/run engine ở trên.
+    category_code: Mapped[str | None] = mapped_column(ForeignKey("roadmap_categories.code"), nullable=True)
+    progress_percent: Mapped[float | None] = mapped_column(Float, nullable=True)  # 0..100, nhập tay hoặc tính từ measurement (Phase 2)
+    baseline_label: Mapped[str] = mapped_column(String(150), default="")  # "1.200 đơn/tháng · cùng kỳ 07/2025"
+    gap_label: Mapped[str] = mapped_column(String(150), default="")  # "+120 đơn/tháng · = 10% baseline"
+    proposal_summary: Mapped[str] = mapped_column(String(500), default="")  # "Phương án đề xuất" — phân tích ngắn
+    manual_status: Mapped[str | None] = mapped_column(String(16), nullable=True)  # ON_TRACK|AT_RISK|BEHIND; null => suy ra từ progress
+    warning_note: Mapped[str] = mapped_column(String(300), default="")  # lý do hiện "!" — rỗng = không cảnh báo
+    # --- WF-04 (spec §6) Phase 1 đơn giản: measurement_family=OPERATIONAL thì progress/baseline/gap TÍNH từ dữ liệu thật
+    # (ghi đè field manual ở trên), MANUAL_PROGRESS/MANUAL_VALUE (mặc định) giữ nguyên hành vi nhập tay như trước.
+    measurement_family: Mapped[str] = mapped_column(String(20), default="MANUAL_PROGRESS")
+    measurement_metric_code: Mapped[str | None] = mapped_column(String(20), nullable=True)  # REVENUE|OUTPUT_QTY khi OPERATIONAL
+    measurement_scope_type: Mapped[str] = mapped_column(String(10), default="TOTAL")
+    measurement_scope_value: Mapped[str] = mapped_column(String(20), default="")
+    measurement_period_type: Mapped[str] = mapped_column(String(6), default="MONTH")
+    measurement_period_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    measurement_period_month: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    measurement_target_value: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class RoadmapTarget(Base):
@@ -474,6 +499,54 @@ class RoadmapDecisionPackage(Base):
     archive_reason: Mapped[str] = mapped_column(String(300), default="")
     created_by: Mapped[str] = mapped_column(String(100), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+# --- CEO Roadmap Phase 1 (GPT APPROVED_TO_IMPLEMENT ROADMAP_APPROVED_WIREFRAME_SPEC.md, 2026-09-28): lớp trình bày
+# business-facing tái sử dụng RoadmapScenario/Version/Milestone làm khung thời gian; KHÔNG đụng vào Run/Proposal/ActionPlan
+# immutable ở trên. Category cố định do hệ thống định nghĩa sẵn, Admin CRUD được (đã chốt trong review trước khi code).
+CEO_CATEGORY_SEED = ("Doanh số", "Chất lượng", "OPEX", "Digital Transformation", "HR")
+MILESTONE_ACTION_TYPES = ("ACTION", "MILESTONE_LINK")  # Action tự định nghĩa | Action liên kết milestone trước (WF-03)
+MILESTONE_ACTION_STATUSES = ("COMPLETED", "NOT_COMPLETED", "AT_RISK", "NOT_APPLICABLE")
+MILESTONE_ACTION_VALUE_TYPES = ("LIST", "NUMBER", "RANK")  # tối giản Phase 1; formula nâng cao để Phase 2
+
+
+class RoadmapCategory(Base):
+    """Danh mục phân loại milestone (Doanh số/Chất lượng/OPEX/DX/HR...) — Admin CRUD được, seed 5 category mặc định."""
+
+    __tablename__ = "roadmap_categories"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(40), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(100))
+    color: Mapped[str] = mapped_column(String(20), default="#2563eb")
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_by: Mapped[str] = mapped_column(String(100), default="")
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class RoadmapMilestoneAction(Base):
+    """Checklist "Hành động" trong Milestone Detail (WF-03): mỗi dòng là ACTION tự do hoặc MILESTONE_LINK tham chiếu
+    1 milestone TRƯỚC ĐÓ (ràng buộc thời gian kiểm tra ở service, không cho ref milestone tương lai)."""
+
+    __tablename__ = "roadmap_milestone_actions"
+    __table_args__ = (Index("ix_roadmap_ms_action_ms", "milestone_id", "sort_order"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    milestone_id: Mapped[int] = mapped_column(ForeignKey("roadmap_milestones.id"), index=True)
+    action_type: Mapped[str] = mapped_column(String(16), default="ACTION")
+    title: Mapped[str] = mapped_column(String(200), default="")
+    ref_milestone_id: Mapped[int | None] = mapped_column(ForeignKey("roadmap_milestones.id"), nullable=True)  # bắt buộc khi MILESTONE_LINK
+    value_type: Mapped[str] = mapped_column(String(10), default="LIST")
+    status: Mapped[str] = mapped_column(String(16), default="NOT_COMPLETED")
+    note: Mapped[str] = mapped_column(String(300), default="")
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_by: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_by: Mapped[str] = mapped_column(String(100), default="")
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class RoadmapPackageBinding(Base):

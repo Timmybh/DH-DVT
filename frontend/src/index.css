@@ -8,6 +8,33 @@ body {
 
 :root { --brand-rgb: 79 70 229; --st-ok: #16a34a; --st-warn: #f59e0b; --st-bad: #dc2626; --st-info: #38bdf8; --st-neutral: #94a3b8; }
 
+/* ===== Strategic Roadmap design tokens (GPT UI spec 2026-09-28) — dùng thống nhất trong toàn module .roadmap-shell ===== */
+.roadmap-shell {
+  --rm-bg: #f4f7fc; --rm-surface: #ffffff; --rm-surface-tint: #f8fafc; --rm-border: #e4e9f2;
+  --rm-text: #0f172a; --rm-text-muted: #64748b; --rm-radius-lg: 18px; --rm-radius-md: 14px; --rm-radius-sm: 10px;
+  --rm-shadow: 0 8px 24px rgba(15, 23, 42, .06);
+  /* category */
+  --rm-cat-revenue: #16a34a; --rm-cat-revenue-bg: #ecfdf3;
+  --rm-cat-quality: #ea580c; --rm-cat-quality-bg: #fff4ec;
+  --rm-cat-opex: #7c3aed; --rm-cat-opex-bg: #f4eefe;
+  --rm-cat-dx: #2563eb; --rm-cat-dx-bg: #eff5ff;
+  --rm-cat-hr: #db2777; --rm-cat-hr-bg: #fdf0f6;
+  --rm-cat-none: #64748b; --rm-cat-none-bg: #f1f5f9;
+  /* status */
+  --rm-status-ontrack: #16a34a; --rm-status-ontrack-bg: #ecfdf3;
+  --rm-status-risk: #d97706; --rm-status-risk-bg: #fffaeb;
+  --rm-status-behind: #dc2626; --rm-status-behind-bg: #fef1f1;
+  --rm-status-inactive: #94a3b8; --rm-status-inactive-bg: #f1f5f9;
+  background: var(--rm-bg); color: var(--rm-text); color-scheme: light; min-height: 100%;
+}
+.dvt-dark .roadmap-shell {
+  --rm-bg: #0b1220; --rm-surface: #121b2e; --rm-surface-tint: #16213590; --rm-border: #253048;
+  --rm-text: #e6ebf5; --rm-text-muted: #93a1bb;
+  --rm-cat-revenue-bg: #103322; --rm-cat-quality-bg: #3a2413; --rm-cat-opex-bg: #2a1f45; --rm-cat-dx-bg: #132a4d; --rm-cat-hr-bg: #3a1730; --rm-cat-none-bg: #1c2438;
+  --rm-status-ontrack-bg: #103322; --rm-status-risk-bg: #3a2b0c; --rm-status-behind-bg: #3a1414; --rm-status-inactive-bg: #1c2438;
+  color-scheme: dark;
+}
+
 /* Chế độ sáng: bỏ lớp phủ .dvt-dark → giao diện Tailwind gốc; Navbar giữ nền tối */
 .dvt-light { background: #f1f5f9; color: #0f172a; color-scheme: light; min-height: 100vh; }
 
