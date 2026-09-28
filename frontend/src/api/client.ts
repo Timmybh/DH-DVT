@@ -107,6 +107,10 @@ export interface ProgressOverview {
   late_pct?: number;
   mapping_warnings?: number;
   by_factory?: { code: string; name: string; po: number; qty: number; ok: number; advance: number; late: number; material: number }[];
+  pipeline_today?: { sewn: number | null; shipped: number | null };
+  pipeline_month?: { sewn: number | null; shipped: number | null };
+  pipeline_ytd?: { sewn: number | null; shipped: number | null };
+  today_date?: string;
 }
 
 export interface OrderKpiBucket {

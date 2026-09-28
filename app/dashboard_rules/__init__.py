@@ -71,7 +71,16 @@ def build_order_progress_matrix(ctx: DashboardContext) -> dict:
 
 
 def build_po_risk_pipeline(ctx: DashboardContext) -> dict:
-    return svc.progress_overview(ctx.db, ctx.factories, ctx.is_total)
+    base = svc.progress_overview(ctx.db, ctx.factories, ctx.is_total, ctx.year, ctx.mon, ctx.current_date, "ytd")
+    if not base["available"]:
+        return base
+    today = svc.progress_overview(ctx.db, ctx.factories, ctx.is_total, ctx.year, ctx.mon, ctx.current_date, "today")
+    month = svc.progress_overview(ctx.db, ctx.factories, ctx.is_total, ctx.year, ctx.mon, ctx.current_date, "month")
+    base["pipeline_today"] = {"sewn": today["pipeline"]["sewn"], "shipped": today["pipeline"]["shipped"]}
+    base["pipeline_month"] = {"sewn": month["pipeline"]["sewn"], "shipped": month["pipeline"]["shipped"]}
+    base["pipeline_ytd"] = {"sewn": base["pipeline"]["sewn"], "shipped": base["pipeline"]["shipped"]}
+    base["today_date"] = ctx.current_date.isoformat()
+    return base
 
 
 def build_qa_summary(ctx: DashboardContext) -> dict:

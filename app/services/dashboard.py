@@ -239,7 +239,19 @@ def current_batch(db: Session) -> PlanImportBatch | None:
     return db.query(PlanImportBatch).filter(PlanImportBatch.is_current.is_(True)).order_by(PlanImportBatch.id.desc()).first()
 
 
-def progress_overview(db: Session, factories: list[Factory], is_total: bool) -> dict:
+def _sewn_shipped_in_range(db: Session, factories: list[Factory], first: date, last: date) -> tuple[int, int]:
+    """May xong/Đã xuất TRONG KHOẢNG NGÀY — dùng lại đúng _po_units() mà order_kpi() dùng cho "Tiến độ đơn hàng",
+    khác với pipeline.sewn/shipped mặc định (lũy kế toàn batch, từ batch.summary)."""
+    sewn = sum(1 for u in _po_units(db, factories, "SEWN") if u["done_date"] and first <= u["done_date"] <= last)
+    shipped = sum(1 for u in _po_units(db, factories, "FG") if u["done_date"] and first <= u["done_date"] <= last)
+    return sewn, shipped
+
+
+def progress_overview(db: Session, factories: list[Factory], is_total: bool, year: int | None = None, month: int | None = None, today: date | None = None, period: str = "ytd") -> dict:
+    """period="ytd" (mặc định, như cũ): May xong/Đã xuất = lũy kế TOÀN BATCH kế hoạch hiện hành (batch.summary, không đổi
+    hành vi cũ). "today"/"month": 2 số này đổi sang đếm PO hoàn thành trong đúng hôm nay / tháng đang chọn (cùng nguồn
+    PoProgress.sewn_done_date/fg_done_date mà "Tiến độ đơn hàng" dùng). CHƯA LÊN KH/ĐÃ XẾP KH/rủi ro giao hàng luôn là
+    snapshot trạng thái hiện tại của batch — KHÔNG đổi theo kỳ (đã chốt với user)."""
     batch = current_batch(db)
     if batch is None:
         return {"available": False}
@@ -293,6 +305,15 @@ def progress_overview(db: Session, factories: list[Factory], is_total: bool) -> 
 
     total_po = planned + unplanned
     s = batch.summary or {}
+    if is_total and year is not None and month is not None and period in ("today", "month"):
+        if period == "today":
+            first = last = today or today_local()
+        else:
+            first, last = month_bounds(year, month)
+        sewn_count, shipped_count = _sewn_shipped_in_range(db, factories, first, last)
+    else:
+        sewn_count = s.get("sewn_count") if is_total else None
+        shipped_count = s.get("shipped_count") if is_total else None
     return {
         "available": True,
         "batch": {"filename": batch.filename, "imported_at": batch.imported_at.isoformat(), "labor_as_of": s.get("labor_as_of", "")},
@@ -301,8 +322,8 @@ def progress_overview(db: Session, factories: list[Factory], is_total: bool) -> 
             "new_known": counts["UNPLANNED"]["KNOWN"],
             "new_unassigned": counts["UNPLANNED"]["UNASSIGNED"],
             "planned": planned,
-            "sewn": s.get("sewn_count") if is_total else None,
-            "shipped": s.get("shipped_count") if is_total else None,
+            "sewn": sewn_count,
+            "shipped": shipped_count,
         },
         "total_po": total_po,
         "planned_qty": planned_qty,

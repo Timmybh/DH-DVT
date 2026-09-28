@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ProgressOverview } from "../api/client";
 import { dateTimeVi, num, pct } from "../lib/format";
@@ -9,6 +10,9 @@ interface Props {
   data: ProgressOverview;
   onDrill: (risk: string) => void;
 }
+
+type Period = "today" | "month" | "ytd";
+const PERIOD_LABEL: Record<Period, string> = { today: "Hôm nay", month: "Tháng hiện tại", ytd: "Lũy kế" };
 
 const RISK_TILES = [
   { key: "OK", label: "Đúng hạn", cls: "border-green-200 bg-green-50 text-green-800" },
@@ -22,6 +26,7 @@ const SHOW_UNIT_CHART = false;
 
 export default function ProgressSection({ data, onDrill }: Props) {
   useTheme();
+  const [period, setPeriod] = useState<Period>("ytd");
   if (!data.available || !data.pipeline || !data.risks) {
     return (
       <Section title="Tiến độ thực hiện" subtitle="Chưa có dữ liệu kế hoạch sản xuất">
@@ -30,6 +35,17 @@ export default function ProgressSection({ data, onDrill }: Props) {
     );
   }
   const { pipeline, risks, risk_qty } = data;
+  const sewnShipped =
+    period === "today" ? data.pipeline_today : period === "month" ? data.pipeline_month : (data.pipeline_ytd ?? { sewn: pipeline.sewn, shipped: pipeline.shipped });
+  const periodBtns = (
+    <div className="inline-flex overflow-hidden rounded-lg border border-slate-200 text-xs font-medium" role="group" aria-label="Kỳ xem May xong/Đã xuất">
+      {(["today", "month", "ytd"] as Period[]).map((k) => (
+        <button key={k} type="button" aria-pressed={period === k} onClick={() => setPeriod(k)} className={`px-2.5 py-1 ${period === k ? "bg-indigo-800 text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}>
+          {PERIOD_LABEL[k]}
+        </button>
+      ))}
+    </div>
+  );
   const steps: { label: string; value: number | null; sub?: string; drill?: string }[] = [
     {
       label: "Chưa lên KH (PO mới)",
@@ -38,8 +54,8 @@ export default function ProgressSection({ data, onDrill }: Props) {
       drill: "UNPLANNED",
     },
     { label: "Đã xếp kế hoạch", value: pipeline.planned },
-    { label: "May xong", value: pipeline.sewn },
-    { label: "Đã xuất", value: pipeline.shipped },
+    { label: "May xong", value: sewnShipped?.sewn ?? null },
+    { label: "Đã xuất", value: sewnShipped?.shipped ?? null },
   ];
   const chart = (data.by_factory ?? []).map((f) => ({
     name: f.code,
@@ -53,7 +69,12 @@ export default function ProgressSection({ data, onDrill }: Props) {
     <Section
       title="Tiến độ thực hiện"
       subtitle={`${num(data.total_po)} PO · ${num(data.planned_qty)} sản phẩm đã xếp kế hoạch`}
-      right={<button onClick={() => onDrill("ALL")} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">Xem danh sách PO</button>}
+      right={
+        <div className="flex items-center gap-2">
+          {periodBtns}
+          <button onClick={() => onDrill("ALL")} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">Xem danh sách PO</button>
+        </div>
+      }
     >
       <div className="grid grid-cols-2 items-stretch gap-2 sm:grid-cols-4">
         {steps.map((s, i) => (
