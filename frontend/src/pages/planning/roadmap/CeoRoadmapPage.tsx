@@ -29,7 +29,10 @@ export default function CeoRoadmapPage({ perm }: { perm: { manage: boolean } }) 
   const [addOpen, setAddOpen] = useState(false);
   const [detailId, setDetailId] = useState<number | null>(null);
   const [layout, setLayout] = useState<Layout>("THREED");
-  const [windowTime, setWindowTime] = useState<WindowTime>("ALL");
+  const [windowTime, setWindowTime] = useState<WindowTime>("YEAR");
+  const thisYearNow = new Date().getFullYear();
+  const [customFrom, setCustomFrom] = useState(thisYearNow);
+  const [customTo, setCustomTo] = useState(thisYearNow);
   const [pageMode, setPageMode] = useState<PageMode>("FULL");
   const [page, setPage] = useState(0);
   const [msg, setMsg] = useState<Msg>(null);
@@ -47,13 +50,17 @@ export default function CeoRoadmapPage({ perm }: { perm: { manage: boolean } }) 
   }, [versionId]);
   useEffect(() => { api.get<Category[]>(`${RES}/categories`).then((r) => setCategories(r.data)).catch((e) => setMsg({ ok: false, text: errorMessage(e) })); void loadScenarios(); }, [loadScenarios]);
   useEffect(() => { void loadView(); }, [loadView]);
-  useEffect(() => setPage(0), [layout, windowTime, pageMode, versionId]);
+  useEffect(() => setPage(0), [layout, windowTime, pageMode, versionId, customFrom, customTo]);
 
   const toggleCat = (c: string) => setDimmed((prev) => { const n = new Set(prev); if (n.has(c)) n.delete(c); else n.add(c); return n; });
   const isDim = (cat: string | null) => !!cat && dimmed.has(cat);
 
-  const thisYear = new Date().getFullYear();
-  const filtered = view ? view.milestones.filter((m) => windowTime === "ALL" || new Date(m.target_date).getFullYear() === thisYear) : [];
+  const thisYear = thisYearNow;
+  const fromYear = windowTime === "YEAR" ? thisYear : windowTime === "NEXT_YEAR" ? thisYear + 1 : Math.min(customFrom, customTo);
+  const toYear = windowTime === "YEAR" ? thisYear : windowTime === "NEXT_YEAR" ? thisYear + 1 : Math.max(customFrom, customTo);
+  const rangeStart = new Date(fromYear, 0, 1);
+  const rangeEnd = new Date(toYear, 11, 31);
+  const filtered = view ? view.milestones.filter((m) => { const y = new Date(m.target_date).getFullYear(); return y >= fromYear && y <= toYear; }) : [];
   const paginating = pageMode === "PAGED" && layout !== "VERTICAL";
   const pageSize = layout === "THREED" ? THREED_PAGE_SIZE : HORIZONTAL_PAGE_SIZE;
   const pageCount = paginating ? Math.max(1, Math.ceil(filtered.length / pageSize)) : 1;
@@ -83,13 +90,20 @@ export default function CeoRoadmapPage({ perm }: { perm: { manage: boolean } }) 
               {scenarios.flatMap((s) => (s.versions ?? []).map((v) => <option key={v.id} value={v.id}>{s.name} · v{v.version_no} ({v.status})</option>))}
             </select>
 
-            <div className="flex items-center gap-1 rounded-xl border p-1" style={{ borderColor: "var(--rm-border)" }} title="Khoảng thời gian (Window time)">
+            <div className="flex items-center gap-1 rounded-xl border p-1" style={{ borderColor: "var(--rm-border)" }} title="Khoảng thời gian">
               <CalendarDays size={13} className="ml-1" style={{ color: "var(--rm-text-muted)" }} />
-              {([["ALL", "Toàn trình"], ["YEAR", "Năm nay"]] as [WindowTime, string][]).map(([v, label]) => (
+              {([["YEAR", "Năm nay"], ["NEXT_YEAR", "Năm tới"], ["CUSTOM", "Tùy chỉnh năm"]] as [WindowTime, string][]).map(([v, label]) => (
                 <button key={v} onClick={() => setWindowTime(v)} className="rounded-lg px-2 py-1 text-[11px] font-semibold" style={windowTime === v ? { background: "var(--rm-text)", color: "#fff" } : { color: "var(--rm-text-muted)" }} data-testid={`rm-window-${v.toLowerCase()}`}>{label}</button>
               ))}
             </div>
-            <div className="flex items-center gap-1 rounded-xl border p-1" style={{ borderColor: "var(--rm-border)" }} title="Phân trang">
+            {windowTime === "CUSTOM" && (
+              <div className="flex items-center gap-1 rounded-xl border px-2 py-1" style={{ borderColor: "var(--rm-border)" }} data-testid="rm-custom-year-range">
+                <input type="number" value={customFrom} onChange={(e) => setCustomFrom(Number(e.target.value) || thisYear)} className="w-16 rounded-lg border px-1.5 py-1 text-[11px]" style={{ borderColor: "var(--rm-border)", color: "var(--rm-text)" }} aria-label="Từ năm" />
+                <span className="text-[11px]" style={{ color: "var(--rm-text-muted)" }}>đến</span>
+                <input type="number" value={customTo} onChange={(e) => setCustomTo(Number(e.target.value) || thisYear)} className="w-16 rounded-lg border px-1.5 py-1 text-[11px]" style={{ borderColor: "var(--rm-border)", color: "var(--rm-text)" }} aria-label="Đến năm" />
+              </div>
+            )}
+            <div className="flex items-center gap-1 rounded-xl border p-1" style={{ borderColor: "var(--rm-border)" }} title="Loại trình bày trang">
               <Layers size={13} className="ml-1" style={{ color: "var(--rm-text-muted)" }} />
               {([["FULL", "Toàn trình"], ["PAGED", "Phân trang"]] as [PageMode, string][]).map(([v, label]) => (
                 <button key={v} onClick={() => setPageMode(v)} className="rounded-lg px-2 py-1 text-[11px] font-semibold" style={pageMode === v ? { background: "var(--rm-text)", color: "#fff" } : { color: "var(--rm-text-muted)" }} data-testid={`rm-page-${v.toLowerCase()}`}>{label}</button>
@@ -121,7 +135,7 @@ export default function CeoRoadmapPage({ perm }: { perm: { manage: boolean } }) 
                 <div className="flex items-center gap-2">
                   <span className="flex h-8 w-8 items-center justify-center rounded-full" style={{ background: "var(--rm-cat-dx-bg)", color: "var(--rm-cat-dx)" }}><Map size={15} /></span>
                   <div>
-                    <div className="text-sm font-bold" style={{ color: "var(--rm-text)" }}>Lộ trình mục tiêu chiến lược {thisYear}</div>
+                    <div className="text-sm font-bold" style={{ color: "var(--rm-text)" }}>Lộ trình mục tiêu chiến lược {fromYear === toYear ? fromYear : `${fromYear}–${toYear}`}</div>
                     <div className="text-[11px]" style={{ color: "var(--rm-text-muted)" }}>Các cột mốc quan trọng theo thời gian</div>
                   </div>
                 </div>
@@ -137,7 +151,7 @@ export default function CeoRoadmapPage({ perm }: { perm: { manage: boolean } }) 
                 </div>
               </div>
 
-              {layout === "HORIZONTAL" && <RoadmapTimeline milestones={shown} endDate={endDate} endLabel={endLabel} endProgress={overall} year={thisYear} dimFn={isDim} onOpen={setDetailId} />}
+              {layout === "HORIZONTAL" && <RoadmapTimeline milestones={shown} endDate={endDate} endLabel={endLabel} endProgress={overall} rangeStart={rangeStart} rangeEnd={rangeEnd} dimFn={isDim} onOpen={setDetailId} />}
               {layout === "THREED" && <Roadmap3DView milestones={shown} onOpen={setDetailId} endLabel={endLabel} />}
               {layout === "VERTICAL" && <RoadmapListView milestones={filtered} onOpen={setDetailId} endLabel={endLabel} endDate={endDate} endProgress={overall} />}
 

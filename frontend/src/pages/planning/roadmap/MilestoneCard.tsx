@@ -22,8 +22,9 @@ export default function MilestoneCard({ m, onClick, dim, compact }: { m: Milesto
       data-testid={`rm-milestone-${m.id}`}
     >
       <div className="flex items-center justify-between">
-        <span className="inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[11px] font-semibold" style={{ color: cv.fg, background: cv.bg }}>
-          <Icon size={13} strokeWidth={2.25} />{m.category_name || "Chưa phân loại"}
+        <span className="inline-flex items-center gap-2 rounded-full py-1 pl-1 pr-2.5 text-[11px] font-semibold" style={{ color: cv.fg, background: cv.bg }}>
+          <span className="flex items-center justify-center rounded-full" style={{ width: compact ? 20 : 24, height: compact ? 20 : 24, background: cv.fg }}><Icon size={compact ? 12 : 14} strokeWidth={2.5} color="#fff" /></span>
+          {m.category_name || "Chưa phân loại"}
         </span>
         {m.has_warning && <span title={m.warning_note} className="flex h-6 w-6 items-center justify-center rounded-full" style={{ background: "var(--rm-status-risk-bg)", color: "var(--rm-status-risk)" }}><AlertTriangle size={14} /></span>}
       </div>
