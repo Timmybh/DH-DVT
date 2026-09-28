@@ -19,7 +19,6 @@ export const PLANNING_TABS: TabDef[] = [
   { to: "/planning/versions", label: "Phiên bản", perm: "planning.view" },
   { to: "/planning/calendar", label: "Lịch làm việc", perm: "calendar.view" },
   { to: "/planning/resources", label: "Năng suất & nguồn lực", perm: "planning.view" },
-  { to: "/planning/roadmap/simulation", label: "Roadmap Simulation", perm: "roadmap.view" },
   { to: "/planning/so", label: "Số SO", perm: "planning.view" },
   { to: "/planning/actual", label: "Thực tế & Đối soát", perm: "mapping.view" },
   { to: "/planning/columns", label: "Cấu hình cột & công thức", perm: "planning.view" },
@@ -44,7 +43,16 @@ export function SubTabsMenu() {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const loc = useLocation();
-  const tabs = loc.pathname === "/" || loc.pathname.startsWith("/dashboard") ? DASHBOARD_TABS : loc.pathname.startsWith("/planning") ? PLANNING_TABS : loc.pathname.startsWith("/admin") ? ADMIN_TABS : null;
+  const tabs =
+    loc.pathname === "/" || loc.pathname.startsWith("/dashboard")
+      ? DASHBOARD_TABS
+      : loc.pathname.startsWith("/planning/roadmap")
+      ? null
+      : loc.pathname.startsWith("/planning")
+      ? PLANNING_TABS
+      : loc.pathname.startsWith("/admin")
+      ? ADMIN_TABS
+      : null;
   const allowed = (tabs ?? []).filter((t) => can(t.perm));
   const current = [...allowed].sort((a, b) => b.to.length - a.to.length).find((t) => (t.end ? loc.pathname === t.to : loc.pathname.startsWith(t.to)));
 
