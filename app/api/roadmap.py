@@ -236,12 +236,20 @@ class CeoFieldsBody(BaseModel):
     proposal_summary: str | None = Field(None, max_length=500)
     manual_status: str | None = None
     warning_note: str | None = Field(None, max_length=300)
+    measurement_family: str | None = None
+    measurement_metric_code: str | None = None
+    measurement_scope_type: str | None = None
+    measurement_scope_value: str | None = Field(None, max_length=20)
+    measurement_period_type: str | None = None
+    measurement_period_year: int | None = None
+    measurement_period_month: int | None = None
+    measurement_target_value: float | None = None
 
 
 @router.put("/milestones/{milestone_id}/ceo-fields")
 def update_milestone_ceo_fields(milestone_id: int, body: CeoFieldsBody, db: Session = Depends(get_db), user: User = Manage):
     m = ce.update_milestone_ceo_fields(db, milestone_id, actor=user.username, **body.model_dump(exclude_unset=True))
-    return ce.milestone_ceo_card(m, {c.code: c for c in db.query(ce.RoadmapCategory).all()})
+    return ce.milestone_ceo_card(db, m, {c.code: c for c in db.query(ce.RoadmapCategory).all()})
 
 
 class MilestoneActionBody(BaseModel):

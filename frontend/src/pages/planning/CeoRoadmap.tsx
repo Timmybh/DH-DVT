@@ -16,7 +16,11 @@ interface MilestoneCard {
   category_code: string | null; category_name: string; category_color: string;
   progress_percent: number | null; status: "ON_TRACK" | "AT_RISK" | "BEHIND";
   baseline_label: string; gap_label: string; proposal_summary: string; has_warning: boolean; warning_note: string;
+  measurement_family: "MANUAL_PROGRESS" | "MANUAL_VALUE" | "OPERATIONAL"; measurement_metric_code: string | null;
+  measurement_scope_type: string; measurement_scope_value: string; measurement_period_type: string;
+  measurement_period_year: number | null; measurement_period_month: number | null; measurement_target_value: number | null;
 }
+const MEASUREMENT_FAMILY_LABEL: Record<string, string> = { MANUAL_PROGRESS: "Manual Progress (nhập tay %)", MANUAL_VALUE: "Manual Value (nhập tay)", OPERATIONAL: "Operational Data (tự tính từ dữ liệu thật)" };
 interface CeoView {
   version_id: number; scenario_id: number; version_no: number; version_status: string;
   milestones: MilestoneCard[];
@@ -334,18 +338,55 @@ function DetailModal({ milestoneId, milestones, editMode, categories, onClose, o
 
         {tab === "Tổng quan" && (
           editMode ? (
-            <div className="mt-4 grid grid-cols-2 gap-3 rounded-xl border border-slate-200 p-3">
-              <label className="block text-xs text-slate-500">Danh mục
-                <select className={inp} value={m.category_code ?? ""} onChange={(e) => void setField({ category_code: e.target.value || null })}>
-                  <option value="">—</option>
-                  {categories.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
-                </select>
-              </label>
-              <label className="block text-xs text-slate-500">Tiến độ %<input type="number" min={0} max={100} className={inp} defaultValue={m.progress_percent ?? ""} onBlur={(e) => e.target.value !== "" && void setField({ progress_percent: Number(e.target.value) })} /></label>
-              <label className="col-span-2 block text-xs text-slate-500">Hiện trạng / Baseline<input className={inp} defaultValue={m.baseline_label} onBlur={(e) => void setField({ baseline_label: e.target.value })} /></label>
-              <label className="col-span-2 block text-xs text-slate-500">Gap / Khoảng thiếu<input className={inp} defaultValue={m.gap_label} onBlur={(e) => void setField({ gap_label: e.target.value })} /></label>
-              <label className="col-span-2 block text-xs text-slate-500">Phương án đề xuất<textarea className={inp} rows={2} defaultValue={m.proposal_summary} onBlur={(e) => void setField({ proposal_summary: e.target.value })} /></label>
-              <label className="col-span-2 block text-xs text-slate-500">Ghi chú cảnh báo (rỗng = không cảnh báo)<input className={inp} defaultValue={m.warning_note} onBlur={(e) => void setField({ warning_note: e.target.value })} /></label>
+            <div className="mt-4 space-y-3">
+              <div className="grid grid-cols-2 gap-3 rounded-xl border border-slate-200 p-3">
+                <label className="block text-xs text-slate-500">Danh mục
+                  <select className={inp} value={m.category_code ?? ""} onChange={(e) => void setField({ category_code: e.target.value || null })}>
+                    <option value="">—</option>
+                    {categories.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
+                  </select>
+                </label>
+                <label className="block text-xs text-slate-500">Nguồn đo lường (WF-04)
+                  <select className={inp} value={m.measurement_family} onChange={(e) => void setField({ measurement_family: e.target.value })}>
+                    {Object.entries(MEASUREMENT_FAMILY_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                  </select>
+                </label>
+                {m.measurement_family === "OPERATIONAL" ? (
+                  <>
+                    <label className="block text-xs text-slate-500">Chỉ tiêu
+                      <select className={inp} value={m.measurement_metric_code ?? ""} onChange={(e) => void setField({ measurement_metric_code: e.target.value })}>
+                        <option value="">—</option>
+                        <option value="REVENUE">Doanh thu (REVENUE)</option>
+                        <option value="OUTPUT_QTY">Sản lượng đóng gói (OUTPUT_QTY)</option>
+                      </select>
+                    </label>
+                    <label className="block text-xs text-slate-500">Kỳ
+                      <div className="flex gap-1">
+                        <select className={inp} value={m.measurement_period_type} onChange={(e) => void setField({ measurement_period_type: e.target.value })}>
+                          <option value="MONTH">Tháng</option><option value="YEAR">Năm</option>
+                        </select>
+                        <input type="number" className={inp} placeholder="Năm" defaultValue={m.measurement_period_year ?? ""} onBlur={(e) => e.target.value !== "" && void setField({ measurement_period_year: Number(e.target.value) })} />
+                        {m.measurement_period_type === "MONTH" && <input type="number" min={1} max={12} className={inp} placeholder="Tháng" defaultValue={m.measurement_period_month ?? ""} onBlur={(e) => e.target.value !== "" && void setField({ measurement_period_month: Number(e.target.value) })} />}
+                      </div>
+                    </label>
+                    <label className="block text-xs text-slate-500">Phạm vi
+                      <select className={inp} value={m.measurement_scope_type} onChange={(e) => void setField({ measurement_scope_type: e.target.value })}>
+                        <option value="TOTAL">Tổng công ty</option><option value="FACTORY">Theo XN (chỉ REVENUE)</option>
+                      </select>
+                    </label>
+                    <label className="block text-xs text-slate-500">Mục tiêu (số)<input type="number" className={inp} defaultValue={m.measurement_target_value ?? ""} onBlur={(e) => e.target.value !== "" && void setField({ measurement_target_value: Number(e.target.value) })} /></label>
+                    <p className="col-span-2 text-[11px] text-amber-700">Progress/Baseline/Gap sẽ TỰ TÍNH từ dữ liệu thật (revenue_monthly/yearly, po_pack_daily) — không nhập tay được nữa khi chọn Operational Data.</p>
+                  </>
+                ) : (
+                  <label className="block text-xs text-slate-500">Tiến độ %<input type="number" min={0} max={100} className={inp} defaultValue={m.progress_percent ?? ""} onBlur={(e) => e.target.value !== "" && void setField({ progress_percent: Number(e.target.value) })} /></label>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-3 rounded-xl border border-slate-200 p-3">
+                <label className="col-span-2 block text-xs text-slate-500">Hiện trạng / Baseline{m.measurement_family === "OPERATIONAL" ? <input className={inp} value={m.baseline_label} disabled /> : <input className={inp} defaultValue={m.baseline_label} onBlur={(e) => void setField({ baseline_label: e.target.value })} />}</label>
+                <label className="col-span-2 block text-xs text-slate-500">Gap / Khoảng thiếu{m.measurement_family === "OPERATIONAL" ? <input className={inp} value={m.gap_label} disabled /> : <input className={inp} defaultValue={m.gap_label} onBlur={(e) => void setField({ gap_label: e.target.value })} />}</label>
+                <label className="col-span-2 block text-xs text-slate-500">Phương án đề xuất<textarea className={inp} rows={2} defaultValue={m.proposal_summary} onBlur={(e) => void setField({ proposal_summary: e.target.value })} /></label>
+                <label className="col-span-2 block text-xs text-slate-500">Ghi chú cảnh báo (rỗng = không cảnh báo)<input className={inp} defaultValue={m.warning_note} onBlur={(e) => void setField({ warning_note: e.target.value })} /></label>
+              </div>
             </div>
           ) : (
             <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50 p-3">
@@ -375,7 +416,7 @@ function DetailModal({ milestoneId, milestones, editMode, categories, onClose, o
                 {m.has_warning && <span className="text-amber-700">⚠ {m.warning_note}</span>}
               </div>
             </div>
-            <p className="text-[11px] text-amber-700">5 nhóm đo lường (Operational/OPEX/Machine/Manual Progress/Manual Value — WF-04) và mapping nguồn dữ liệu tự động chưa triển khai ở phase này; tiến độ hiện đang nhập tay ở tab Tổng quan (Edit Mode).</p>
+            <p className="text-[11px] text-slate-400">Nguồn đo lường: <b>{MEASUREMENT_FAMILY_LABEL[m.measurement_family]}</b>{m.measurement_family === "OPERATIONAL" && m.measurement_metric_code ? ` · ${m.measurement_metric_code} · ${m.measurement_period_type === "MONTH" ? `${m.measurement_period_month}/${m.measurement_period_year}` : m.measurement_period_year}` : ""}. Đổi ở tab Tổng quan (Edit Mode). Financial/OPEX, Machine Data, QA (chiều giảm lỗi) để phase sau.</p>
           </div>
         )}
 

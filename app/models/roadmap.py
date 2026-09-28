@@ -25,6 +25,11 @@ LIFECYCLE_TRANSITIONS: dict[str, tuple[str, ...]] = {
 RUNNABLE_VERSION_STATUSES = ("READY", "REVIEWED")  # không chạy trực tiếp DRAFT; khóa từ READY để reproducible
 
 MILESTONE_MANUAL_STATUSES = ("ON_TRACK", "AT_RISK", "BEHIND")
+# WF-04 (spec §6) — Phase 1 "bản đơn giản nhất" theo quyết định user 2026-09-28: chỉ map thẳng Operational Data
+# (REVENUE/OUTPUT_QTY, cùng bảng revenue_monthly/yearly + po_pack_daily mà roadmap_baseline.py đã dùng cho engine cũ).
+# QA_DEFECT_COUNT/Financial-OPEX/Machine Data để sau — chiều "ít lỗi hơn = tốt hơn" chưa được xác nhận, không tự suy diễn.
+MEASUREMENT_FAMILIES = ("MANUAL_PROGRESS", "MANUAL_VALUE", "OPERATIONAL")
+OPERATIONAL_METRICS = ("REVENUE", "OUTPUT_QTY")
 
 SCOPE_TYPES = ("TOTAL", "FACTORY")  # Task 5: không LINE
 METRIC_CODES = ("REVENUE", "OUTPUT_QTY")
@@ -112,6 +117,16 @@ class RoadmapMilestone(Base):
     proposal_summary: Mapped[str] = mapped_column(String(500), default="")  # "Phương án đề xuất" — phân tích ngắn
     manual_status: Mapped[str | None] = mapped_column(String(16), nullable=True)  # ON_TRACK|AT_RISK|BEHIND; null => suy ra từ progress
     warning_note: Mapped[str] = mapped_column(String(300), default="")  # lý do hiện "!" — rỗng = không cảnh báo
+    # --- WF-04 (spec §6) Phase 1 đơn giản: measurement_family=OPERATIONAL thì progress/baseline/gap TÍNH từ dữ liệu thật
+    # (ghi đè field manual ở trên), MANUAL_PROGRESS/MANUAL_VALUE (mặc định) giữ nguyên hành vi nhập tay như trước.
+    measurement_family: Mapped[str] = mapped_column(String(20), default="MANUAL_PROGRESS")
+    measurement_metric_code: Mapped[str | None] = mapped_column(String(20), nullable=True)  # REVENUE|OUTPUT_QTY khi OPERATIONAL
+    measurement_scope_type: Mapped[str] = mapped_column(String(10), default="TOTAL")
+    measurement_scope_value: Mapped[str] = mapped_column(String(20), default="")
+    measurement_period_type: Mapped[str] = mapped_column(String(6), default="MONTH")
+    measurement_period_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    measurement_period_month: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    measurement_target_value: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class RoadmapTarget(Base):

@@ -12,16 +12,19 @@ from __future__ import annotations
 from datetime import date, datetime
 
 from fastapi import HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.db.session import utcnow
 from app.models.core import AuditLog
 from app.models.roadmap import (
     CEO_CATEGORY_SEED,
+    MEASUREMENT_FAMILIES,
     MILESTONE_ACTION_STATUSES,
     MILESTONE_ACTION_TYPES,
     MILESTONE_ACTION_VALUE_TYPES,
     MILESTONE_MANUAL_STATUSES,
+    OPERATIONAL_METRICS,
     RoadmapCategory,
     RoadmapMilestone,
     RoadmapMilestoneAction,
@@ -96,14 +99,15 @@ def update_category(db: Session, category_id: int, name: str | None, color: str 
 
 
 # ================================================================== Milestone enrich (category/progress/status/warning)
-def _derived_status(m: RoadmapMilestone) -> str:
+def _derived_status(m: RoadmapMilestone, progress_percent: float | None = None) -> str:
     if m.manual_status in MILESTONE_MANUAL_STATUSES:
         return m.manual_status
-    if m.progress_percent is None:
+    p = m.progress_percent if progress_percent is None else progress_percent
+    if p is None:
         return "AT_RISK"
-    if m.progress_percent >= 90:
+    if p >= 90:
         return "ON_TRACK"
-    if m.progress_percent >= 50:
+    if p >= 50:
         return "AT_RISK"
     return "BEHIND"
 
@@ -111,7 +115,12 @@ def _derived_status(m: RoadmapMilestone) -> str:
 def update_milestone_ceo_fields(
     db: Session, milestone_id: int, *, category_code: str | None = None, progress_percent: float | None = None,
     baseline_label: str | None = None, gap_label: str | None = None, proposal_summary: str | None = None,
-    manual_status: str | None = None, warning_note: str | None = None, actor: str = "",
+    manual_status: str | None = None, warning_note: str | None = None,
+    measurement_family: str | None = None, measurement_metric_code: str | None = None,
+    measurement_scope_type: str | None = None, measurement_scope_value: str | None = None,
+    measurement_period_type: str | None = None, measurement_period_year: int | None = None,
+    measurement_period_month: int | None = None, measurement_target_value: float | None = None,
+    actor: str = "",
 ) -> RoadmapMilestone:
     m = db.get(RoadmapMilestone, milestone_id)
     if m is None:
@@ -136,20 +145,90 @@ def update_milestone_ceo_fields(
         m.manual_status = manual_status or None
     if warning_note is not None:
         m.warning_note = warning_note
+    if measurement_family is not None:
+        if measurement_family not in MEASUREMENT_FAMILIES:
+            raise _bad(f"measurement_family phải là một trong {MEASUREMENT_FAMILIES}")
+        m.measurement_family = measurement_family
+    if measurement_metric_code is not None:
+        if measurement_metric_code and measurement_metric_code not in OPERATIONAL_METRICS:
+            raise _bad(f"measurement_metric_code phải là một trong {OPERATIONAL_METRICS}")
+        m.measurement_metric_code = measurement_metric_code or None
+    if measurement_scope_type is not None:
+        m.measurement_scope_type = measurement_scope_type
+    if measurement_scope_value is not None:
+        m.measurement_scope_value = measurement_scope_value
+    if measurement_period_type is not None:
+        m.measurement_period_type = measurement_period_type
+    if measurement_period_year is not None:
+        m.measurement_period_year = measurement_period_year
+    if measurement_period_month is not None:
+        m.measurement_period_month = measurement_period_month
+    if measurement_target_value is not None:
+        m.measurement_target_value = measurement_target_value
     db.commit()
     db.refresh(m)
     write_audit("ROADMAP_CEO_MILESTONE_UPDATE", username=actor, object_type="RoadmapMilestone", object_id=str(m.id), detail=f"{m.code}")
     return m
 
 
-def milestone_ceo_card(m: RoadmapMilestone, category_by_code: dict[str, RoadmapCategory]) -> dict:
+CANONICAL_UNIT_BY_METRIC = {"REVENUE": "USD", "OUTPUT_QTY": "sp"}
+
+
+def _operational_actual(db: Session, m: RoadmapMilestone) -> float | None:
+    """WF-04 Phase 1 đơn giản: SUM thật từ revenue_monthly/yearly hoặc po_pack_daily — cùng bảng mà roadmap_baseline.py
+    dùng cho engine cũ, KHÔNG qua lại toàn bộ máy NEEDS_INPUT/UNIT_MISMATCH (đó là việc của Roadmap Simulation)."""
+    from app.services.roadmap_baseline import scope_factories
+
+    if not m.measurement_period_year:
+        return None
+    facs = scope_factories(db, m.measurement_scope_type, m.measurement_scope_value)
+    if not facs:
+        return None
+    ids = [f.id for f in facs]
+    if m.measurement_metric_code == "REVENUE":
+        from app.models.data import RevenueMonthly, RevenueYearly
+        if m.measurement_period_type == "MONTH" and m.measurement_period_month:
+            rows = db.query(RevenueMonthly).filter(RevenueMonthly.factory_id.in_(ids), RevenueMonthly.year == m.measurement_period_year, RevenueMonthly.month == m.measurement_period_month).all()
+        else:
+            rows = db.query(RevenueYearly).filter(RevenueYearly.factory_id.in_(ids), RevenueYearly.year == m.measurement_period_year).all()
+        vals = [r.actual for r in rows if r.actual is not None]
+        return sum(vals) if vals else None
+    if m.measurement_metric_code == "OUTPUT_QTY":
+        from app.services.roadmap_baseline import period_bounds
+        from app.models.data import PoPackDaily
+        # po_pack_daily không có factory_id trực tiếp (đã chốt trong engine cũ: FACTORY OUTPUT_QTY = PARTIAL_SOURCE) — TOTAL scope mới cộng được đáng tin cậy ở Phase 1.
+        if m.measurement_scope_type != "TOTAL":
+            return None
+        start, end = period_bounds(m.measurement_period_type, m.measurement_period_year, m.measurement_period_month)
+        total = db.query(func.sum(PoPackDaily.qty)).filter(PoPackDaily.day >= start, PoPackDaily.day <= end).scalar()
+        return float(total) if total is not None else None
+    return None
+
+
+def milestone_ceo_card(db: Session, m: RoadmapMilestone, category_by_code: dict[str, RoadmapCategory]) -> dict:
     cat = category_by_code.get(m.category_code) if m.category_code else None
+    progress_percent, baseline_label, gap_label = m.progress_percent, m.baseline_label, m.gap_label
+    measurement_actual = None
+    if m.measurement_family == "OPERATIONAL" and m.measurement_metric_code:
+        measurement_actual = _operational_actual(db, m)
+        unit = CANONICAL_UNIT_BY_METRIC.get(m.measurement_metric_code, "")
+        if measurement_actual is not None and m.measurement_target_value:
+            progress_percent = max(0.0, min(100.0, round(100.0 * measurement_actual / m.measurement_target_value, 1)))
+            gap = measurement_actual - m.measurement_target_value
+            baseline_label = f"{measurement_actual:,.0f} {unit}".replace(",", ".")
+            gap_label = f"{gap:+,.0f} {unit} · {'đã đạt' if gap >= 0 else 'còn thiếu'}".replace(",", ".")
+        else:
+            progress_percent, baseline_label, gap_label = None, "Chưa có dữ liệu nguồn", ""
     return {
         "id": m.id, "code": m.code, "name": m.name, "target_date": _iso(m.target_date), "sequence": m.sequence,
         "category_code": m.category_code, "category_name": cat.name if cat else "", "category_color": cat.color if cat else "#94a3b8",
-        "progress_percent": m.progress_percent, "status": _derived_status(m),
-        "baseline_label": m.baseline_label, "gap_label": m.gap_label, "proposal_summary": m.proposal_summary,
+        "progress_percent": progress_percent, "status": _derived_status(m, progress_percent),
+        "baseline_label": baseline_label, "gap_label": gap_label, "proposal_summary": m.proposal_summary,
         "has_warning": bool(m.warning_note), "warning_note": m.warning_note,
+        "measurement_family": m.measurement_family, "measurement_metric_code": m.measurement_metric_code,
+        "measurement_scope_type": m.measurement_scope_type, "measurement_scope_value": m.measurement_scope_value,
+        "measurement_period_type": m.measurement_period_type, "measurement_period_year": m.measurement_period_year,
+        "measurement_period_month": m.measurement_period_month, "measurement_target_value": m.measurement_target_value,
     }
 
 
@@ -160,7 +239,7 @@ def ceo_view(db: Session, version_id: int) -> dict:
         raise HTTPException(404, "Không tìm thấy version")
     milestones = db.query(RoadmapMilestone).filter(RoadmapMilestone.version_id == version_id).order_by(RoadmapMilestone.sequence).all()
     categories = {c.code: c for c in db.query(RoadmapCategory).all()}
-    cards = [milestone_ceo_card(m, categories) for m in milestones]
+    cards = [milestone_ceo_card(db, m, categories) for m in milestones]
 
     # "Mục tiêu tổng" cuối trình: gộp category trùng nhau (đã chốt review trước khi code) — trung bình progress theo category
     by_cat: dict[str, list[dict]] = {}
