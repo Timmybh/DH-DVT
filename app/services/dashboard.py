@@ -314,6 +314,46 @@ def progress_overview(db: Session, factories: list[Factory], is_total: bool) -> 
     }
 
 
+def hr_average(db: Session, factories: list[Factory], is_total: bool, first: date, last: date) -> dict | None:
+    """Nhân sự theo kỳ (Tháng này/Lũy kế) = TRUNG BÌNH mỗi ngày có ảnh chụp trong khoảng [first, last] — KHÔNG cộng dồn
+    (cộng dồn lao động có mặt qua nhiều ngày vô nghĩa). Nguồn: labor_snapshot (1 ảnh chụp/ngày, như dashboard_summary)."""
+    from app.models.labor_snapshot import LaborSnapshot
+
+    snaps = db.query(LaborSnapshot).filter(LaborSnapshot.as_of_date >= first, LaborSnapshot.as_of_date <= last).order_by(LaborSnapshot.as_of_date).all()
+    if not snaps:
+        return None
+    n = len(snaps)
+    company_present = sum(s.present for s in snaps) / n
+    company_total = sum(s.total for s in snaps) / n
+    company_pct = sum((s.present / s.total * 100) if s.total else 0 for s in snaps) / n
+    acc: dict[str, dict] = {}
+    for s in snaps:
+        for code, v in (s.by_factory or {}).items():
+            a = acc.setdefault(code, {"present": 0.0, "total": 0.0, "pct": 0.0, "n": 0})
+            a["present"] += v.get("present", 0)
+            a["total"] += v.get("total", 0)
+            a["pct"] += (v["present"] / v["total"] * 100) if v.get("total") else 0
+            a["n"] += 1
+    by_factory = []
+    for f in factories:
+        a = acc.get(f.code)
+        by_factory.append({
+            "code": f.code, "name": f.name,
+            "total": round(a["present"] / a["n"]) if a and a["n"] else 0,
+            "roster": round(a["total"] / a["n"]) if a and a["n"] else None,
+            "attendance_pct": round(a["pct"] / a["n"], 1) if a and a["n"] else None,
+            "teams": None, "delta": None,
+        })
+    return {
+        "available": True, "source": "SNAPSHOT_AVG", "days": n,
+        "total": round(company_present) if not is_total else round(company_present),
+        "company_total": round(company_present), "company_roster": round(company_total), "company_attendance_pct": round(company_pct, 1),
+        "company_teams": None, "company_delta": None,
+        "as_of_text": f"Trung bình {n} ngày có dữ liệu, {first.strftime('%d/%m')}–{last.strftime('%d/%m/%Y')}",
+        "as_of": last.isoformat(), "trend": [], "by_factory": by_factory, "teams": None,
+    }
+
+
 def hr_overview(db: Session, factories: list[Factory], is_total: bool) -> dict:
     """Nhân sự: ưu tiên ảnh chụp lao động eGMF lưu riêng (labor_snapshots: có mặt / biên chế / chuyên cần / chênh lệch); chưa có ảnh chụp thì dùng sheet LAO ĐỘNG của file kế hoạch."""
     from app.services import labor_snapshot
@@ -540,8 +580,14 @@ def _is_overdue_open(u: dict, today: date) -> bool:
     return u.get("last_seen") is not None and (today - u["last_seen"]).days <= ACTIVE_WINDOW_DAYS
 
 
-def order_kpi(db: Session, factories: list[Factory], year: int, month: int, today: date) -> dict:
-    first, last = month_bounds(year, month)
+def order_kpi(db: Session, factories: list[Factory], year: int, month: int, today: date, period: str = "month") -> dict:
+    """period="month" (mặc định, như cũ): PO hoàn thành trong tháng đang chọn. "today": đúng hôm nay. "ytd": lũy kế từ đầu năm đến hết tháng đang chọn."""
+    if period == "today":
+        first = last = today
+    elif period == "ytd":
+        first, last = date(year, 1, 1), month_bounds(year, month)[1]
+    else:
+        first, last = month_bounds(year, month)
     out: dict = {"month": f"{year}-{month:02d}", "has_data": db.query(PoProgress.id).first() is not None}
     for kind, key in (("SEWN", "sewing"), ("FG", "fg")):
         units = _po_units(db, factories, kind)
@@ -585,8 +631,15 @@ QA_LABELS = [("DAU_CHUYEN", "Đầu chuyền"), ("INLINE", "Inline"), ("ENDLINE"
 QA_ACTIVE = ("INLINE", "ENDLINE", "PREFINAL")
 
 
-def qa_summary(db: Session, all_factories: list[Factory], selected: list[Factory], is_total: bool, year: int, month: int) -> dict:
-    first, last = month_bounds(year, month)
+def qa_summary(db: Session, all_factories: list[Factory], selected: list[Factory], is_total: bool, year: int, month: int, period: str = "month", today: date | None = None) -> dict:
+    """period="month" (mặc định, như cũ): trong tháng đang chọn. "today": đúng hôm nay. "ytd": lũy kế từ đầu năm đến hết tháng đang chọn."""
+    if period == "today":
+        today = today or today_local()
+        first = last = today
+    elif period == "ytd":
+        first, last = date(year, 1, 1), month_bounds(year, month)[1]
+    else:
+        first, last = month_bounds(year, month)
     rows = (
         db.query(QaDefectDaily.category, QaDefectDaily.factory_id, func.sum(QaDefectDaily.defect_count))
         .filter(QaDefectDaily.day >= first, QaDefectDaily.day <= last)

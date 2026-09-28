@@ -64,7 +64,10 @@ def build_revenue_summary(ctx: DashboardContext) -> dict:
 
 
 def build_order_progress_matrix(ctx: DashboardContext) -> dict:
-    return svc.order_kpi(ctx.db, ctx.factories, ctx.year, ctx.mon, ctx.current_date)
+    month = svc.order_kpi(ctx.db, ctx.factories, ctx.year, ctx.mon, ctx.current_date)
+    today = svc.order_kpi(ctx.db, ctx.factories, ctx.year, ctx.mon, ctx.current_date, "today")
+    ytd = svc.order_kpi(ctx.db, ctx.factories, ctx.year, ctx.mon, ctx.current_date, "ytd")
+    return {**month, "today_data": {"sewing": today["sewing"], "fg": today["fg"]}, "ytd_data": {"sewing": ytd["sewing"], "fg": ytd["fg"]}, "today_date": ctx.current_date.isoformat()}
 
 
 def build_po_risk_pipeline(ctx: DashboardContext) -> dict:
@@ -72,11 +75,22 @@ def build_po_risk_pipeline(ctx: DashboardContext) -> dict:
 
 
 def build_qa_summary(ctx: DashboardContext) -> dict:
-    return svc.qa_summary(ctx.db, ctx.all_factories, ctx.factories, ctx.is_total, ctx.year, ctx.mon)
+    month = svc.qa_summary(ctx.db, ctx.all_factories, ctx.factories, ctx.is_total, ctx.year, ctx.mon)
+    today = svc.qa_summary(ctx.db, ctx.all_factories, ctx.factories, ctx.is_total, ctx.year, ctx.mon, "today", ctx.current_date)
+    ytd = svc.qa_summary(ctx.db, ctx.all_factories, ctx.factories, ctx.is_total, ctx.year, ctx.mon, "ytd")
+    return {**month, "categories_today": today["categories"], "categories_ytd": ytd["categories"], "today_date": ctx.current_date.isoformat()}
 
 
 def build_hr_headcount(ctx: DashboardContext) -> dict:
-    return svc.hr_overview(ctx.db, ctx.factories, ctx.is_total)
+    from datetime import date as _date
+
+    from app.services.rules import month_bounds
+
+    today = svc.hr_overview(ctx.db, ctx.factories, ctx.is_total)
+    _, last_of_month = month_bounds(ctx.year, ctx.mon)
+    month_avg = svc.hr_average(ctx.db, ctx.factories, ctx.is_total, month_bounds(ctx.year, ctx.mon)[0], min(last_of_month, ctx.current_date))
+    ytd_avg = svc.hr_average(ctx.db, ctx.factories, ctx.is_total, _date(ctx.year, 1, 1), min(last_of_month, ctx.current_date))
+    return {**today, "month_avg": month_avg, "ytd_avg": ytd_avg}
 
 
 def _signals(ctx: DashboardContext, zone: str) -> dict:

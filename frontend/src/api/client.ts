@@ -123,14 +123,22 @@ export interface OrderKpi {
   sewing: OrderKpiBucket;
   fg: OrderKpiBucket;
   fg_excluded_customers: string[];
+  today_data?: { sewing: OrderKpiBucket; fg: OrderKpiBucket };
+  ytd_data?: { sewing: OrderKpiBucket; fg: OrderKpiBucket };
+  today_date?: string;
 }
+
+export type QaCategory = { key: string; label: string; connected: boolean; total: number | null; by_factory: { code: string; count: number | null }[] }[];
 
 export interface QaSummary {
   month: string;
   has_data: boolean;
   latest_day: string | null;
   selected: string | null;
-  categories: { key: string; label: string; connected: boolean; total: number | null; by_factory: { code: string; count: number | null }[] }[];
+  categories: QaCategory;
+  categories_today?: QaCategory;
+  categories_ytd?: QaCategory;
+  today_date?: string;
 }
 
 export interface HrOverview {
@@ -140,12 +148,14 @@ export interface HrOverview {
   company_teams?: number;
   as_of_text?: string;
   teams?: number;
-  by_factory?: { code: string; name: string; total: number; teams?: number; roster?: number; attendance_pct?: number | null; delta?: number | null }[];
-  source?: "SNAPSHOT" | "EXCEL";
+  by_factory?: { code: string; name: string; total: number; teams?: number | null; roster?: number | null; attendance_pct?: number | null; delta?: number | null }[];
+  source?: "SNAPSHOT" | "EXCEL" | "SNAPSHOT_AVG";
   company_roster?: number;
   company_attendance_pct?: number | null;
   company_delta?: number | null;
   as_of?: string;
+  month_avg?: HrOverview | null;
+  ytd_avg?: HrOverview | null;
 }
 
 export interface SyncBrief {
