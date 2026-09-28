@@ -202,6 +202,37 @@ def list_dependents(db: Session, milestone_id: int) -> list[dict]:
     return [{"action_id": a.id, "milestone_id": m.id, "milestone_code": m.code, "milestone_name": m.name, "milestone_date": _iso(m.target_date), "status": a.status} for a, m in rows]
 
 
+# ================================================================== Data Sources (WF-06) — nối THẬT vào sync hiện có, không bịa nguồn
+def list_data_sources(db: Session) -> list[dict]:
+    """Business-facing sync/mapping status — chỉ hiển thị nguồn THẬT sự tồn tại trong hệ thống (EGMF_REVENUE, ERP_QTCN,
+    PLAN_EXCEL). Máy móc hiện nhập thủ công (MACHINE_SYNC_ENABLED=False — ERP chưa có dữ liệu chuẩn). Finance/OPEX và HR
+    CHƯA có pipeline đồng bộ nào trong hệ thống — báo trung thực "Chưa tích hợp", không dựng số liệu giả."""
+    from app.services import egmf_ops as eo
+    from app.services import roadmap_baseline as rb
+
+    def row(name: str, data: str, cycle: str, source_job: str | None) -> dict:
+        if source_job is None:
+            return {"source": name, "data": data, "cycle": cycle, "last_sync": None, "status": "NOT_INTEGRATED", "status_label": "Chưa tích hợp"}
+        fresh = rb.source_freshness(db, source_job)
+        last = fresh["last_attempt"]
+        status = "STALE" if fresh["stale_or_last_sync_failed"] else "HEALTHY"
+        return {
+            "source": name, "data": data, "cycle": cycle, "last_sync": last["started_at"] if last else None,
+            "last_status": last["status"] if last else None, "status": status, "status_label": "Cần chú ý (stale/failed)" if status == "STALE" else "Healthy",
+        }
+
+    return [
+        row("eGMF / ERP", "Doanh thu / Sản lượng / QA (defect)", "Scheduled", rb.SOURCE_SYNC_JOB),
+        row("ERP QTCN", "Yêu cầu máy theo mã hàng (Kế hoạch công nghệ)", "Manual/Scheduled", "ERP_QTCN"),
+        row("Kế hoạch (Excel)", "Plan doanh thu nhập tay", "Manual", "PLAN_EXCEL"),
+        {"source": "Machine/Equipment", "data": "Registry / trạng thái / số lượng", "cycle": "Thủ công",
+         "last_sync": None, "status": "MANUAL" if not eo.MACHINE_SYNC_ENABLED else "HEALTHY",
+         "status_label": "Nhập thủ công (ERP chưa có dữ liệu chuẩn)" if not eo.MACHINE_SYNC_ENABLED else "Healthy"},
+        row("Finance/OPEX", "Chi phí vận hành", "—", None),
+        row("HR", "Nhân sự", "—", None),
+    ]
+
+
 def list_milestone_history(db: Session, milestone_id: int) -> list[dict]:
     """WF-03 tab "Lịch sử" — đọc trực tiếp AuditLog chung của hệ thống (object_type=RoadmapMilestone), không tạo bảng audit riêng."""
     rows = (

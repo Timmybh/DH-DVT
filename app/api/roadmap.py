@@ -297,6 +297,12 @@ def get_milestone_history(milestone_id: int, db: Session = Depends(get_db), _: U
     return ce.list_milestone_history(db, milestone_id)
 
 
+@router.get("/data-sources")
+def get_data_sources(db: Session = Depends(get_db), _: User = View):
+    """WF-06 — nối thật vào sync hiện có (EGMF_REVENUE/ERP_QTCN/PLAN_EXCEL); Finance/OPEX/HR báo trung thực "Chưa tích hợp"."""
+    return ce.list_data_sources(db)
+
+
 class LinkBody(BaseModel):
     link_type: str
     ref_id: int

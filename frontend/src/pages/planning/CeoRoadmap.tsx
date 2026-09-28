@@ -55,6 +55,7 @@ export default function CeoRoadmap({ perm }: { perm: { manage: boolean } }) {
   const [activeCats, setActiveCats] = useState<Set<string>>(new Set());
   const [editMode, setEditMode] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [setupOpen, setSetupOpen] = useState(false);
   const [detailId, setDetailId] = useState<number | null>(null);
   const [msg, setMsg] = useState<Msg>(null);
   const [layout, setLayout] = useState<Layout>("HORIZONTAL");
@@ -143,6 +144,7 @@ export default function CeoRoadmap({ perm }: { perm: { manage: boolean } }) {
           ))}
         </div>
         <span className="flex-1" />
+        <button onClick={() => setSetupOpen(true)} className={btn} title="Thiết lập & dữ liệu" data-testid="ceo-roadmap-setup">⚙ Thiết lập &amp; dữ liệu</button>
         {perm.manage && <button onClick={() => setEditMode((v) => !v)} className={editMode ? primary : btn} data-testid="ceo-roadmap-edit-toggle">{editMode ? "Đang Edit Mode — Xong" : "Edit Mode"}</button>}
         {editMode && perm.manage && <button onClick={() => setAddOpen(true)} className={primary} data-testid="ceo-roadmap-add">+ Milestone</button>}
       </div>
@@ -244,6 +246,7 @@ export default function CeoRoadmap({ perm }: { perm: { manage: boolean } }) {
 
       {addOpen && versionId !== null && <AddMilestoneModal versionId={versionId} categories={categories} onClose={() => setAddOpen(false)} onDone={() => { setAddOpen(false); void loadView(); }} setMsg={setMsg} />}
       {detailId !== null && <DetailModal milestoneId={detailId} milestones={view?.milestones ?? []} editMode={editMode} categories={categories} onClose={() => setDetailId(null)} onChanged={() => void loadView()} setMsg={setMsg} />}
+      {setupOpen && <SetupHubModal perm={perm} categories={categories} onClose={() => setSetupOpen(false)} onCategoriesChanged={() => api.get<Category[]>(`${RES}/categories`).then((r) => setCategories(r.data))} setMsg={setMsg} />}
     </div>
   );
 }
@@ -483,6 +486,110 @@ function AddActionForm({ milestoneId, milestones, onClose, onDone, setMsg }: { m
         </select>
       )}
       <div className="mt-2 flex justify-end gap-2"><button className={btn} onClick={onClose}>Huỷ</button><button className={primary} onClick={() => void submit()}>Lưu</button></div>
+    </div>
+  );
+}
+
+interface DataSourceRow { source: string; data: string; cycle: string; last_sync: string | null; last_status?: string; status: string; status_label: string }
+const DS_STATUS_CLS: Record<string, string> = { HEALTHY: "bg-emerald-100 text-emerald-700", STALE: "bg-amber-100 text-amber-700", MANUAL: "bg-sky-100 text-sky-700", NOT_INTEGRATED: "bg-slate-200 text-slate-500" };
+
+const SETUP_GROUPS = [
+  { key: "targets", title: "Định nghĩa mục tiêu", desc: "Danh mục (category) dùng để phân loại milestone trên Roadmap." },
+  { key: "capacity", title: "Định mức năng lực", desc: "Chuẩn năng lực lao động/máy móc — chưa triển khai ở Phase 1 (xem Rule thực thi ở tab Mô phỏng kỹ thuật)." },
+  { key: "machine", title: "Máy móc & công nghệ", desc: "Machine Registry, model mapping, Future Technology — xem trang Nguồn lực / Công nghệ tương lai." },
+  { key: "cost", title: "Chi phí & căn cứ", desc: "Cost evidence cho mô phỏng đầu tư — xem \"Cost Evidence\" ở tab Mô phỏng kỹ thuật." },
+  { key: "sources", title: "Nguồn dữ liệu", desc: "Trạng thái đồng bộ/mapping các nguồn dữ liệu thật của hệ thống." },
+  { key: "approval", title: "Quyền duyệt & lịch sử", desc: "Phân quyền roadmap.manage/run/approve — xem trang Quản trị." },
+  { key: "demo", title: "Dữ liệu demo", desc: "Tạo/reset dữ liệu demo có seed cố định — để Phase sau." },
+] as const;
+type SetupKey = typeof SETUP_GROUPS[number]["key"];
+
+function SetupHubModal({ perm, categories, onClose, onCategoriesChanged, setMsg }: { perm: { manage: boolean }; categories: Category[]; onClose: () => void; onCategoriesChanged: () => void; setMsg: (m: Msg) => void }) {
+  const [open, setOpen] = useState<SetupKey | null>(null);
+  const [sources, setSources] = useState<DataSourceRow[] | null>(null);
+  useEffect(() => { if (open === "sources" && sources === null) void api.get<DataSourceRow[]>(`${RES}/data-sources`).then((r) => setSources(r.data)).catch((e) => setMsg({ ok: false, text: errorMessage(e) })); }, [open, sources, setMsg]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4" onClick={onClose}>
+      <div className="my-4 w-full max-w-3xl rounded-2xl bg-white p-6" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-bold">⚙ Thiết lập &amp; dữ liệu</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700">✕ Đóng</button>
+        </div>
+        {open === null ? (
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+            {SETUP_GROUPS.map((g) => (
+              <button key={g.key} onClick={() => setOpen(g.key)} className="rounded-2xl border border-slate-200 p-4 text-left hover:border-slate-400" data-testid={`ceo-setup-${g.key}`}>
+                <div className="text-sm font-bold">{g.title}</div>
+                <p className="mt-1 text-[11px] text-slate-500">{g.desc}</p>
+                <span className="mt-3 inline-block text-xs font-semibold text-sky-600">Mở cấu hình →</span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="mt-4">
+            <button onClick={() => setOpen(null)} className="text-xs text-slate-400 hover:text-slate-700">← Tất cả nhóm</button>
+            <h4 className="mt-2 text-sm font-bold">{SETUP_GROUPS.find((g) => g.key === open)?.title}</h4>
+
+            {open === "targets" && <CategoryManagerPanel categories={categories} perm={perm} onChanged={onCategoriesChanged} setMsg={setMsg} />}
+
+            {open === "sources" && (
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead><tr className="text-left text-[11px] uppercase text-slate-400"><th className="py-1.5">Nguồn</th><th>Dữ liệu</th><th>Chu kỳ</th><th>Last Sync</th><th>Trạng thái</th></tr></thead>
+                  <tbody>
+                    {(sources ?? []).map((s) => (
+                      <tr key={s.source} className="border-t border-slate-100">
+                        <td className="py-1.5 font-semibold">{s.source}</td>
+                        <td>{s.data}</td>
+                        <td>{s.cycle}</td>
+                        <td>{s.last_sync ? new Date(s.last_sync).toLocaleString("vi-VN") : "—"}</td>
+                        <td><span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${DS_STATUS_CLS[s.status]}`}>{s.status_label}</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {sources === null && <p className="py-3 text-center text-slate-400">Đang tải…</p>}
+              </div>
+            )}
+
+            {(open === "capacity" || open === "machine" || open === "cost" || open === "approval" || open === "demo") && (
+              <p className="mt-3 rounded-xl border border-dashed border-slate-300 p-4 text-xs text-slate-400">{SETUP_GROUPS.find((g) => g.key === open)?.desc}</p>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CategoryManagerPanel({ categories, perm, onChanged, setMsg }: { categories: Category[]; perm: { manage: boolean }; onChanged: () => void; setMsg: (m: Msg) => void }) {
+  const [adding, setAdding] = useState(false);
+  const [d, setD] = useState({ code: "", name: "", color: "#2563eb" });
+  const save = async (id: number, patch: Record<string, unknown>) => {
+    try { await api.put(`${RES}/categories/${id}`, patch); onChanged(); } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); }
+  };
+  const create = async () => {
+    try { await api.post(`${RES}/categories`, d); setD({ code: "", name: "", color: "#2563eb" }); setAdding(false); onChanged(); } catch (e) { setMsg({ ok: false, text: errorMessage(e) }); }
+  };
+  return (
+    <div className="mt-3 space-y-2 text-xs">
+      {categories.map((c) => (
+        <div key={c.id} className="flex items-center gap-2 rounded-lg border border-slate-100 px-2 py-1.5">
+          <input type="color" defaultValue={c.color} disabled={!perm.manage} onBlur={(e) => void save(c.id, { color: e.target.value })} className="h-6 w-6 rounded" />
+          <input className={inp + " flex-1"} defaultValue={c.name} disabled={!perm.manage} onBlur={(e) => e.target.value !== c.name && void save(c.id, { name: e.target.value })} />
+          <label className="flex items-center gap-1 text-[11px] text-slate-500"><input type="checkbox" defaultChecked={c.active} disabled={!perm.manage} onChange={(e) => void save(c.id, { active: e.target.checked })} />Hiện</label>
+        </div>
+      ))}
+      {perm.manage && (adding ? (
+        <div className="flex items-center gap-2 rounded-lg border border-dashed border-slate-300 px-2 py-1.5">
+          <input className={inp} placeholder="Mã (code)" value={d.code} onChange={(e) => setD({ ...d, code: e.target.value })} />
+          <input className={inp} placeholder="Tên hiển thị" value={d.name} onChange={(e) => setD({ ...d, name: e.target.value })} />
+          <input type="color" value={d.color} onChange={(e) => setD({ ...d, color: e.target.value })} className="h-6 w-6 rounded" />
+          <button className={btn} onClick={() => setAdding(false)}>Huỷ</button>
+          <button className={primary} disabled={!d.code} onClick={() => void create()}>Lưu</button>
+        </div>
+      ) : <button className={btn} onClick={() => setAdding(true)}>+ Category</button>)}
     </div>
   );
 }
