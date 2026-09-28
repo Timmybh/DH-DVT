@@ -364,9 +364,12 @@ def update_milestone(db: Session, user: User, milestone_id: int, d: dict) -> Roa
 
 
 def remove_milestone(db: Session, user: User, milestone_id: int) -> None:
+    from app.services.roadmap_ceo import delete_milestone_ceo_ref_check
+
     m = get_milestone(db, milestone_id)
     v = get_version(db, m.version_id)
     _ensure_editable(v)  # chỉ DRAFT — DRAFT chưa có run nên không mất lịch sử
+    delete_milestone_ceo_ref_check(db, milestone_id)  # WF-02: không xoá milestone đang bị MILESTONE_LINK tham chiếu
     for t in milestone_targets(db, m.id):
         db.delete(t)
     code = m.code

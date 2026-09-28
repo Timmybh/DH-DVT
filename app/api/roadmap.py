@@ -38,6 +38,7 @@ from app.models.roadmap import (
     TECH_LINK_TYPES,
 )
 from app.services import roadmap as rm
+from app.services import roadmap_ceo as ce
 from app.services import roadmap_action_plan as ap
 from app.services import roadmap_adapters as ad
 from app.services import roadmap_cost as rc
@@ -194,6 +195,120 @@ def update_target(target_id: int, body: TargetBody, db: Session = Depends(get_db
 def remove_target(target_id: int, db: Session = Depends(get_db), user: User = Manage):
     rm.remove_target(db, user, target_id)
     return {"ok": True}
+
+
+# ================================================================== CEO Roadmap Phase 1 (WF-01/02/03)
+class CategoryBody(BaseModel):
+    code: str | None = Field(None, max_length=40)
+    name: str | None = Field(None, max_length=100)
+    color: str | None = Field(None, max_length=20)
+    sort_order: int | None = None
+    active: bool | None = None
+
+
+@router.get("/categories")
+def list_categories(db: Session = Depends(get_db), _: User = View):
+    ce.ensure_default_categories(db)
+    return ce.list_categories(db)
+
+
+@router.post("/categories")
+def create_category(body: CategoryBody, db: Session = Depends(get_db), user: User = Manage):
+    return ce.create_category(db, body.code or "", body.name or "", body.color or "", body.sort_order or 0, user.username)
+
+
+@router.put("/categories/{category_id}")
+def update_category(category_id: int, body: CategoryBody, db: Session = Depends(get_db), user: User = Manage):
+    return ce.update_category(db, category_id, body.name, body.color, body.sort_order, body.active, user.username)
+
+
+@router.get("/versions/{version_id}/ceo-view")
+def get_ceo_view(version_id: int, db: Session = Depends(get_db), _: User = View):
+    """Data contract dùng chung Horizontal/3D/Vertical (WF-01/01B/01C) — không tách data model theo layout."""
+    return ce.ceo_view(db, version_id)
+
+
+class CeoFieldsBody(BaseModel):
+    category_code: str | None = None
+    progress_percent: float | None = None
+    baseline_label: str | None = Field(None, max_length=150)
+    gap_label: str | None = Field(None, max_length=150)
+    proposal_summary: str | None = Field(None, max_length=500)
+    manual_status: str | None = None
+    warning_note: str | None = Field(None, max_length=300)
+    measurement_family: str | None = None
+    measurement_metric_code: str | None = None
+    measurement_scope_type: str | None = None
+    measurement_scope_value: str | None = Field(None, max_length=20)
+    measurement_period_type: str | None = None
+    measurement_period_year: int | None = None
+    measurement_period_month: int | None = None
+    measurement_target_value: float | None = None
+
+
+@router.put("/milestones/{milestone_id}/ceo-fields")
+def update_milestone_ceo_fields(milestone_id: int, body: CeoFieldsBody, db: Session = Depends(get_db), user: User = Manage):
+    m = ce.update_milestone_ceo_fields(db, milestone_id, actor=user.username, **body.model_dump(exclude_unset=True))
+    return ce.milestone_ceo_card(db, m, {c.code: c for c in db.query(ce.RoadmapCategory).all()})
+
+
+class MilestoneActionBody(BaseModel):
+    action_type: str = "ACTION"
+    title: str = Field("", max_length=200)
+    ref_milestone_id: int | None = None
+    value_type: str = "LIST"
+    status: str = "NOT_COMPLETED"
+    note: str = Field("", max_length=300)
+    sort_order: int = 0
+
+
+@router.get("/milestones/{milestone_id}/actions")
+def list_milestone_actions(milestone_id: int, db: Session = Depends(get_db), _: User = View):
+    return ce.list_actions(db, milestone_id)
+
+
+@router.post("/milestones/{milestone_id}/actions")
+def add_milestone_action(milestone_id: int, body: MilestoneActionBody, db: Session = Depends(get_db), user: User = Manage):
+    return ce.add_action(
+        db, milestone_id, action_type=body.action_type, title=body.title, ref_milestone_id=body.ref_milestone_id,
+        value_type=body.value_type, status=body.status, note=body.note, sort_order=body.sort_order, actor=user.username,
+    )
+
+
+class MilestoneActionUpdateBody(BaseModel):
+    title: str | None = Field(None, max_length=200)
+    status: str | None = None
+    note: str | None = Field(None, max_length=300)
+    sort_order: int | None = None
+
+
+@router.put("/milestone-actions/{action_id}")
+def update_milestone_action(action_id: int, body: MilestoneActionUpdateBody, db: Session = Depends(get_db), user: User = Manage):
+    return ce.update_action(db, action_id, title=body.title, status=body.status, note=body.note, sort_order=body.sort_order, actor=user.username)
+
+
+@router.delete("/milestone-actions/{action_id}")
+def remove_milestone_action(action_id: int, db: Session = Depends(get_db), user: User = Manage):
+    ce.remove_action(db, action_id, actor=user.username)
+    return {"ok": True}
+
+
+@router.get("/milestones/{milestone_id}/dependents")
+def get_milestone_dependents(milestone_id: int, db: Session = Depends(get_db), _: User = View):
+    """WF-03 tab "Phụ thuộc/liên kết" chiều đi: milestone nào dùng milestone này làm điều kiện (MILESTONE_LINK)."""
+    return ce.list_dependents(db, milestone_id)
+
+
+@router.get("/milestones/{milestone_id}/history")
+def get_milestone_history(milestone_id: int, db: Session = Depends(get_db), _: User = View):
+    """WF-03 tab "Lịch sử" — AuditLog chung của hệ thống, không tạo bảng riêng."""
+    return ce.list_milestone_history(db, milestone_id)
+
+
+@router.get("/data-sources")
+def get_data_sources(db: Session = Depends(get_db), _: User = View):
+    """WF-06 — nối thật vào sync hiện có (EGMF_REVENUE/ERP_QTCN/PLAN_EXCEL); Finance/OPEX/HR báo trung thực "Chưa tích hợp"."""
+    return ce.list_data_sources(db)
 
 
 class LinkBody(BaseModel):

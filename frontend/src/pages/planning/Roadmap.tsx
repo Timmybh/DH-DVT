@@ -100,6 +100,7 @@ export default function Roadmap() {
   useEffect(() => { api.get<Options>(`${RES}/options`).then((r) => setOpts(r.data)).catch((e) => setMsg({ ok: false, text: errorMessage(e) })); load().catch((e) => setMsg({ ok: false, text: errorMessage(e) })); }, [load]);
   return (
     <div className="space-y-3">
+      <a href="/planning/roadmap" className="inline-block text-xs text-brand hover:underline">← Strategic Roadmap</a>
       <div>
         <h1 className="text-xl font-bold">ROADMAP SIMULATION</h1>
         <p className="text-xs text-slate-500">Scenario có version/milestone/target; mỗi lần chạy sinh Run bất biến với snapshot đầy đủ: baseline, target, gap, dữ liệu thiếu và proposal. Đây là nền tính toán minh bạch — không tối ưu toàn cục, không xếp hạng, không tự chọn phương án.</p>

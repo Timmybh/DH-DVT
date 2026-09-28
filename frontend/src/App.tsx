@@ -15,6 +15,7 @@ import Actual from "./pages/planning/Actual";
 import Resources from "./pages/planning/Resources";
 import SalesOrders from "./pages/planning/SalesOrders";
 import Roadmap from "./pages/planning/Roadmap";
+import StrategicRoadmap from "./pages/planning/roadmap/StrategicRoadmap";
 import SyncDetail from "./pages/SyncDetail";
 import SyncLog from "./pages/SyncLog";
 import Alerts from "./pages/admin/Alerts";
@@ -28,7 +29,8 @@ import Calendar from "./pages/admin/Calendar";
 import Sso from "./pages/admin/Sso";
 import Users from "./pages/admin/Users";
 
-function Protected({ children, perm }: { children: ReactNode; perm?: string }) {
+/** fullBleed: bỏ giới hạn max-w-[1500px]/padding của main — dùng cho màn full-width riêng (vd Strategic Roadmap). */
+function Protected({ children, perm, fullBleed }: { children: ReactNode; perm?: string; fullBleed?: boolean }) {
   const { user, ready, can } = useAuth();
   const { mode } = useTheme();
   if (!ready) return <p className="p-8 text-sm text-slate-500">Đang tải...</p>;
@@ -36,9 +38,9 @@ function Protected({ children, perm }: { children: ReactNode; perm?: string }) {
   if (user.must_change_password) return <Navigate to="/change-password" replace />;
   if (perm && !can(perm)) return <Navigate to="/" replace />;
   return (
-    <div className={`${mode === "dark" ? "dvt-bg dvt-dark" : "dvt-light"} min-h-screen`}>
+    <div className={`${mode === "dark" ? "dvt-bg dvt-dark" : "dvt-light"} flex min-h-screen flex-col`}>
       <Navbar />
-      <main className="mx-auto max-w-[1500px] px-4 py-4 sm:px-6">{children}</main>
+      {fullBleed ? <main className="flex min-h-0 flex-1 flex-col">{children}</main> : <main className="mx-auto max-w-[1500px] px-4 py-4 sm:px-6">{children}</main>}
     </div>
   );
 }
@@ -65,7 +67,8 @@ export default function App() {
       <Route path="/planning/resources/:section" element={<Protected perm="planning.view"><SubTabs tabs={PLANNING_TABS}><Resources /></SubTabs></Protected>} />
       <Route path="/planning/actual" element={<Navigate to="/planning/actual/plan-vs-actual" replace />} />
       <Route path="/planning/actual/:section" element={<Protected perm="mapping.view"><SubTabs tabs={PLANNING_TABS}><Actual /></SubTabs></Protected>} />
-      <Route path="/planning/roadmap" element={<Protected perm="roadmap.view"><SubTabs tabs={PLANNING_TABS}><Roadmap /></SubTabs></Protected>} />
+      <Route path="/planning/roadmap" element={<Protected perm="roadmap.view" fullBleed><StrategicRoadmap /></Protected>} />
+      <Route path="/planning/roadmap/simulation" element={<Protected perm="roadmap.view"><SubTabs tabs={PLANNING_TABS}><Roadmap /></SubTabs></Protected>} />
       <Route path="/planning/so" element={<Protected perm="planning.view"><SubTabs tabs={PLANNING_TABS}><SalesOrders /></SubTabs></Protected>} />
       <Route path="/planning/columns" element={<Protected perm="planning.view"><SubTabs tabs={PLANNING_TABS}><ColumnConfig /></SubTabs></Protected>} />
       <Route path="/admin" element={<AdminIndex />} />
