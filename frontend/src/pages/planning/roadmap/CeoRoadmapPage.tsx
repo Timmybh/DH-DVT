@@ -27,6 +27,8 @@ export default function CeoRoadmapPage({ perm }: { perm: { manage: boolean } }) 
   const [dimmed, setDimmed] = useState<Set<string>>(new Set());
   const [editMode, setEditMode] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [placing, setPlacing] = useState(false);
+  const [pendingDate, setPendingDate] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<number | null>(null);
   const [layout, setLayout] = useState<Layout>("HORIZONTAL");
   const [windowTime, setWindowTime] = useState<WindowTime>("YEAR");
@@ -144,7 +146,16 @@ export default function CeoRoadmapPage({ perm }: { perm: { manage: boolean } }) 
                 </div>
                 <div className="flex items-center gap-2">
                   {editMode && perm.manage && (
-                    <button onClick={() => setAddOpen(true)} className="flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold text-white" style={{ background: "var(--rm-cat-dx)" }} data-testid="rm-add-milestone"><Plus size={14} />Milestone</button>
+                    <button
+                      onMouseDown={() => layout === "HORIZONTAL" && setPlacing(true)}
+                      onClick={() => layout !== "HORIZONTAL" && setAddOpen(true)}
+                      title={layout === "HORIZONTAL" ? "Kéo và thả vào timeline để đặt ngày, rồi điền tên/loại" : "Thêm milestone"}
+                      className="flex cursor-grab items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold text-white active:cursor-grabbing"
+                      style={{ background: "var(--rm-cat-dx)" }}
+                      data-testid="rm-add-milestone"
+                    >
+                      <Plus size={14} />Milestone{layout === "HORIZONTAL" && <span className="text-[10px] font-normal opacity-80">(kéo thả vào trục)</span>}
+                    </button>
                   )}
                   <div className="flex gap-1 rounded-xl p-1" style={{ background: "var(--rm-surface-tint)" }}>
                     {([["HORIZONTAL", "View ngang"], ["VERTICAL", "View dọc"]] as [Layout, string][]).map(([v, label]) => (
@@ -155,7 +166,20 @@ export default function CeoRoadmapPage({ perm }: { perm: { manage: boolean } }) 
               </div>
 
               <div className="flex flex-1 flex-col">
-                {layout === "HORIZONTAL" && <RoadmapTimeline milestones={shown} endDate={endDate} endLabel={endLabel} endProgress={overall} rangeStart={rangeStart} rangeEnd={rangeEnd} dimFn={isDim} onOpen={setDetailId} />}
+                {layout === "HORIZONTAL" && (
+                  <RoadmapTimeline
+                    milestones={shown} endDate={endDate} endLabel={endLabel} endProgress={overall} rangeStart={rangeStart} rangeEnd={rangeEnd} dimFn={isDim} onOpen={setDetailId}
+                    editMode={editMode}
+                    onMoveMilestone={(id, dateIso) => {
+                      api.put(`${RES}/milestones/${id}`, { target_date: dateIso })
+                        .then(() => { setMsg({ ok: true, text: "Đã dời ngày milestone." }); void loadView(); })
+                        .catch((e) => setMsg({ ok: false, text: errorMessage(e) }));
+                    }}
+                    placing={placing}
+                    onPlaceAt={(dateIso) => { setPlacing(false); setPendingDate(dateIso); setAddOpen(true); }}
+                    onPlaceCancel={() => setPlacing(false)}
+                  />
+                )}
                 {layout === "THREED" && <Roadmap3DView milestones={shown} onOpen={setDetailId} endLabel={endLabel} endDate={endDate} />}
                 {layout === "VERTICAL" && <RoadmapListView milestones={filtered} onOpen={setDetailId} endLabel={endLabel} endDate={endDate} endProgress={overall} />}
               </div>
@@ -172,7 +196,14 @@ export default function CeoRoadmapPage({ perm }: { perm: { manage: boolean } }) 
         )}
       </div>
 
-      {addOpen && versionId !== null && <AddMilestoneModal versionId={versionId} categories={categories} onClose={() => setAddOpen(false)} onDone={() => { setAddOpen(false); void loadView(); }} setMsg={setMsg} />}
+      {addOpen && versionId !== null && (
+        <AddMilestoneModal
+          versionId={versionId} categories={categories} defaultDate={pendingDate}
+          onClose={() => { setAddOpen(false); setPendingDate(null); }}
+          onDone={() => { setAddOpen(false); setPendingDate(null); void loadView(); }}
+          setMsg={setMsg}
+        />
+      )}
       {detailId !== null && <DetailModal milestoneId={detailId} milestones={view?.milestones ?? []} editMode={editMode} categories={categories} onClose={() => setDetailId(null)} onChanged={() => void loadView()} setMsg={setMsg} />}
     </div>
   );

@@ -29,14 +29,22 @@ function useContainerWidth<T extends HTMLElement>() {
 interface Placed { m: MilestoneCardData; tier: 0 | 1; idealCx: number; actualLeft: number; actualCx: number }
 
 /** WF-01: dot trục + card cùng hệ toạ độ theo ngày thật, card so le trên/dưới trục khi mật độ milestone dày
- * (đúng ảnh tham chiếu — không chỉ 1 hàng dưới trục), luôn fit-to-width (không cuộn ngang, không tràn). */
+ * (đúng ảnh tham chiếu — không chỉ 1 hàng dưới trục), luôn fit-to-width (không cuộn ngang, không tràn).
+ * Edit Mode: kéo tay nắm trên card để dời ngày (onMoveMilestone); kéo thả từ nút "+ Milestone" ở header
+ * (placing=true do trang cha điều khiển) để đặt milestone mới lên trục rồi mới điền tên/loại (onPlaceAt). */
 export default function RoadmapTimeline({
   milestones, endDate, endLabel, endProgress, rangeStart, rangeEnd, dimFn, onOpen,
+  editMode, onMoveMilestone, placing, onPlaceAt, onPlaceCancel,
 }: {
   milestones: MilestoneCardData[]; endDate: string | null; endLabel: string; endProgress: number | null;
   rangeStart: Date; rangeEnd: Date; dimFn: (cat: string | null) => boolean; onOpen: (id: number) => void;
+  editMode?: boolean; onMoveMilestone?: (id: number, dateIso: string) => void;
+  placing?: boolean; onPlaceAt?: (dateIso: string) => void; onPlaceCancel?: () => void;
 }) {
   const [containerRef, containerW] = useContainerWidth<HTMLDivElement>();
+  const [dragMsId, setDragMsId] = useState<number | null>(null);
+  const [dragX, setDragX] = useState<number | null>(null);
+  const [ghostX, setGhostX] = useState<number | null>(null);
 
   const months: { y: number; m: number }[] = [];
   { let y = rangeStart.getFullYear(), m = rangeStart.getMonth() + 1;
@@ -54,7 +62,12 @@ export default function RoadmapTimeline({
   const perTier = Math.max(1, Math.ceil(itemCount / 2));
   const cardW = Math.min(MAX_CARD_W, Math.max(MIN_CARD_W, W / perTier - GAP));
   const endW = cardW + 10;
-  const xOf = (iso: string) => pctOf(new Date(iso)) * (W - endW - cardW / 2 - 8) + cardW / 2;
+  const span = W - endW - cardW / 2 - 8;
+  const xOf = (iso: string) => pctOf(new Date(iso)) * span + cardW / 2;
+  const dateOfX = (x: number) => {
+    const pct = span > 0 ? Math.max(0, Math.min(1, (x - cardW / 2) / span)) : 0;
+    return new Date(rangeStart.getTime() + pct * totalMs).toISOString().slice(0, 10);
+  };
 
   const sorted = [...milestones].sort((a, b) => a.target_date.localeCompare(b.target_date));
   const prevRightByTier = [-Infinity, -Infinity];
@@ -80,6 +93,47 @@ export default function RoadmapTimeline({
 
   const axisY = CARD_H + CONNECTOR_GAP; // trục nằm giữa: hàng "trên" phía trên, hàng "dưới" phía dưới
   const totalH = axisY + CONNECTOR_GAP + CARD_H;
+
+  // Kéo tay nắm trên 1 card đang có để dời ngày — track bằng document listener, chỉ commit khi thả chuột.
+  const startDrag = (id: number) => (e: React.MouseEvent) => {
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setDragMsId(id);
+    setDragX(Math.max(0, Math.min(W, e.clientX - rect.left)));
+    const onMove = (ev: MouseEvent) => setDragX(Math.max(0, Math.min(W, ev.clientX - rect.left)));
+    const onUp = (ev: MouseEvent) => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      const x = Math.max(0, Math.min(W, ev.clientX - rect.left));
+      setDragMsId(null); setDragX(null);
+      onMoveMilestone?.(id, dateOfX(x));
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
+
+  // Kéo thả từ nút "+ Milestone" ở header (trang cha bật `placing` khi mousedown) — thả trong vùng trục thì đặt milestone mới tại đúng ngày đó.
+  useEffect(() => {
+    if (!placing) return;
+    const onMove = (ev: MouseEvent) => {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setGhostX(Math.max(0, Math.min(W, ev.clientX - rect.left)));
+    };
+    const onUp = (ev: MouseEvent) => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      setGhostX(null);
+      const rect = containerRef.current?.getBoundingClientRect();
+      const inside = !!rect && ev.clientX >= rect.left && ev.clientX <= rect.right && ev.clientY >= rect.top - 60 && ev.clientY <= rect.bottom + 60;
+      if (!inside || !rect) { onPlaceCancel?.(); return; }
+      onPlaceAt?.(dateOfX(Math.max(0, Math.min(W, ev.clientX - rect.left))));
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    return () => { document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [placing, W]);
 
   const Connector = ({ idealCx, actualCx, tier, color }: { idealCx: number; actualCx: number; tier: 0 | 1; color: string }) => {
     const midY = tier === 0 ? axisY - CONNECTOR_GAP * 0.55 : axisY + CONNECTOR_GAP * 0.55;
@@ -110,17 +164,39 @@ export default function RoadmapTimeline({
           </svg>
 
           {/* card hàng trên: neo mép DƯỚI sát trục */}
-          {placed.filter((p) => p.tier === 0).map(({ m, actualLeft }) => (
-            <div key={m.id} className="absolute" style={{ left: actualLeft, width: cardW, top: axisY - CONNECTOR_GAP - CARD_H, height: CARD_H }}>
-              <MilestoneCard m={m} onClick={() => onOpen(m.id)} dim={dimFn(m.category_name)} compact={cardW < 160} />
-            </div>
-          ))}
+          {placed.filter((p) => p.tier === 0).map(({ m, actualLeft }) => {
+            const isDragging = dragMsId === m.id && dragX !== null;
+            const left = isDragging ? Math.max(0, Math.min(W - cardW, dragX! - cardW / 2)) : actualLeft;
+            return (
+              <div key={m.id} className="absolute" style={{ left, width: cardW, top: axisY - CONNECTOR_GAP - CARD_H, height: CARD_H, zIndex: isDragging ? 20 : undefined }}>
+                <MilestoneCard m={m} onClick={() => onOpen(m.id)} dim={dimFn(m.category_name)} compact={cardW < 160} editMode={editMode} dragging={isDragging} onDragStart={startDrag(m.id)} />
+              </div>
+            );
+          })}
           {/* card hàng dưới: neo mép TRÊN sát trục */}
-          {placed.filter((p) => p.tier === 1).map(({ m, actualLeft }) => (
-            <div key={m.id} className="absolute" style={{ left: actualLeft, width: cardW, top: axisY + CONNECTOR_GAP, height: CARD_H }}>
-              <MilestoneCard m={m} onClick={() => onOpen(m.id)} dim={dimFn(m.category_name)} compact={cardW < 160} />
+          {placed.filter((p) => p.tier === 1).map(({ m, actualLeft }) => {
+            const isDragging = dragMsId === m.id && dragX !== null;
+            const left = isDragging ? Math.max(0, Math.min(W - cardW, dragX! - cardW / 2)) : actualLeft;
+            return (
+              <div key={m.id} className="absolute" style={{ left, width: cardW, top: axisY + CONNECTOR_GAP, height: CARD_H, zIndex: isDragging ? 20 : undefined }}>
+                <MilestoneCard m={m} onClick={() => onOpen(m.id)} dim={dimFn(m.category_name)} compact={cardW < 160} editMode={editMode} dragging={isDragging} onDragStart={startDrag(m.id)} />
+              </div>
+            );
+          })}
+          {dragMsId !== null && dragX !== null && (
+            <div className="pointer-events-none absolute rounded-full px-2 py-0.5 text-[10px] font-semibold text-white" style={{ left: Math.max(0, Math.min(W - 60, dragX - 30)), top: axisY - 10, background: "var(--rm-text)" }}>
+              {dateOfX(dragX).split("-").reverse().slice(0, 2).join("/")}
             </div>
-          ))}
+          )}
+          {placing && ghostX !== null && (
+            <>
+              <div className="pointer-events-none absolute top-0 w-px" style={{ left: ghostX, height: totalH, background: "var(--rm-cat-dx)", opacity: 0.6 }} />
+              <div className="pointer-events-none absolute flex h-4 w-4 -translate-x-1/2 items-center justify-center rounded-full border-2 border-white" style={{ left: ghostX, top: axisY - 7, background: "var(--rm-cat-dx)" }} />
+              <div className="pointer-events-none absolute -translate-x-1/2 rounded-full px-2 py-0.5 text-[10px] font-semibold text-white" style={{ left: ghostX, top: axisY - 32, background: "var(--rm-cat-dx)" }}>
+                {dateOfX(ghostX).split("-").reverse().slice(0, 2).join("/")}
+              </div>
+            </>
+          )}
           {endDate && (
             <div className="absolute" style={{ left: endActualLeft, width: endW, top: axisY + CONNECTOR_GAP }}>
               <div className="rounded-[var(--rm-radius-md)] p-3.5 text-white shadow-lg" style={{ background: "linear-gradient(135deg, var(--rm-status-ontrack), #0d9488)" }}>

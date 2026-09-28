@@ -255,11 +255,23 @@ export default function CeoRoadmap({ perm }: { perm: { manage: boolean } }) {
   );
 }
 
-export function AddMilestoneModal({ versionId, categories, onClose, onDone, setMsg }: { versionId: number; categories: Category[]; onClose: () => void; onDone: () => void; setMsg: (m: Msg) => void }) {
-  const [d, setD] = useState({ code: "", name: "", target_date: "", category_code: categories[0]?.code ?? "" });
+/** Sinh mã milestone tự động từ tên (bỏ dấu, viết hoa, nối "_") + hậu tố thời gian để tránh trùng — người dùng không cần nhập mã. */
+function autoCode(name: string): string {
+  const slug = name
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .replace(/đ/gi, "d")
+    .toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "")
+    .slice(0, 24);
+  return `${slug || "MS"}_${Date.now().toString(36).slice(-5).toUpperCase()}`;
+}
+
+export function AddMilestoneModal({ versionId, categories, defaultDate, onClose, onDone, setMsg }: {
+  versionId: number; categories: Category[]; defaultDate?: string | null; onClose: () => void; onDone: () => void; setMsg: (m: Msg) => void;
+}) {
+  const [d, setD] = useState({ name: "", target_date: defaultDate ?? "", category_code: categories[0]?.code ?? "" });
   const submit = async () => {
     try {
-      const m = await api.post<{ id: number }>(`${RES}/versions/${versionId}/milestones`, { code: d.code, name: d.name, target_date: d.target_date, sequence: Date.now() % 100000 });
+      const m = await api.post<{ id: number }>(`${RES}/versions/${versionId}/milestones`, { code: autoCode(d.name), name: d.name, target_date: d.target_date, sequence: Date.now() % 100000 });
       if (d.category_code) await api.put(`${RES}/milestones/${m.data.id}/ceo-fields`, { category_code: d.category_code });
       setMsg({ ok: true, text: "Đã thêm milestone (Draft)." });
       onDone();
@@ -270,16 +282,19 @@ export function AddMilestoneModal({ versionId, categories, onClose, onDone, setM
       <div className="w-full max-w-md rounded-2xl bg-white p-5" onClick={(e) => e.stopPropagation()}>
         <h3 className="mb-3 text-lg font-bold">+ Milestone</h3>
         <div className="space-y-2">
-          <label className="block text-xs text-slate-500">Mã<input className={inp} value={d.code} onChange={(e) => setD({ ...d, code: e.target.value })} /></label>
-          <label className="block text-xs text-slate-500">Tên<input className={inp} value={d.name} onChange={(e) => setD({ ...d, name: e.target.value })} /></label>
-          <label className="block text-xs text-slate-500">Ngày mục tiêu<input type="date" className={inp} value={d.target_date} onChange={(e) => setD({ ...d, target_date: e.target.value })} /></label>
+          {defaultDate ? (
+            <p className="rounded-lg bg-slate-50 px-2 py-1.5 text-xs text-slate-500">Ngày mục tiêu (đã đặt trên timeline): <b className="text-slate-800">{dateVi(defaultDate)}</b></p>
+          ) : (
+            <label className="block text-xs text-slate-500">Ngày mục tiêu<input type="date" className={inp} value={d.target_date} onChange={(e) => setD({ ...d, target_date: e.target.value })} /></label>
+          )}
+          <label className="block text-xs text-slate-500">Tên<input autoFocus className={inp} value={d.name} onChange={(e) => setD({ ...d, name: e.target.value })} /></label>
           <label className="block text-xs text-slate-500">Danh mục
             <select className={inp} value={d.category_code} onChange={(e) => setD({ ...d, category_code: e.target.value })}>
               {categories.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
             </select>
           </label>
         </div>
-        <div className="mt-4 flex justify-end gap-2"><button className={btn} onClick={onClose}>Huỷ</button><button className={primary} disabled={!d.code || !d.target_date} onClick={() => void submit()}>Thêm</button></div>
+        <div className="mt-4 flex justify-end gap-2"><button className={btn} onClick={onClose}>Huỷ</button><button className={primary} disabled={!d.name || !d.target_date} onClick={() => void submit()}>Thêm</button></div>
       </div>
     </div>
   );
