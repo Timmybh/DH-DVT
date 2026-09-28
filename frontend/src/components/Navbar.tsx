@@ -25,7 +25,8 @@ export default function Navbar() {
         <div className="flex flex-1 items-center justify-center gap-3">
         <nav className="flex items-center gap-1 overflow-x-auto">
           <NavLink to="/" className={() => linkClass({ isActive: loc.pathname === "/" || loc.pathname.startsWith("/dashboard") })}>Dashboard</NavLink>
-          {can("planning.view") && <NavLink to="/planning" className={linkClass}>Kế hoạch</NavLink>}
+          {can("roadmap.view") && <NavLink to="/planning/roadmap" className={linkClass}>Roadmap</NavLink>}
+          {can("planning.view") && <NavLink to="/planning" className={() => linkClass({ isActive: loc.pathname.startsWith("/planning") && loc.pathname !== "/planning/roadmap" })}>Kế hoạch</NavLink>}
           {ADMIN_TABS.some((t) => can(t.perm)) && <NavLink to="/admin" className={linkClass}>Quản trị</NavLink>}
         </nav>
         <SubTabsMenu />

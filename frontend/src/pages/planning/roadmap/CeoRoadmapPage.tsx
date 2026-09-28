@@ -28,7 +28,7 @@ export default function CeoRoadmapPage({ perm }: { perm: { manage: boolean } }) 
   const [editMode, setEditMode] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [detailId, setDetailId] = useState<number | null>(null);
-  const [layout, setLayout] = useState<Layout>("THREED");
+  const [layout, setLayout] = useState<Layout>("HORIZONTAL");
   const [windowTime, setWindowTime] = useState<WindowTime>("YEAR");
   const thisYearNow = new Date().getFullYear();
   const [customFrom, setCustomFrom] = useState(thisYearNow);
@@ -147,7 +147,7 @@ export default function CeoRoadmapPage({ perm }: { perm: { manage: boolean } }) 
                     <button onClick={() => setAddOpen(true)} className="flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold text-white" style={{ background: "var(--rm-cat-dx)" }} data-testid="rm-add-milestone"><Plus size={14} />Milestone</button>
                   )}
                   <div className="flex gap-1 rounded-xl p-1" style={{ background: "var(--rm-surface-tint)" }}>
-                    {([["HORIZONTAL", "View ngang"], ["THREED", "View 3D"], ["VERTICAL", "View dọc"]] as [Layout, string][]).map(([v, label]) => (
+                    {([["HORIZONTAL", "View ngang"], ["VERTICAL", "View dọc"]] as [Layout, string][]).map(([v, label]) => (
                       <button key={v} onClick={() => setLayout(v)} className="rounded-lg px-3 py-1.5 text-xs font-semibold" style={layout === v ? { background: "var(--rm-cat-dx)", color: "#fff" } : { color: "var(--rm-text-muted)" }} data-testid={`rm-big-layout-${v}`}>{label}</button>
                     ))}
                   </div>
