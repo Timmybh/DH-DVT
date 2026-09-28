@@ -726,6 +726,11 @@ def output_today(db: Session, factories: list[Factory], today: date | None = Non
         win = OUTPUT_WORK_WINDOWS.get(f.code)
         items.append({"code": f.code, "name": f.name, "value": v, "target": t, "actual_pct": round(v / t * 100, 1) if t else None,
                       "pct": _window_pct(win, now) if win else None, "window": f"{win[0]}–{win[1]}" if win else None})
+    if len(items) > 1:
+        tv, tt = sum(i["value"] for i in items), sum(i["target"] for i in items)
+        pcts = [i["pct"] for i in items if i["pct"] is not None]
+        items.append({"code": "TONG", "name": "Tổng công ty", "value": tv, "target": tt, "actual_pct": round(tv / tt * 100, 1) if tt else None,
+                      "pct": round(sum(pcts) / len(pcts), 1) if pcts else None, "window": None})
     return {"title": "Sản lượng hôm nay", "unit": "sp", "date": today.isoformat(), "items": items, "has_data": True, "as_of": latest_day.isoformat() if latest_day else None,
             "mode": "TIME", "note": "Tạm thời chạy theo giờ làm việc: XN1, XN2 07:30–16:30; XN3 07:00–16:00 (0% → 100%)."}
 
@@ -741,6 +746,11 @@ def _ramp_gauge(factories: list[Factory], goals: dict[str, float], title: str, n
         win, goal = OUTPUT_WORK_WINDOWS.get(f.code), goals.get(f.code)
         pct = round(goal * _window_pct(win, now) / 100, 1) if win and goal is not None else None
         items.append({"code": f.code, "name": f.name, "value": pct, "target": goal, "pct": pct, "window": f"{win[0]}–{win[1]}" if win else None})
+    if len(items) > 1:
+        pcts = [i["pct"] for i in items if i["pct"] is not None]
+        goals = [i["target"] for i in items if i["target"] is not None]
+        avg_pct = round(sum(pcts) / len(pcts), 1) if pcts else None
+        items.append({"code": "TONG", "name": "Tổng công ty", "value": avg_pct, "target": round(sum(goals) / len(goals), 1) if goals else None, "pct": avg_pct, "window": None})
     return {"title": title, "unit": "%", "date": now.date().isoformat(), "items": items, "has_data": True, "mode": "HARDCODE"}
 
 

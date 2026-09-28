@@ -81,7 +81,7 @@ function GaugeGroup({ item }: { item: RuntimeItem }) {
   const items: { code: string; name: string; pct: number | null; window?: string | null }[] = p.items ?? [];
   return (
     <Section title={p.title ?? item.indicator.indicator_name}>
-      <div className={`grid gap-1.5 ${items.length > 2 ? "grid-cols-3" : items.length === 2 ? "grid-cols-2" : "grid-cols-1"}`} data-testid={`gauge-group-${item.indicator.indicator_code}`}>
+      <div className={`grid gap-1.5 ${items.length >= 4 ? "grid-cols-4" : items.length === 3 ? "grid-cols-3" : items.length === 2 ? "grid-cols-2" : "grid-cols-1"}`} data-testid={`gauge-group-${item.indicator.indicator_code}`}>
         {items.map((g) => <SpeedGauge key={g.code} label={g.code} pct={g.pct} />)}
       </div>
     </Section>
