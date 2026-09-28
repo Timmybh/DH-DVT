@@ -26,7 +26,7 @@ export default function DashboardCanvas({ runtime, actions }: Props) {
           return (
             <div key={sec.id} className="dash-section" style={style} data-testid={`dash-section-${sec.id}`} data-preset={sec.preset}>
               {sec.spans.map((_s, ci) => (
-                <div key={ci} className="min-w-0 space-y-5">
+                <div key={ci} className="min-w-0 space-y-2.5">
                   {byCol(ci).map((it) => <div key={it.item_id ?? it.indicator.indicator_code} className="min-w-0">{renderIndicator(it, actions)}</div>)}
                 </div>
               ))}
@@ -35,7 +35,7 @@ export default function DashboardCanvas({ runtime, actions }: Props) {
     };
     const zoneOf = (z: string) => sections.filter((s) => (s.zone ?? "MAIN") === z);
     const left = zoneOf("SIDEBAR_LEFT"), right = zoneOf("SIDEBAR_RIGHT");
-    const stack = (list: typeof sections, testid: string) => <div className="min-w-0 space-y-5" data-testid={testid}>{list.map(renderSection)}</div>;
+    const stack = (list: typeof sections, testid: string) => <div className="min-w-0 space-y-2.5" data-testid={testid}>{list.map(renderSection)}</div>;
     const hasItems = (list: typeof sections) => list.some((s) => runtime.items.some((i) => i.section_id === s.id));
     const showL = hasItems(left), showR = hasItems(right);
     return (

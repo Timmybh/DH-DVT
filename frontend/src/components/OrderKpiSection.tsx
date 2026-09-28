@@ -1,6 +1,10 @@
-import { OrderKpi } from "../api/client";
+import { useState } from "react";
+import { OrderKpi, OrderKpiBucket } from "../api/client";
 import { num } from "../lib/format";
 import Section from "./Section";
+
+type Period = "today" | "month" | "ytd";
+const PERIOD_LABEL: Record<Period, string> = { today: "Hôm nay", month: "Tháng hiện tại", ytd: "Lũy kế" };
 
 interface Props {
   data: OrderKpi;
@@ -20,14 +24,28 @@ function Cell({ value, tone, label, onClick }: { value: number; tone: "ok" | "la
 /** Order Progress: PO hoàn thành trong tháng, chia Đúng hạn / Trễ, theo hai mốc (may xong, nhập kho thành phẩm). */
 export default function OrderKpiSection({ data, onDrill }: Props) {
   const [y, m] = data.month.split("-");
+  const [period, setPeriod] = useState<Period>("month");
+  const bucket = period === "today" ? data.today_data : period === "ytd" ? data.ytd_data : { sewing: data.sewing, fg: data.fg };
+  const sewing: OrderKpiBucket = bucket?.sewing ?? { on_time: 0, late: 0, no_due: 0, overdue_open: data.sewing.overdue_open };
+  const fg: OrderKpiBucket = bucket?.fg ?? { on_time: 0, late: 0, no_due: 0, overdue_open: data.fg.overdue_open };
   const rows = [
-    { kind: "SEWING" as const, label: "May xong", sub: "Sewing complete", v: data.sewing },
-    { kind: "FG" as const, label: "Nhập kho thành phẩm", sub: "FG receipt complete", v: data.fg },
+    { kind: "SEWING" as const, label: "May xong", sub: "Sewing complete", v: sewing },
+    { kind: "FG" as const, label: "Nhập kho thành phẩm", sub: "FG receipt complete", v: fg },
   ];
+  const periodText = period === "today" ? `hôm nay ${data.today_date ?? ""}` : period === "ytd" ? `lũy kế năm ${y}` : `trong tháng ${m}/${y}`;
   return (
     <Section
       title="Tiến độ đơn hàng"
-      subtitle={`PO hoàn thành trong tháng ${m}/${y} · đúng hạn = hoàn thành ≤ ngày xuất hàng trên ERP${data.as_of ? ` · dữ liệu đến ${new Date(data.as_of).toLocaleDateString("vi-VN")}` : ""}`}
+      subtitle={`PO hoàn thành ${periodText} · đúng hạn = hoàn thành ≤ ngày xuất hàng trên ERP${data.as_of ? ` · dữ liệu đến ${new Date(data.as_of).toLocaleDateString("vi-VN")}` : ""}`}
+      right={
+        <div className="inline-flex overflow-hidden rounded-lg border border-slate-200 text-xs font-medium" role="group" aria-label="Kỳ xem tiến độ đơn hàng">
+          {(["today", "month", "ytd"] as Period[]).map((k) => (
+            <button key={k} type="button" aria-pressed={period === k} onClick={() => setPeriod(k)} className={`px-2.5 py-1 ${period === k ? "bg-indigo-800 text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}>
+              {PERIOD_LABEL[k]}
+            </button>
+          ))}
+        </div>
+      }
     >
       {!data.has_data ? (
         <p className="text-sm text-slate-500">Chưa có dữ liệu tiến độ từ ERP — bấm "Đồng bộ ngay" ở Quản trị → Sync Log.</p>
@@ -56,7 +74,7 @@ export default function OrderKpiSection({ data, onDrill }: Props) {
               {num(data.fg.overdue_open)} PO quá hạn chưa nhập kho TP
             </button>
             <span>
-              Chưa có hạn giao: {num(data.sewing.no_due)} (may) · {num(data.fg.no_due)} (nhập kho) — không tính đúng/trễ
+              Chưa có hạn giao: {num(sewing.no_due)} (may) · {num(fg.no_due)} (nhập kho) — không tính đúng/trễ
             </span>
             {data.fg_excluded_customers.length > 0 && <span>Không tính nhập kho: {data.fg_excluded_customers.join(", ")}</span>}
           </div>

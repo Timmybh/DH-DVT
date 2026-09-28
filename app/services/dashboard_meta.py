@@ -66,7 +66,7 @@ GROUPS = [
 # code, name, group, display_type, rule, source, scope, drilldown_type, drilldown_target, refresh, config
 INDICATORS = [
     ("REVENUE_EXECUTIVE_SUMMARY", "Doanh thu", "REVENUE", "CUSTOM_COMPONENT", "REVENUE_EXECUTIVE_SUMMARY", "eGMF/PostgreSQL", "BOTH", "DRAWER", "REVENUE_DETAIL",
-     "CACHED", {"periodOptions": ["MONTH", "YTD"], "showCorporateTotal": True, "component": "REVENUE_EXECUTIVE_SUMMARY", "cache_seconds": 30}),
+     "CACHED", {"periodOptions": ["TODAY", "MONTH", "YTD"], "showCorporateTotal": True, "component": "REVENUE_EXECUTIVE_SUMMARY", "cache_seconds": 30}),
     ("ORDER_PROGRESS_MATRIX", "Tiến độ đơn hàng", "ORDER_PROGRESS", "MATRIX", "ORDER_PROGRESS_MATRIX", "eGMF/PostgreSQL", "BOTH", "DRAWER", "ORDER_DETAIL",
      "CACHED", {"cache_seconds": 30}),
     ("QA_COMPARISON", "Chất lượng (QA)", "QA", "BAR_CHART", "QA_COMPARISON", "eGMF/PostgreSQL", "BOTH", "DRAWER", "QA_DETAIL", "CACHED", {"cache_seconds": 30}),

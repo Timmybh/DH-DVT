@@ -31,7 +31,7 @@ export default function SpeedGauge({ label, pct }: Props) {
   const value = pct === null ? 0 : Math.max(0, Math.min(100, pct));
   return (
     <div className="flex w-full flex-col items-center" data-testid={`speed-${label}`}>
-      <svg viewBox="0 0 120 66" className="w-full max-w-[220px]" role="img" aria-label={`${label}: ${pct === null ? "chưa có số liệu" : `${value.toFixed(1)}%`}`}>
+      <svg viewBox="0 0 120 66" className="w-full max-w-[154px]" role="img" aria-label={`${label}: ${pct === null ? "chưa có số liệu" : `${value.toFixed(1)}%`}`}>
         <path d={arc(0, 100)} fill="none" stroke={dark ? "#334155" : TRACK} strokeWidth={W} />
         {value > 0 && <path d={arc(0, value)} fill="none" stroke={FILL} strokeWidth={W} />}
         {/* kim: vẽ hướng về 0% (bên trái) rồi xoay theo giá trị */}

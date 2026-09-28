@@ -1,8 +1,12 @@
+import { useState } from "react";
 import { QaSummary } from "../api/client";
 import { num } from "../lib/format";
 import Section from "./Section";
 import { factoryColor } from "../theme/palette";
 import { useTheme } from "../theme/ThemeContext";
+
+type Period = "today" | "month" | "ytd";
+const PERIOD_LABEL: Record<Period, string> = { today: "Hôm nay", month: "Tháng hiện tại", ytd: "Lũy kế" };
 
 const FACTORY_COLOR = new Proxy({} as Record<string, string>, { get: (_t, code: string) => factoryColor(code) }); // màu theo xí nghiệp từ bảng màu trung tâm
 
@@ -15,7 +19,8 @@ interface Props {
 export default function QaSection({ data, onDrill }: Props) {
   useTheme();
   const [y, m] = data.month.split("-");
-  const cats = data.categories;
+  const [period, setPeriod] = useState<Period>("month");
+  const cats = period === "today" ? (data.categories_today ?? []) : period === "ytd" ? (data.categories_ytd ?? []) : data.categories;
   const codes = cats[0]?.by_factory.map((b) => b.code) ?? [];
   const countOf = (cat: (typeof cats)[number], code: string) => cat.by_factory.find((b) => b.code === code)?.count ?? 0;
   const colMax = (cat: (typeof cats)[number]) => Math.max(1, ...cat.by_factory.map((b) => b.count ?? 0));
@@ -24,7 +29,16 @@ export default function QaSection({ data, onDrill }: Props) {
   return (
     <Section
       title="Chất lượng (QA)"
-      subtitle={`Tổng số lỗi (Total Defect Count) tháng ${m}/${y}${data.latest_day ? ` · dữ liệu đến ${new Date(data.latest_day).toLocaleDateString("vi-VN")}` : ""} · bấm tiêu đề cột để xem theo ngày`}
+      subtitle={`Tổng số lỗi (Total Defect Count) — ${period === "today" ? `hôm nay ${data.today_date ?? ""}` : period === "ytd" ? `lũy kế năm ${y}` : `tháng ${m}/${y}`}${data.latest_day ? ` · dữ liệu đến ${new Date(data.latest_day).toLocaleDateString("vi-VN")}` : ""} · bấm tiêu đề cột để xem theo ngày`}
+      right={
+        <div className="inline-flex overflow-hidden rounded-lg border border-slate-200 text-xs font-medium" role="group" aria-label="Kỳ xem QA">
+          {(["today", "month", "ytd"] as Period[]).map((k) => (
+            <button key={k} type="button" aria-pressed={period === k} onClick={() => setPeriod(k)} className={`px-2.5 py-1 ${period === k ? "bg-indigo-800 text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}>
+              {PERIOD_LABEL[k]}
+            </button>
+          ))}
+        </div>
+      }
     >
       {!data.has_data ? (
         <p className="text-sm text-slate-500">Chưa có dữ liệu QA từ ERP — bấm "Đồng bộ ngay" ở Quản trị → Sync Log.</p>

@@ -71,8 +71,8 @@ export default function Dashboard() {
   const tabs = [{ code: "TONG", name: "Tổng công ty" }, ...(meta?.factories ?? [])];
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-end justify-between gap-3">
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-end justify-between gap-1.5">
         <div>
           <h1 className="text-lg font-bold text-slate-900">Dashboard điều hành — {runtime?.header.scope_name ?? "..."}</h1>
         </div>

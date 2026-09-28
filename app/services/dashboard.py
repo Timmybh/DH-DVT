@@ -167,11 +167,91 @@ def revenue_summary(
     return {"rows": rows, "has_demo": any(r.source == "DEMO" for r in (declared if is_total else used + declared))}
 
 
+def revenue_today(db: Session, all_factories: list[Factory], selected: list[Factory], is_total: bool, today: date) -> dict:
+    """Doanh thu "hôm nay" = SUM(sản lượng đóng gói hôm nay × đơn giá mã hàng), KHÁC nguồn với tháng/lũy kế (doanh thu khai
+    báo ERP). po_pack_daily không có mã hàng/XN trực tiếp — tra qua PlanningVersionRow của phiên bản kế hoạch ISSUED mới
+    nhất (cùng pattern actual_service.py dùng cho "current version"), rồi tra đơn giá ACTIVE hiệu lực ≤ hôm nay trong
+    style_prices. Theo quyết định business (2026-09-28): nếu có BẤT KỲ PO nào hôm nay không tra được mã hàng/XN/đơn giá
+    thì KHÔNG hiển thị số (blocked=True kèm lý do), tránh doanh thu hôm nay bị thiếu sót mà không ai biết."""
+    from app.models.planning import PlanningVersion, PlanningVersionRow
+    from app.models.resources import StylePrice
+
+    def blocked(reason: str) -> dict:
+        return {"rows": [], "has_demo": False, "blocked": True, "blocked_reason": reason}
+
+    packs = db.query(PoPackDaily.po, PoPackDaily.qty).filter(PoPackDaily.day == today).all()
+    if not packs:
+        return {"rows": [], "has_demo": False, "blocked": False, "blocked_reason": ""}
+
+    ver = db.query(PlanningVersion).filter(PlanningVersion.status == "ISSUED").order_by(PlanningVersion.id.desc()).first()
+    if ver is None:
+        return blocked("Chưa có phiên bản kế hoạch ISSUED nào để tra mã hàng/xí nghiệp theo PO — chưa thể tính doanh thu hôm nay.")
+
+    po_qty: dict[str, int] = {}
+    for po, qty in packs:
+        po_qty[po] = po_qty.get(po, 0) + (qty or 0)
+
+    pvr_rows = (
+        db.query(PlanningVersionRow.po_number, PlanningVersionRow.style_cc, PlanningVersionRow.factory_code)
+        .filter(PlanningVersionRow.version_id == ver.id, PlanningVersionRow.po_number.in_(list(po_qty)))
+        .all()
+    )
+    lookup: dict[str, tuple[str, str]] = {}
+    for po_number, style_cc, factory_code in pvr_rows:
+        if po_number not in lookup and style_cc and factory_code:
+            lookup[po_number] = (style_cc, factory_code)
+
+    missing_pos = [po for po in po_qty if po not in lookup]
+    if missing_pos:
+        missing_qty = sum(po_qty[po] for po in missing_pos)
+        return blocked(f"{len(missing_pos)} PO ({missing_qty:,.0f} sp) đóng gói hôm nay chưa xác định được mã hàng/xí nghiệp trong kế hoạch hiện hành — chưa thể tính doanh thu hôm nay.")
+
+    style_ccs = {s for s, _ in lookup.values()}
+    price_rows = (
+        db.query(StylePrice)
+        .filter(StylePrice.style_cc.in_(style_ccs), StylePrice.status == "ACTIVE", StylePrice.effective_from <= today)
+        .order_by(StylePrice.effective_from.desc())
+        .all()
+    )
+    price_by_style: dict[str, float] = {}
+    for p in price_rows:
+        price_by_style.setdefault(p.style_cc, p.unit_price)  # đã order desc effective_from -> dòng gặp đầu tiên là giá hiệu lực gần nhất
+    missing_price = style_ccs - set(price_by_style)
+    if missing_price:
+        return blocked(f"{len(missing_price)} mã hàng chưa có đơn giá hiệu lực (style_prices, ACTIVE, effective_from ≤ hôm nay) — chưa thể tính doanh thu hôm nay: {', '.join(sorted(missing_price)[:5])}{'…' if len(missing_price) > 5 else ''}.")
+
+    revenue_by_factory_code: dict[str, float] = {}
+    for po, qty in po_qty.items():
+        style_cc, factory_code = lookup[po]
+        revenue_by_factory_code[factory_code] = revenue_by_factory_code.get(factory_code, 0.0) + qty * price_by_style[style_cc]
+
+    def row(f: Factory) -> dict:
+        actual = revenue_by_factory_code.get(f.code)
+        return {"code": f.code, "label": f.name, "kind": "FACTORY", "declared": actual is not None, "plan": None, "actual": actual, "pct": None, "selected": (not is_total) and f.id == selected[0].id}
+
+    rows = [row(f) for f in (all_factories if is_total else selected)]
+    total_actual = _sum(revenue_by_factory_code.get(f.code) for f in all_factories)
+    rows.append({"code": "TONG", "label": "Tổng công ty", "kind": "TOTAL", "declared": total_actual is not None, "plan": None, "actual": total_actual, "pct": None, "selected": False, "missing": []})
+    return {"rows": rows, "has_demo": False, "blocked": False, "blocked_reason": ""}
+
+
 def current_batch(db: Session) -> PlanImportBatch | None:
     return db.query(PlanImportBatch).filter(PlanImportBatch.is_current.is_(True)).order_by(PlanImportBatch.id.desc()).first()
 
 
-def progress_overview(db: Session, factories: list[Factory], is_total: bool) -> dict:
+def _sewn_shipped_in_range(db: Session, factories: list[Factory], first: date, last: date) -> tuple[int, int]:
+    """May xong/Đã xuất TRONG KHOẢNG NGÀY — dùng lại đúng _po_units() mà order_kpi() dùng cho "Tiến độ đơn hàng",
+    khác với pipeline.sewn/shipped mặc định (lũy kế toàn batch, từ batch.summary)."""
+    sewn = sum(1 for u in _po_units(db, factories, "SEWN") if u["done_date"] and first <= u["done_date"] <= last)
+    shipped = sum(1 for u in _po_units(db, factories, "FG") if u["done_date"] and first <= u["done_date"] <= last)
+    return sewn, shipped
+
+
+def progress_overview(db: Session, factories: list[Factory], is_total: bool, year: int | None = None, month: int | None = None, today: date | None = None, period: str = "ytd") -> dict:
+    """period="ytd" (mặc định, như cũ): May xong/Đã xuất = lũy kế TOÀN BATCH kế hoạch hiện hành (batch.summary, không đổi
+    hành vi cũ). "today"/"month": 2 số này đổi sang đếm PO hoàn thành trong đúng hôm nay / tháng đang chọn (cùng nguồn
+    PoProgress.sewn_done_date/fg_done_date mà "Tiến độ đơn hàng" dùng). CHƯA LÊN KH/ĐÃ XẾP KH/rủi ro giao hàng luôn là
+    snapshot trạng thái hiện tại của batch — KHÔNG đổi theo kỳ (đã chốt với user)."""
     batch = current_batch(db)
     if batch is None:
         return {"available": False}
@@ -225,6 +305,15 @@ def progress_overview(db: Session, factories: list[Factory], is_total: bool) -> 
 
     total_po = planned + unplanned
     s = batch.summary or {}
+    if is_total and year is not None and month is not None and period in ("today", "month"):
+        if period == "today":
+            first = last = today or today_local()
+        else:
+            first, last = month_bounds(year, month)
+        sewn_count, shipped_count = _sewn_shipped_in_range(db, factories, first, last)
+    else:
+        sewn_count = s.get("sewn_count") if is_total else None
+        shipped_count = s.get("shipped_count") if is_total else None
     return {
         "available": True,
         "batch": {"filename": batch.filename, "imported_at": batch.imported_at.isoformat(), "labor_as_of": s.get("labor_as_of", "")},
@@ -233,8 +322,8 @@ def progress_overview(db: Session, factories: list[Factory], is_total: bool) -> 
             "new_known": counts["UNPLANNED"]["KNOWN"],
             "new_unassigned": counts["UNPLANNED"]["UNASSIGNED"],
             "planned": planned,
-            "sewn": s.get("sewn_count") if is_total else None,
-            "shipped": s.get("shipped_count") if is_total else None,
+            "sewn": sewn_count,
+            "shipped": shipped_count,
         },
         "total_po": total_po,
         "planned_qty": planned_qty,
@@ -243,6 +332,46 @@ def progress_overview(db: Session, factories: list[Factory], is_total: bool) -> 
         "late_pct": (risks["LATE"] / total_po * 100.0) if total_po else 0.0,
         "mapping_warnings": mapping_warnings,
         "by_factory": per_factory,
+    }
+
+
+def hr_average(db: Session, factories: list[Factory], is_total: bool, first: date, last: date) -> dict | None:
+    """Nhân sự theo kỳ (Tháng này/Lũy kế) = TRUNG BÌNH mỗi ngày có ảnh chụp trong khoảng [first, last] — KHÔNG cộng dồn
+    (cộng dồn lao động có mặt qua nhiều ngày vô nghĩa). Nguồn: labor_snapshot (1 ảnh chụp/ngày, như dashboard_summary)."""
+    from app.models.labor_snapshot import LaborSnapshot
+
+    snaps = db.query(LaborSnapshot).filter(LaborSnapshot.as_of_date >= first, LaborSnapshot.as_of_date <= last).order_by(LaborSnapshot.as_of_date).all()
+    if not snaps:
+        return None
+    n = len(snaps)
+    company_present = sum(s.present for s in snaps) / n
+    company_total = sum(s.total for s in snaps) / n
+    company_pct = sum((s.present / s.total * 100) if s.total else 0 for s in snaps) / n
+    acc: dict[str, dict] = {}
+    for s in snaps:
+        for code, v in (s.by_factory or {}).items():
+            a = acc.setdefault(code, {"present": 0.0, "total": 0.0, "pct": 0.0, "n": 0})
+            a["present"] += v.get("present", 0)
+            a["total"] += v.get("total", 0)
+            a["pct"] += (v["present"] / v["total"] * 100) if v.get("total") else 0
+            a["n"] += 1
+    by_factory = []
+    for f in factories:
+        a = acc.get(f.code)
+        by_factory.append({
+            "code": f.code, "name": f.name,
+            "total": round(a["present"] / a["n"]) if a and a["n"] else 0,
+            "roster": round(a["total"] / a["n"]) if a and a["n"] else None,
+            "attendance_pct": round(a["pct"] / a["n"], 1) if a and a["n"] else None,
+            "teams": None, "delta": None,
+        })
+    return {
+        "available": True, "source": "SNAPSHOT_AVG", "days": n,
+        "total": round(company_present) if not is_total else round(company_present),
+        "company_total": round(company_present), "company_roster": round(company_total), "company_attendance_pct": round(company_pct, 1),
+        "company_teams": None, "company_delta": None,
+        "as_of_text": f"Trung bình {n} ngày có dữ liệu, {first.strftime('%d/%m')}–{last.strftime('%d/%m/%Y')}",
+        "as_of": last.isoformat(), "trend": [], "by_factory": by_factory, "teams": None,
     }
 
 
@@ -472,8 +601,14 @@ def _is_overdue_open(u: dict, today: date) -> bool:
     return u.get("last_seen") is not None and (today - u["last_seen"]).days <= ACTIVE_WINDOW_DAYS
 
 
-def order_kpi(db: Session, factories: list[Factory], year: int, month: int, today: date) -> dict:
-    first, last = month_bounds(year, month)
+def order_kpi(db: Session, factories: list[Factory], year: int, month: int, today: date, period: str = "month") -> dict:
+    """period="month" (mặc định, như cũ): PO hoàn thành trong tháng đang chọn. "today": đúng hôm nay. "ytd": lũy kế từ đầu năm đến hết tháng đang chọn."""
+    if period == "today":
+        first = last = today
+    elif period == "ytd":
+        first, last = date(year, 1, 1), month_bounds(year, month)[1]
+    else:
+        first, last = month_bounds(year, month)
     out: dict = {"month": f"{year}-{month:02d}", "has_data": db.query(PoProgress.id).first() is not None}
     for kind, key in (("SEWN", "sewing"), ("FG", "fg")):
         units = _po_units(db, factories, kind)
@@ -517,8 +652,15 @@ QA_LABELS = [("DAU_CHUYEN", "Đầu chuyền"), ("INLINE", "Inline"), ("ENDLINE"
 QA_ACTIVE = ("INLINE", "ENDLINE", "PREFINAL")
 
 
-def qa_summary(db: Session, all_factories: list[Factory], selected: list[Factory], is_total: bool, year: int, month: int) -> dict:
-    first, last = month_bounds(year, month)
+def qa_summary(db: Session, all_factories: list[Factory], selected: list[Factory], is_total: bool, year: int, month: int, period: str = "month", today: date | None = None) -> dict:
+    """period="month" (mặc định, như cũ): trong tháng đang chọn. "today": đúng hôm nay. "ytd": lũy kế từ đầu năm đến hết tháng đang chọn."""
+    if period == "today":
+        today = today or today_local()
+        first = last = today
+    elif period == "ytd":
+        first, last = date(year, 1, 1), month_bounds(year, month)[1]
+    else:
+        first, last = month_bounds(year, month)
     rows = (
         db.query(QaDefectDaily.category, QaDefectDaily.factory_id, func.sum(QaDefectDaily.defect_count))
         .filter(QaDefectDaily.day >= first, QaDefectDaily.day <= last)
