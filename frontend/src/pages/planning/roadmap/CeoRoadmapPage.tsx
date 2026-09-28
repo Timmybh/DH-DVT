@@ -68,8 +68,8 @@ export default function CeoRoadmapPage({ perm }: { perm: { manage: boolean } }) 
   const shown = paginating ? filtered.slice(curPage * pageSize, curPage * pageSize + pageSize) : filtered;
 
   const overall = view && view.summary.length > 0 ? Math.round(view.summary.reduce((s, x) => s + (x.avg_progress_percent ?? 0), 0) / view.summary.length) : null;
-  const lastMilestone = filtered.length > 0 ? [...filtered].sort((a, b) => a.target_date.localeCompare(b.target_date))[filtered.length - 1] : null;
-  const endDate = lastMilestone ? lastMilestone.target_date : null;
+  // Card "Kết thúc roadmap" luôn neo đúng NGÀY CUỐI của Window Time đang xem (không phải milestone cuối) — Toàn trình/Phân trang thay đổi Window Time thì mốc này đổi theo.
+  const endDate = view ? `${toYear}-${String(rangeEnd.getMonth() + 1).padStart(2, "0")}-${String(rangeEnd.getDate()).padStart(2, "0")}` : null;
   const endLabel = "Mục tiêu tổng";
 
   return (
@@ -156,7 +156,7 @@ export default function CeoRoadmapPage({ perm }: { perm: { manage: boolean } }) 
 
               <div className="flex flex-1 flex-col">
                 {layout === "HORIZONTAL" && <RoadmapTimeline milestones={shown} endDate={endDate} endLabel={endLabel} endProgress={overall} rangeStart={rangeStart} rangeEnd={rangeEnd} dimFn={isDim} onOpen={setDetailId} />}
-                {layout === "THREED" && <Roadmap3DView milestones={shown} onOpen={setDetailId} endLabel={endLabel} />}
+                {layout === "THREED" && <Roadmap3DView milestones={shown} onOpen={setDetailId} endLabel={endLabel} endDate={endDate} />}
                 {layout === "VERTICAL" && <RoadmapListView milestones={filtered} onOpen={setDetailId} endLabel={endLabel} endDate={endDate} endProgress={overall} />}
               </div>
 

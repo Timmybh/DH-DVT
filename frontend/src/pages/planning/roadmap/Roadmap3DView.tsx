@@ -6,7 +6,7 @@ const dateVi = (iso: string) => { const d = new Date(iso); return `${String(d.ge
 
 /** WF-01B — "cảm giác con đường chiến lược": minh hoạ SVG núi/đường (không raster hoá UI), milestone là
  * component HTML thật đặt theo % dọc đường (path tĩnh), không phải CSS 3D transform như bản kỹ thuật trước. */
-export default function Roadmap3DView({ milestones, onOpen, endLabel }: { milestones: MilestoneCardData[]; onOpen: (id: number) => void; endLabel: string }) {
+export default function Roadmap3DView({ milestones, onOpen, endLabel, endDate }: { milestones: MilestoneCardData[]; onOpen: (id: number) => void; endLabel: string; endDate?: string | null }) {
   const items = milestones.slice(0, 6);
   const n = items.length + 1; // +1 cho điểm kết thúc
   // toạ độ % dọc theo "đường" từ góc dưới-trái lên góc trên-phải, so le trái/phải quanh path
@@ -48,7 +48,8 @@ export default function Roadmap3DView({ milestones, onOpen, endLabel }: { milest
       {(() => { const { x, y } = pointAt(items.length, n); return (
         <div className="absolute w-[180px] -translate-x-1/2 -translate-y-full rounded-[var(--rm-radius-md)] p-3 text-white shadow-xl" style={{ left: `${x}%`, top: `${y}%`, background: "linear-gradient(135deg, var(--rm-status-ontrack), #0d9488)" }}>
           <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-white/85"><Flag size={13} />Kết thúc roadmap</div>
-          <div className="mt-1 text-xs font-bold">{endLabel}</div>
+          {endDate && <div className="text-xs font-bold">{dateVi(endDate)}</div>}
+          <div className="mt-1 text-[11px] text-white/85">{endLabel}</div>
           <span className="absolute -bottom-2 left-1/2 h-4 w-4 -translate-x-1/2 rounded-full border-2 border-white" style={{ background: "var(--rm-status-ontrack)" }} />
         </div>
       ); })()}

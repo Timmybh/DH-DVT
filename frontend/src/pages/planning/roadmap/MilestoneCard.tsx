@@ -17,7 +17,7 @@ export default function MilestoneCard({ m, onClick, dim, compact }: { m: Milesto
   return (
     <button
       onClick={onClick}
-      className="group block w-full rounded-[var(--rm-radius-md)] border text-left transition hover:-translate-y-0.5"
+      className="group flex h-full w-full flex-col justify-between overflow-hidden rounded-[var(--rm-radius-md)] border text-left transition hover:-translate-y-0.5"
       style={{ background: "var(--rm-surface)", borderColor: "var(--rm-border)", boxShadow: "var(--rm-shadow)", opacity: dim ? 0.35 : 1, padding: compact ? 10 : 14 }}
       data-testid={`rm-milestone-${m.id}`}
     >
