@@ -5,7 +5,6 @@ import { useTheme } from "../../../theme/ThemeContext";
 import { AddMilestoneModal, DetailModal, type Category, type MilestoneCard as MilestoneCardT, type Msg } from "../CeoRoadmap";
 import CategoryFilter from "./CategoryFilter";
 import DisplayOptions from "./DisplayOptions";
-import MilestoneCard from "./MilestoneCard";
 import Roadmap3DView from "./Roadmap3DView";
 import RoadmapListView from "./RoadmapListView";
 import RoadmapTimeline from "./RoadmapTimeline";
@@ -101,66 +100,55 @@ export default function CeoRoadmapPage({ perm }: { perm: { manage: boolean } }) 
         {!view ? (
           <p className="rounded-[var(--rm-radius-lg)] border border-dashed p-10 text-center text-sm" style={{ borderColor: "var(--rm-border)", color: "var(--rm-text-muted)" }}>Chưa có version nào — tạo Scenario/Version ở "Mô phỏng kỹ thuật" trước.</p>
         ) : (
-          <>
-            {/* timeline tổng quan */}
+          <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1fr_340px]">
+            {/* 1 khu vực view duy nhất — đổi nội dung theo layout đang chọn, không hiện song song 2 kiểu view */}
             <div className="rounded-[var(--rm-radius-lg)] border p-4" style={{ background: "var(--rm-surface)", borderColor: "var(--rm-border)", boxShadow: "var(--rm-shadow)" }}>
-              <div className="mb-1 flex items-center gap-2">
-                <span className="flex h-8 w-8 items-center justify-center rounded-full" style={{ background: "var(--rm-cat-dx-bg)", color: "var(--rm-cat-dx)" }}><Map size={15} /></span>
-                <div>
-                  <div className="text-sm font-bold" style={{ color: "var(--rm-text)" }}>Lộ trình mục tiêu chiến lược {thisYear}</div>
-                  <div className="text-[11px]" style={{ color: "var(--rm-text-muted)" }}>Các cột mốc quan trọng theo thời gian</div>
-                </div>
-                {editMode && perm.manage && (
-                  <button onClick={() => setAddOpen(true)} className="ml-auto flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold text-white" style={{ background: "var(--rm-cat-dx)" }} data-testid="rm-add-milestone"><Plus size={14} />Milestone</button>
-                )}
-              </div>
-              <RoadmapTimeline milestones={filtered} endDate={endDate} endLabel={endLabel} endProgress={overall} year={thisYear} dimFn={isDim} onOpen={setDetailId} />
-            </div>
-
-            {/* view lớn + panel phụ */}
-            <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1fr_360px]">
-              <div className="rounded-[var(--rm-radius-lg)] border p-4" style={{ background: "var(--rm-surface)", borderColor: "var(--rm-border)", boxShadow: "var(--rm-shadow)" }}>
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-full" style={{ background: "var(--rm-cat-dx-bg)", color: "var(--rm-cat-dx)" }}><Map size={15} /></span>
                   <div>
-                    <div className="text-sm font-bold" style={{ color: "var(--rm-text)" }}>View {layout === "HORIZONTAL" ? "ngang" : layout === "THREED" ? "3D" : "dọc"}</div>
-                    <div className="text-[11px]" style={{ color: "var(--rm-text-muted)" }}>Mô phỏng lộ trình theo thời gian</div>
+                    <div className="text-sm font-bold" style={{ color: "var(--rm-text)" }}>Lộ trình mục tiêu chiến lược {thisYear}</div>
+                    <div className="text-[11px]" style={{ color: "var(--rm-text-muted)" }}>Các cột mốc quan trọng theo thời gian</div>
                   </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {editMode && perm.manage && (
+                    <button onClick={() => setAddOpen(true)} className="flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold text-white" style={{ background: "var(--rm-cat-dx)" }} data-testid="rm-add-milestone"><Plus size={14} />Milestone</button>
+                  )}
                   <div className="flex gap-1 rounded-xl p-1" style={{ background: "var(--rm-surface-tint)" }}>
                     {([["HORIZONTAL", "View ngang"], ["THREED", "View 3D"], ["VERTICAL", "View dọc"]] as [Layout, string][]).map(([v, label]) => (
                       <button key={v} onClick={() => setLayout(v)} className="rounded-lg px-3 py-1.5 text-xs font-semibold" style={layout === v ? { background: "var(--rm-cat-dx)", color: "#fff" } : { color: "var(--rm-text-muted)" }} data-testid={`rm-big-layout-${v}`}>{label}</button>
                     ))}
                   </div>
                 </div>
-                {layout === "THREED" ? (
-                  <Roadmap3DView milestones={shown} onOpen={setDetailId} endLabel={endLabel} />
-                ) : layout === "VERTICAL" ? (
-                  <RoadmapListView milestones={filtered} onOpen={setDetailId} endLabel={endLabel} endDate={endDate} endProgress={overall} />
-                ) : (
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-                    {shown.map((m) => <MilestoneCard key={m.id} m={m} onClick={() => setDetailId(m.id)} dim={isDim(m.category_name)} />)}
-                  </div>
-                )}
-                {paginating && pageCount > 1 && (
-                  <div className="mt-3 flex items-center justify-center gap-3 text-xs" style={{ color: "var(--rm-text-muted)" }}>
-                    <button className="rounded-lg border px-2 py-1" style={{ borderColor: "var(--rm-border)" }} disabled={curPage === 0} onClick={() => setPage(curPage - 1)}>‹</button>
-                    <span>Trang {curPage + 1} / {pageCount}</span>
-                    <button className="rounded-lg border px-2 py-1" style={{ borderColor: "var(--rm-border)" }} disabled={curPage >= pageCount - 1} onClick={() => setPage(curPage + 1)}>›</button>
-                  </div>
-                )}
               </div>
 
-              <div className="space-y-5">
+              {layout === "HORIZONTAL" && <RoadmapTimeline milestones={shown} endDate={endDate} endLabel={endLabel} endProgress={overall} year={thisYear} dimFn={isDim} onOpen={setDetailId} />}
+              {layout === "THREED" && <Roadmap3DView milestones={shown} onOpen={setDetailId} endLabel={endLabel} />}
+              {layout === "VERTICAL" && <RoadmapListView milestones={filtered} onOpen={setDetailId} endLabel={endLabel} endDate={endDate} endProgress={overall} />}
+
+              {paginating && pageCount > 1 && (
+                <div className="mt-3 flex items-center justify-center gap-3 text-xs" style={{ color: "var(--rm-text-muted)" }}>
+                  <button className="rounded-lg border px-2 py-1" style={{ borderColor: "var(--rm-border)" }} disabled={curPage === 0} onClick={() => setPage(curPage - 1)}>‹</button>
+                  <span>Trang {curPage + 1} / {pageCount}</span>
+                  <button className="rounded-lg border px-2 py-1" style={{ borderColor: "var(--rm-border)" }} disabled={curPage >= pageCount - 1} onClick={() => setPage(curPage + 1)}>›</button>
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-5">
+              {layout !== "VERTICAL" && (
                 <div className="rounded-[var(--rm-radius-lg)] border p-4" style={{ background: "var(--rm-surface)", borderColor: "var(--rm-border)", boxShadow: "var(--rm-shadow)" }}>
                   <div className="mb-2 text-sm font-bold" style={{ color: "var(--rm-text)" }}>View đọc (danh sách theo thời gian)</div>
                   <RoadmapListView milestones={filtered} onOpen={setDetailId} endLabel={endLabel} endDate={endDate} endProgress={overall} />
                 </div>
-                <DisplayOptions windowTime={windowTime} setWindowTime={setWindowTime} pageMode={pageMode} setPageMode={setPageMode} layout={layout} setLayout={setLayout} thisYear={thisYear} />
-                <a href="/planning/roadmap/setup" className="flex items-center justify-between rounded-[var(--rm-radius-lg)] border p-4 text-sm font-bold" style={{ background: "var(--rm-surface)", borderColor: "var(--rm-border)", color: "var(--rm-text)" }} data-testid="rm-goto-setup">
-                  <span className="flex items-center gap-2"><Settings size={16} />Thiết lập &amp; dữ liệu</span><span style={{ color: "var(--rm-cat-dx)" }}>Mở →</span>
-                </a>
-              </div>
+              )}
+              <DisplayOptions windowTime={windowTime} setWindowTime={setWindowTime} pageMode={pageMode} setPageMode={setPageMode} layout={layout} setLayout={setLayout} thisYear={thisYear} />
+              <a href="/planning/roadmap/setup" className="flex items-center justify-between rounded-[var(--rm-radius-lg)] border p-4 text-sm font-bold" style={{ background: "var(--rm-surface)", borderColor: "var(--rm-border)", color: "var(--rm-text)" }} data-testid="rm-goto-setup">
+                <span className="flex items-center gap-2"><Settings size={16} />Thiết lập &amp; dữ liệu</span><span style={{ color: "var(--rm-cat-dx)" }}>Mở →</span>
+              </a>
             </div>
-          </>
+          </div>
         )}
       </div>
 
