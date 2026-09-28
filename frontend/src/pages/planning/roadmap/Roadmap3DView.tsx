@@ -18,7 +18,7 @@ export default function Roadmap3DView({ milestones, onOpen, endLabel }: { milest
   };
 
   return (
-    <div className="relative overflow-hidden rounded-[var(--rm-radius-lg)] border" style={{ borderColor: "var(--rm-border)", height: 460, background: "linear-gradient(180deg,#bfe3ff 0%,#e8f4ff 38%,#eef7ee 60%,#e6f2e1 100%)" }}>
+    <div className="relative flex-1 overflow-hidden rounded-[var(--rm-radius-lg)] border" style={{ borderColor: "var(--rm-border)", minHeight: 420, background: "linear-gradient(180deg,#bfe3ff 0%,#e8f4ff 38%,#eef7ee 60%,#e6f2e1 100%)" }}>
       <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 h-full w-full" aria-hidden="true">
         <polygon points="0,55 15,30 28,48 40,22 55,46 68,28 80,44 100,34 100,60 0,60" fill="#9fb8cf" opacity="0.55" />
         <polygon points="0,62 20,42 35,58 50,38 66,58 82,40 100,52 100,68 0,68" fill="#7f9db8" opacity="0.6" />

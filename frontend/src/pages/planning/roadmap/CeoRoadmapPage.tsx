@@ -73,8 +73,8 @@ export default function CeoRoadmapPage({ perm }: { perm: { manage: boolean } }) 
   const endLabel = "Mục tiêu tổng";
 
   return (
-    <div className="roadmap-shell -mx-4 -mt-4 min-h-screen px-4 py-5 sm:-mx-6 sm:px-6" data-testid="rm-page">
-      <div className="mx-auto max-w-[1520px] space-y-5">
+    <div className="roadmap-shell -mx-4 -mt-4 flex min-h-screen flex-col px-4 py-5 sm:-mx-6 sm:px-6" data-testid="rm-page">
+      <div className="flex w-full flex-1 flex-col gap-5">
         {/* header */}
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--rm-radius-lg)] border p-4" style={{ background: "var(--rm-surface)", borderColor: "var(--rm-border)", boxShadow: "var(--rm-shadow)" }}>
           <div className="flex items-center gap-3">
@@ -90,11 +90,13 @@ export default function CeoRoadmapPage({ perm }: { perm: { manage: boolean } }) 
               {scenarios.flatMap((s) => (s.versions ?? []).map((v) => <option key={v.id} value={v.id}>{s.name} · v{v.version_no} ({v.status})</option>))}
             </select>
 
-            <div className="flex items-center gap-1 rounded-xl border p-1" style={{ borderColor: "var(--rm-border)" }} title="Khoảng thời gian">
-              <CalendarDays size={13} className="ml-1" style={{ color: "var(--rm-text-muted)" }} />
-              {([["YEAR", "Năm nay"], ["NEXT_YEAR", "Năm tới"], ["CUSTOM", "Tùy chỉnh năm"]] as [WindowTime, string][]).map(([v, label]) => (
-                <button key={v} onClick={() => setWindowTime(v)} className="rounded-lg px-2 py-1 text-[11px] font-semibold" style={windowTime === v ? { background: "var(--rm-text)", color: "#fff" } : { color: "var(--rm-text-muted)" }} data-testid={`rm-window-${v.toLowerCase()}`}>{label}</button>
-              ))}
+            <div className="flex items-center gap-1 rounded-xl border px-2" style={{ borderColor: "var(--rm-border)" }}>
+              <CalendarDays size={13} style={{ color: "var(--rm-text-muted)" }} />
+              <select value={windowTime} onChange={(e) => setWindowTime(e.target.value as WindowTime)} className="border-0 bg-transparent py-2 text-xs font-semibold outline-none" style={{ color: "var(--rm-text)" }} data-testid="rm-window-select" aria-label="Khoảng thời gian">
+                <option value="YEAR">Năm nay</option>
+                <option value="NEXT_YEAR">Năm tới</option>
+                <option value="CUSTOM">Tùy chỉnh năm</option>
+              </select>
             </div>
             {windowTime === "CUSTOM" && (
               <div className="flex items-center gap-1 rounded-xl border px-2 py-1" style={{ borderColor: "var(--rm-border)" }} data-testid="rm-custom-year-range">
@@ -103,11 +105,12 @@ export default function CeoRoadmapPage({ perm }: { perm: { manage: boolean } }) 
                 <input type="number" value={customTo} onChange={(e) => setCustomTo(Number(e.target.value) || thisYear)} className="w-16 rounded-lg border px-1.5 py-1 text-[11px]" style={{ borderColor: "var(--rm-border)", color: "var(--rm-text)" }} aria-label="Đến năm" />
               </div>
             )}
-            <div className="flex items-center gap-1 rounded-xl border p-1" style={{ borderColor: "var(--rm-border)" }} title="Loại trình bày trang">
-              <Layers size={13} className="ml-1" style={{ color: "var(--rm-text-muted)" }} />
-              {([["FULL", "Toàn trình"], ["PAGED", "Phân trang"]] as [PageMode, string][]).map(([v, label]) => (
-                <button key={v} onClick={() => setPageMode(v)} className="rounded-lg px-2 py-1 text-[11px] font-semibold" style={pageMode === v ? { background: "var(--rm-text)", color: "#fff" } : { color: "var(--rm-text-muted)" }} data-testid={`rm-page-${v.toLowerCase()}`}>{label}</button>
-              ))}
+            <div className="flex items-center gap-1 rounded-xl border px-2" style={{ borderColor: "var(--rm-border)" }}>
+              <Layers size={13} style={{ color: "var(--rm-text-muted)" }} />
+              <select value={pageMode} onChange={(e) => setPageMode(e.target.value as PageMode)} className="border-0 bg-transparent py-2 text-xs font-semibold outline-none" style={{ color: "var(--rm-text)" }} data-testid="rm-page-select" aria-label="Loại trình bày trang">
+                <option value="FULL">Toàn trình</option>
+                <option value="PAGED">Phân trang</option>
+              </select>
             </div>
 
             <button onClick={toggle} className="flex h-9 w-9 items-center justify-center rounded-xl border" style={{ borderColor: "var(--rm-border)", color: "var(--rm-text)" }} aria-label="Đổi chế độ sáng/tối">{mode === "dark" ? <Sun size={16} /> : <Moon size={16} />}</button>
@@ -129,8 +132,8 @@ export default function CeoRoadmapPage({ perm }: { perm: { manage: boolean } }) 
           <p className="rounded-[var(--rm-radius-lg)] border border-dashed p-10 text-center text-sm" style={{ borderColor: "var(--rm-border)", color: "var(--rm-text-muted)" }}>Chưa có version nào — tạo Scenario/Version ở "Mô phỏng kỹ thuật" trước.</p>
         ) : (
           <>
-            {/* 1 khu vực view duy nhất — đổi nội dung theo layout đang chọn, không hiện song song 2 kiểu view */}
-            <div className="rounded-[var(--rm-radius-lg)] border p-4" style={{ background: "var(--rm-surface)", borderColor: "var(--rm-border)", boxShadow: "var(--rm-shadow)" }}>
+            {/* 1 khu vực view duy nhất — đổi nội dung theo layout đang chọn, cao hết phần còn lại của màn hình */}
+            <div className="flex flex-1 flex-col rounded-[var(--rm-radius-lg)] border p-4" style={{ background: "var(--rm-surface)", borderColor: "var(--rm-border)", boxShadow: "var(--rm-shadow)" }}>
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <span className="flex h-8 w-8 items-center justify-center rounded-full" style={{ background: "var(--rm-cat-dx-bg)", color: "var(--rm-cat-dx)" }}><Map size={15} /></span>
@@ -151,9 +154,11 @@ export default function CeoRoadmapPage({ perm }: { perm: { manage: boolean } }) 
                 </div>
               </div>
 
-              {layout === "HORIZONTAL" && <RoadmapTimeline milestones={shown} endDate={endDate} endLabel={endLabel} endProgress={overall} rangeStart={rangeStart} rangeEnd={rangeEnd} dimFn={isDim} onOpen={setDetailId} />}
-              {layout === "THREED" && <Roadmap3DView milestones={shown} onOpen={setDetailId} endLabel={endLabel} />}
-              {layout === "VERTICAL" && <RoadmapListView milestones={filtered} onOpen={setDetailId} endLabel={endLabel} endDate={endDate} endProgress={overall} />}
+              <div className="flex flex-1 flex-col">
+                {layout === "HORIZONTAL" && <RoadmapTimeline milestones={shown} endDate={endDate} endLabel={endLabel} endProgress={overall} rangeStart={rangeStart} rangeEnd={rangeEnd} dimFn={isDim} onOpen={setDetailId} />}
+                {layout === "THREED" && <Roadmap3DView milestones={shown} onOpen={setDetailId} endLabel={endLabel} />}
+                {layout === "VERTICAL" && <RoadmapListView milestones={filtered} onOpen={setDetailId} endLabel={endLabel} endDate={endDate} endProgress={overall} />}
+              </div>
 
               {paginating && pageCount > 1 && (
                 <div className="mt-3 flex items-center justify-center gap-3 text-xs" style={{ color: "var(--rm-text-muted)" }}>
