@@ -6,6 +6,7 @@ import Section from "./Section";
 interface Props {
   data: RevenueOverview;
   onDrill: (factoryCode: string) => void;
+  headerColor?: string;
 }
 
 type Period = "today" | "month" | "ytd";
@@ -69,7 +70,7 @@ function ComparisonRow({ row, unit, period, onDrill }: { row: RevenueSummaryRow;
 }
 
 /** Tóm tắt điều hành: chỉ so sánh nhanh. Biểu đồ/phân tích theo ngày nằm trong drill-down (bấm vào khối này). */
-export default function RevenueSection({ data, onDrill }: Props) {
+export default function RevenueSection({ data, onDrill, headerColor }: Props) {
   const [y, m] = data.month.split("-");
   const [period, setPeriod] = useState<Period>("month");
   const rows = period === "today" ? data.summary_today : period === "ytd" ? data.summary_ytd : data.summary;
@@ -81,6 +82,7 @@ export default function RevenueSection({ data, onDrill }: Props) {
     <div>
       <Section
         title="Doanh thu / Thực hiện"
+        headerColor={headerColor}
         subtitle={
           period === "today"
             ? `Hôm nay · doanh thu = sản lượng đóng gói × đơn giá mã hàng (khác nguồn với tháng/lũy kế) · đơn vị ${data.unit}`

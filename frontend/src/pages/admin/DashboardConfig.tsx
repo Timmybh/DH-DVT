@@ -192,6 +192,13 @@ function IndicatorEditor({ initial, groups, rules, opts, onClose, onSaved }: { i
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <F label="Loại hiển thị"><select className={inputCls} value={d.display_type} onChange={(e) => setD({ ...d, display_type: e.target.value })}>{opts.display_types.map((t) => <option key={t}>{t}</option>)}</select></F>
         <F label="Phạm vi (scope)"><select className={inputCls} value={d.default_scope} onChange={(e) => setD({ ...d, default_scope: e.target.value as DashIndicator["default_scope"] })}>{opts.scopes.map((t) => <option key={t}>{t}</option>)}</select></F>
+        <F label="Màu header (tô dải nền + viền trên khung trên Dashboard)">
+          <div className="flex items-center gap-2">
+            <input type="color" className="h-8 w-12 rounded border border-slate-200" value={d.header_color || "#2563eb"} onChange={(e) => setD({ ...d, header_color: e.target.value })} />
+            <input className={inputCls} placeholder="Để trống = mặc định" value={d.header_color ?? ""} onChange={(e) => setD({ ...d, header_color: e.target.value })} />
+            {!!d.header_color && <button type="button" onClick={() => setD({ ...d, header_color: "" })} className="whitespace-nowrap text-xs text-slate-400 hover:text-slate-600">Bỏ màu</button>}
+          </div>
+        </F>
       </div>
       <H t="Rule" />
       <F label="Rule (chỉ chọn rule đã đăng ký trong code)">
@@ -311,7 +318,12 @@ function IndicatorsTab({ canManage, canTest }: { canManage: boolean; canTest: bo
                 <td className="px-4 py-2"><Toggle on={i.is_active} disabled={!canManage} label={`Bật chỉ số ${i.indicator_code}`} onChange={(v) => toggle(i, v)} /></td>
                 <td>{gname(i.group_code)}</td>
                 <td className="font-mono text-xs">{i.indicator_code}</td>
-                <td className="font-medium text-slate-800">{i.indicator_name}</td>
+                <td className="font-medium text-slate-800">
+                  <span className="inline-flex items-center gap-1.5">
+                    {i.header_color && <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full border border-black/10" style={{ background: i.header_color }} title={i.header_color} />}
+                    {i.indicator_name}
+                  </span>
+                </td>
                 <td><span className="pg-chip pg-known">{i.display_type}</span></td>
                 <td className="font-mono text-xs">{i.rule_code}</td>
                 <td>{i.default_scope}</td>

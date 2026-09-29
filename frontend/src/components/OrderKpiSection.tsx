@@ -9,6 +9,7 @@ const PERIOD_LABEL: Record<Period, string> = { today: "Hôm nay", month: "Tháng
 interface Props {
   data: OrderKpi;
   onDrill: (kind: "SEWING" | "FG", status: "ON_TIME" | "LATE" | "OVERDUE") => void;
+  headerColor?: string;
 }
 
 function Cell({ value, tone, label, onClick }: { value: number; tone: "ok" | "late"; label: string; onClick: () => void }) {
@@ -22,7 +23,7 @@ function Cell({ value, tone, label, onClick }: { value: number; tone: "ok" | "la
 }
 
 /** Order Progress: PO hoàn thành trong tháng, chia Đúng hạn / Trễ, theo hai mốc (may xong, nhập kho thành phẩm). */
-export default function OrderKpiSection({ data, onDrill }: Props) {
+export default function OrderKpiSection({ data, onDrill, headerColor }: Props) {
   const [y, m] = data.month.split("-");
   const [period, setPeriod] = useState<Period>("month");
   const bucket = period === "today" ? data.today_data : period === "ytd" ? data.ytd_data : { sewing: data.sewing, fg: data.fg };
@@ -36,6 +37,7 @@ export default function OrderKpiSection({ data, onDrill }: Props) {
   return (
     <Section
       title="Tiến độ đơn hàng"
+      headerColor={headerColor}
       subtitle={`PO hoàn thành ${periodText} · đúng hạn = hoàn thành ≤ ngày xuất hàng trên ERP${data.as_of ? ` · dữ liệu đến ${new Date(data.as_of).toLocaleDateString("vi-VN")}` : ""}`}
       right={
         <div className="inline-flex overflow-hidden rounded-lg border border-slate-200 text-xs font-medium" role="group" aria-label="Kỳ xem tiến độ đơn hàng">

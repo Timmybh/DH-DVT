@@ -8,6 +8,7 @@ import { useTheme } from "../theme/ThemeContext";
 interface Props {
   data: HrOverview;
   onDrill: () => void;
+  headerColor?: string;
 }
 
 type Period = "today" | "month" | "ytd";
@@ -23,12 +24,12 @@ function Absent({ roster, present }: { roster?: number | null; present: number }
 }
 
 /** Tình hình nhân sự: mỗi xí nghiệp một card (lao động có mặt, số tổ/chuyền, tỷ trọng trong tổng). */
-export default function HrSection({ data, onDrill }: Props) {
+export default function HrSection({ data, onDrill, headerColor }: Props) {
   useTheme();
   const [period, setPeriod] = useState<Period>("today");
   if (!data.available) {
     return (
-      <Section title="Tình hình nhân sự" subtitle="Chưa có dữ liệu lao động">
+      <Section title="Tình hình nhân sự" subtitle="Chưa có dữ liệu lao động" headerColor={headerColor}>
         <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-700">Dữ liệu lấy từ sheet LAO ĐỘNG của file kế hoạch SX.</p>
       </Section>
     );
@@ -47,7 +48,7 @@ export default function HrSection({ data, onDrill }: Props) {
   );
   if (!view || !view.available) {
     return (
-      <Section title="Tình hình nhân sự" subtitle={`Chưa có ảnh chụp lao động nào trong kỳ "${PERIOD_LABEL[period]}"`} right={periodBtns}>
+      <Section title="Tình hình nhân sự" subtitle={`Chưa có ảnh chụp lao động nào trong kỳ "${PERIOD_LABEL[period]}"`} right={periodBtns} headerColor={headerColor}>
         <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-700">Trung bình cần ít nhất 1 ngày có ảnh chụp lao động ERP trong kỳ đang chọn.</p>
       </Section>
     );
@@ -58,6 +59,7 @@ export default function HrSection({ data, onDrill }: Props) {
   return (
     <Section
       title="Tình hình nhân sự"
+      headerColor={headerColor}
       subtitle={view.as_of_text || presentLabel}
       right={<div className="flex items-center gap-2">{periodBtns}<button onClick={onDrill} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">Xem theo tổ</button></div>}
     >

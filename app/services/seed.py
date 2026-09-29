@@ -93,6 +93,7 @@ def _upgrade_schema() -> None:
             "ALTER TABLE technology_process_operations ADD COLUMN IF NOT EXISTS change_type VARCHAR(30)",  # Task 3
             "ALTER TABLE technology_process_versions ADD COLUMN IF NOT EXISTS generation_fingerprint VARCHAR(120) NOT NULL DEFAULT ''",  # Task 3
             "CREATE INDEX IF NOT EXISTS ix_tpv_generation_fingerprint ON technology_process_versions (generation_fingerprint)",
+            "ALTER TABLE dashboard_indicators ADD COLUMN IF NOT EXISTS header_color VARCHAR(9) NOT NULL DEFAULT ''",
         ):
             try:
                 conn.execute(text(ddl))

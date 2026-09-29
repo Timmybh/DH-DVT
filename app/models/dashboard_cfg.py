@@ -48,6 +48,7 @@ class DashboardIndicator(Base):
     display_order: Mapped[int] = mapped_column(Integer, default=0)
     owner: Mapped[str] = mapped_column(String(100), default="")
     data_freshness_requirement: Mapped[str] = mapped_column(String(40), default="")  # số giờ tối đa kể từ lần đồng bộ, VD "26"
+    header_color: Mapped[str] = mapped_column(String(9), default="")  # hex (#RRGGBB) — màu header của widget này trên Dashboard; rỗng = mặc định
     config_json: Mapped[dict] = mapped_column(JSON, default=dict)
     created_by: Mapped[str] = mapped_column(String(100), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

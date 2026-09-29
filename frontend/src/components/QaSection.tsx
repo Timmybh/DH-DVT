@@ -13,10 +13,11 @@ const FACTORY_COLOR = new Proxy({} as Record<string, string>, { get: (_t, code: 
 interface Props {
   data: QaSummary;
   onDrill: (category: string) => void;
+  headerColor?: string;
 }
 
 /** QA: Total Defect Count. Dòng = xí nghiệp, cột = nhóm kiểm tra; mỗi ô có số lỗi và thanh so sánh trong cùng nhóm. */
-export default function QaSection({ data, onDrill }: Props) {
+export default function QaSection({ data, onDrill, headerColor }: Props) {
   useTheme();
   const [y, m] = data.month.split("-");
   const [period, setPeriod] = useState<Period>("month");
@@ -29,6 +30,7 @@ export default function QaSection({ data, onDrill }: Props) {
   return (
     <Section
       title="Chất lượng (QA)"
+      headerColor={headerColor}
       subtitle={`Tổng số lỗi (Total Defect Count) — ${period === "today" ? `hôm nay ${data.today_date ?? ""}` : period === "ytd" ? `lũy kế năm ${y}` : `tháng ${m}/${y}`}${data.latest_day ? ` · dữ liệu đến ${new Date(data.latest_day).toLocaleDateString("vi-VN")}` : ""} · bấm tiêu đề cột để xem theo ngày`}
       right={
         <div className="inline-flex overflow-hidden rounded-lg border border-slate-200 text-xs font-medium" role="group" aria-label="Kỳ xem QA">

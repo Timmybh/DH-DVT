@@ -9,6 +9,7 @@ import { useTheme } from "../theme/ThemeContext";
 interface Props {
   data: ProgressOverview;
   onDrill: (risk: string) => void;
+  headerColor?: string;
 }
 
 type Period = "today" | "month" | "ytd";
@@ -24,12 +25,12 @@ const RISK_TILES = [
 // Tạm ẩn biểu đồ 'PO đã xếp kế hoạch theo đơn vị' (đặt true để hiện lại)
 const SHOW_UNIT_CHART = false;
 
-export default function ProgressSection({ data, onDrill }: Props) {
+export default function ProgressSection({ data, onDrill, headerColor }: Props) {
   useTheme();
   const [period, setPeriod] = useState<Period>("ytd");
   if (!data.available || !data.pipeline || !data.risks) {
     return (
-      <Section title="Tiến độ thực hiện" subtitle="Chưa có dữ liệu kế hoạch sản xuất">
+      <Section title="Tiến độ thực hiện" subtitle="Chưa có dữ liệu kế hoạch sản xuất" headerColor={headerColor}>
         <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-700">Chưa nhập file kế hoạch SX. Vào màn hình Sync Log để nhập file Excel.</p>
       </Section>
     );
@@ -68,6 +69,7 @@ export default function ProgressSection({ data, onDrill }: Props) {
   return (
     <Section
       title="Tiến độ thực hiện"
+      headerColor={headerColor}
       subtitle={`${num(data.total_po)} PO · ${num(data.planned_qty)} sản phẩm đã xếp kế hoạch`}
       right={
         <div className="flex items-center gap-2">

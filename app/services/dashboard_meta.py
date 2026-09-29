@@ -145,7 +145,7 @@ def indicator_view(i: DashboardIndicator) -> dict:
             "display_type": i.display_type, "rule_code": i.rule_code, "data_source": i.data_source, "default_scope": i.default_scope,
             "drilldown_type": i.drilldown_type, "drilldown_target": i.drilldown_target, "refresh_mode": i.refresh_mode, "default_enabled": i.default_enabled,
             "is_active": i.is_active, "display_order": i.display_order, "owner": i.owner, "data_freshness_requirement": i.data_freshness_requirement,
-            "config_json": i.config_json or {}}
+            "header_color": i.header_color or "", "config_json": i.config_json or {}}
 
 
 def rule_view(r: DashboardRuleRegistry) -> dict:
@@ -211,7 +211,7 @@ def validate_indicator(db: Session, d: dict, existing_code: str | None = None) -
 
 
 INDICATOR_FIELDS = ("indicator_name", "group_code", "description", "display_type", "rule_code", "data_source", "default_scope", "drilldown_type", "drilldown_target",
-                    "refresh_mode", "default_enabled", "is_active", "display_order", "owner", "data_freshness_requirement", "config_json")
+                    "refresh_mode", "default_enabled", "is_active", "display_order", "owner", "data_freshness_requirement", "header_color", "config_json")
 
 
 def save_indicator(db: Session, user: User, d: dict, code: str | None = None) -> DashboardIndicator:

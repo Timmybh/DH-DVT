@@ -74,6 +74,7 @@ class IndicatorBody(BaseModel):
     display_order: int | None = None
     owner: str | None = Field(None, max_length=100)
     data_freshness_requirement: str | None = Field(None, max_length=40)
+    header_color: str | None = Field(None, max_length=9)
     config_json: dict[str, Any] | None = None
 
 

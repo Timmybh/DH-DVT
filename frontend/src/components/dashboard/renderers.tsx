@@ -51,7 +51,7 @@ export function WidgetShell({ item, children }: { item: RuntimeItem; children: R
 
 function Unsupported({ item }: { item: RuntimeItem }) {
   return (
-    <Section title={item.indicator.indicator_name} subtitle="Kiểu hiển thị chưa được hỗ trợ">
+    <Section title={item.indicator.indicator_name} subtitle="Kiểu hiển thị chưa được hỗ trợ" headerColor={item.indicator.header_color}>
       <p className="text-sm text-amber-700" data-testid="unknown-display-type">
         Không có renderer cho kiểu hiển thị "{item.indicator.display_type}" (rule {item.indicator.rule_code}). Chọn kiểu khác trong Cấu hình Dashboard.
       </p>
@@ -60,15 +60,15 @@ function Unsupported({ item }: { item: RuntimeItem }) {
 }
 
 const CUSTOM_COMPONENTS: Record<string, Renderer> = {
-  REVENUE_EXECUTIVE_SUMMARY: (item, a) => <RevenueSection data={item.data.payload} onDrill={a.drillRevenue} />,
-  PO_RISK_PIPELINE: (item, a) => <ProgressSection data={item.data.payload} onDrill={a.drillPo} />,
-  HR_HEADCOUNT: (item, a) => <HrSection data={item.data.payload} onDrill={a.drillHr} />,
+  REVENUE_EXECUTIVE_SUMMARY: (item, a) => <RevenueSection data={item.data.payload} onDrill={a.drillRevenue} headerColor={item.indicator.header_color} />,
+  PO_RISK_PIPELINE: (item, a) => <ProgressSection data={item.data.payload} onDrill={a.drillPo} headerColor={item.indicator.header_color} />,
+  HR_HEADCOUNT: (item, a) => <HrSection data={item.data.payload} onDrill={a.drillHr} headerColor={item.indicator.header_color} />,
 };
 
 function KpiCard({ item }: { item: RuntimeItem }) {
   const p = item.data.payload ?? {};
   return (
-    <Section title={item.indicator.indicator_name}>
+    <Section title={item.indicator.indicator_name} headerColor={item.indicator.header_color}>
       <p className="text-4xl font-bold tabular-nums text-slate-900">{p.label ?? (typeof p.value === "number" ? num(p.value, 1) : "—")}</p>
       {p.caption && <p className="mt-1 text-xs text-slate-500">{p.caption}</p>}
     </Section>
@@ -80,7 +80,7 @@ function GaugeGroup({ item }: { item: RuntimeItem }) {
   const p = item.data.payload ?? {};
   const items: { code: string; name: string; pct: number | null; window?: string | null }[] = p.items ?? [];
   return (
-    <Section title={p.title ?? item.indicator.indicator_name}>
+    <Section title={p.title ?? item.indicator.indicator_name} headerColor={item.indicator.header_color}>
       <div className={`grid gap-1.5 ${items.length >= 4 ? "grid-cols-4" : items.length === 3 ? "grid-cols-3" : items.length === 2 ? "grid-cols-2" : "grid-cols-1"}`} data-testid={`gauge-group-${item.indicator.indicator_code}`}>
         {items.map((g) => <SpeedGauge key={g.code} label={g.code} pct={g.pct} />)}
       </div>
@@ -95,7 +95,7 @@ function TextWidget({ item }: { item: RuntimeItem }) {
     return heading ? <h2 className="text-lg font-bold text-slate-900" data-testid="text-heading">{text || " "}</h2> : <p className="whitespace-pre-wrap text-sm text-slate-700">{text}</p>;
   }
   return (
-    <Section title={item.indicator.indicator_name}>
+    <Section title={item.indicator.indicator_name} headerColor={item.indicator.header_color}>
       <p className="whitespace-pre-wrap text-sm text-slate-700">{text}</p>
     </Section>
   );
@@ -106,7 +106,7 @@ function TableWidget({ item }: { item: RuntimeItem }) {
   const cols: string[] = p.columns ?? [];
   const rows: (string | number | null)[][] = p.rows ?? [];
   return (
-    <Section title={item.indicator.indicator_name}>
+    <Section title={item.indicator.indicator_name} headerColor={item.indicator.header_color}>
       <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead>
@@ -130,8 +130,8 @@ export const RENDERERS: Record<string, Renderer> = {
     const r = CUSTOM_COMPONENTS[key];
     return r ? r(item, a) : <Unsupported item={item} />;
   },
-  MATRIX: (item, a) => <OrderKpiSection data={item.data.payload} onDrill={a.drillOrder} />,
-  BAR_CHART: (item, a) => <QaSection data={item.data.payload} onDrill={a.drillQa} />,
+  MATRIX: (item, a) => <OrderKpiSection data={item.data.payload} onDrill={a.drillOrder} headerColor={item.indicator.header_color} />,
+  BAR_CHART: (item, a) => <QaSection data={item.data.payload} onDrill={a.drillQa} headerColor={item.indicator.header_color} />,
   SIGNAL_LIST: (item, a) =>
     item.data.payload?.zone === "WARN" ? (
       <WarningCard items={item.data.payload.items ?? []} onDrill={a.drillSignal} />

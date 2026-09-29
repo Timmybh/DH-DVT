@@ -482,6 +482,7 @@ export interface DashIndicator {
   display_order: number;
   owner: string;
   data_freshness_requirement: string;
+  header_color?: string;
   config_json: Record<string, unknown>;
 }
 
