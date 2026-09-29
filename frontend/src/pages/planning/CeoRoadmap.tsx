@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { CalendarDays, CheckCircle2, Clock3, Link2, ListChecks, Target, XCircle } from "lucide-react";
 import { api, errorMessage } from "../../api/client";
 import { dateVi } from "../../lib/format";
 
@@ -36,6 +37,7 @@ interface HistoryRow { id: number; action: string; username: string; detail: str
 
 const STATUS_LABEL: Record<string, string> = { ON_TRACK: "Đúng tiến độ", AT_RISK: "Cần chú ý", BEHIND: "Trễ hạn" };
 const STATUS_CLS: Record<string, string> = { ON_TRACK: "bg-emerald-100 text-emerald-700", AT_RISK: "bg-amber-100 text-amber-700", BEHIND: "bg-red-100 text-red-700" };
+const STATUS_DOT: Record<string, string> = { ON_TRACK: "bg-emerald-500", AT_RISK: "bg-amber-500", BEHIND: "bg-red-500" };
 const ACTION_STATUS_LABEL: Record<string, string> = { COMPLETED: "Hoàn thành", NOT_COMPLETED: "Chưa hoàn thành", AT_RISK: "Cảnh báo trễ hạn", NOT_APPLICABLE: "Không đủ điều kiện" };
 const ACTION_STATUS_CLS: Record<string, string> = { COMPLETED: "bg-emerald-100 text-emerald-700", NOT_COMPLETED: "bg-amber-100 text-amber-700", AT_RISK: "bg-red-100 text-red-700", NOT_APPLICABLE: "bg-slate-200 text-slate-500" };
 
@@ -334,16 +336,38 @@ export function DetailModal({ milestoneId, milestones, editMode, categories, onC
   const plainActions = actions.filter((a) => a.action_type === "ACTION");
 
   if (!m) return null;
+  const metricLabel = m.measurement_metric_code === "REVENUE" ? "Doanh thu" : m.measurement_metric_code === "OUTPUT_QTY" ? "Sản lượng đóng gói" : null;
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4" onClick={onClose}>
-      <div className="my-4 w-full max-w-2xl rounded-2xl bg-white p-6" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center gap-2">
-          <span className="rounded-full px-2 py-0.5 text-[11px]" style={{ background: `${m.category_color}22`, color: m.category_color }}>{m.category_name || "Chưa phân loại"}</span>
-          <div className="text-base font-bold">{m.name || m.code}</div>
-          <span className="flex-1" />
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-700">✕ Đóng</button>
+      <div className="my-4 w-full max-w-3xl rounded-2xl bg-white p-6" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Milestone · {m.code}</div>
+            <div className="mt-0.5 flex flex-wrap items-center gap-2">
+              <h3 className="text-xl font-extrabold text-slate-900">{m.name || m.code}</h3>
+              <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold" data-testid="ceo-detail-status">
+                <span className={`h-2 w-2 rounded-full ${STATUS_DOT[m.status]}`} />
+                <span className={`rounded-full px-2 py-0.5 ${STATUS_CLS[m.status]}`}>{STATUS_LABEL[m.status]}</span>
+              </span>
+            </div>
+          </div>
+          <button onClick={onClose} className="shrink-0 text-slate-400 hover:text-slate-700">✕ Đóng</button>
         </div>
-        <div className="mt-1 text-xs text-slate-400">Milestone · Ngày mục tiêu {dateVi(m.target_date)}</div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5 text-xs">
+          <span className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-semibold" style={{ background: `${m.category_color}22`, color: m.category_color }}>{m.category_name || "Chưa phân loại"}</span>
+          <span className="inline-flex items-center gap-1.5 text-slate-600"><CalendarDays size={14} className="text-slate-400" />Ngày mục tiêu <b className="text-slate-800">{dateVi(m.target_date)}</b></span>
+          <span className="inline-flex items-center gap-1.5 text-slate-600"><Target size={14} className="text-slate-400" />Tiến độ <b className="text-slate-800">{m.progress_percent === null ? "—" : `${Math.round(m.progress_percent)}%`}</b></span>
+          {metricLabel && (
+            <span className="inline-flex items-center gap-1.5 text-slate-600">
+              <ListChecks size={14} className="text-slate-400" />{metricLabel}
+              {m.measurement_target_value !== null && <> mục tiêu <b className="text-slate-800">{m.measurement_target_value.toLocaleString("vi-VN")}</b></>}
+              {m.measurement_period_type && (m.measurement_period_year || m.measurement_period_month) && (
+                <span className="text-slate-400">({m.measurement_period_type === "MONTH" ? `${m.measurement_period_month}/${m.measurement_period_year}` : m.measurement_period_year})</span>
+              )}
+            </span>
+          )}
+        </div>
 
         <div className="mt-3 flex flex-wrap gap-1 border-b border-slate-200">
           {DETAIL_TABS.map((t) => (
@@ -437,7 +461,8 @@ export function DetailModal({ milestoneId, milestones, editMode, categories, onC
 
         {tab === "Kế hoạch hành động" && (
           <div className="mt-4">
-            <div className="flex items-center justify-between">
+            <ActionStatCards actions={actions} />
+            <div className="mt-4 flex items-center justify-between">
               <div className="text-sm font-bold">Hành động</div>
               {editMode && <button className={btn} onClick={() => setAddingAction(true)}>+ Thêm</button>}
             </div>
@@ -515,6 +540,36 @@ export function DetailModal({ milestoneId, milestones, editMode, categories, onC
 
         {editMode && <div className="mt-5 flex justify-end"><button className="text-xs text-red-500 hover:underline" onClick={() => void del()}>Xoá milestone</button></div>}
       </div>
+    </div>
+  );
+}
+
+/** 5 thẻ tóm tắt action (tính thật từ danh sách actions, không có số nào bịa): Tổng, Đã hoàn thành, Đang thực hiện/cảnh báo
+ * (NOT_COMPLETED+AT_RISK), Chưa sẵn sàng (NOT_APPLICABLE), Liên kết milestone trước (action_type=MILESTONE_LINK). */
+function ActionStatCards({ actions }: { actions: ActionRow[] }) {
+  const total = actions.length;
+  const completed = actions.filter((a) => a.status === "COMPLETED").length;
+  const inProgress = actions.filter((a) => a.status === "NOT_COMPLETED" || a.status === "AT_RISK").length;
+  const notReady = actions.filter((a) => a.status === "NOT_APPLICABLE").length;
+  const linked = actions.filter((a) => a.action_type === "MILESTONE_LINK").length;
+  const pct = (n: number) => (total ? Math.round((n / total) * 100) : 0);
+  const cards = [
+    { icon: ListChecks, iconCls: "bg-sky-100 text-sky-600", label: "Tổng số action", value: total, sub: total ? "100% kế hoạch" : "" },
+    { icon: CheckCircle2, iconCls: "bg-emerald-100 text-emerald-600", label: "Đã hoàn thành", value: completed, sub: `${pct(completed)}% tổng số action` },
+    { icon: Clock3, iconCls: "bg-amber-100 text-amber-600", label: "Đang thực hiện / cảnh báo", value: inProgress, sub: `${pct(inProgress)}% tổng số action` },
+    { icon: XCircle, iconCls: "bg-red-100 text-red-600", label: "Chưa sẵn sàng", value: notReady, sub: `${pct(notReady)}% tổng số action` },
+    { icon: Link2, iconCls: "bg-violet-100 text-violet-600", label: "Liên kết milestone trước", value: linked, sub: `${pct(linked)}% tổng số action` },
+  ];
+  return (
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5" data-testid="ceo-action-stats">
+      {cards.map((c) => (
+        <div key={c.label} className="rounded-xl border border-slate-200 p-2.5">
+          <span className={`flex h-7 w-7 items-center justify-center rounded-lg ${c.iconCls}`}><c.icon size={15} /></span>
+          <div className="mt-1.5 text-lg font-extrabold leading-none text-slate-900">{c.value}</div>
+          <div className="mt-0.5 text-[10px] font-medium leading-tight text-slate-500">{c.label}</div>
+          {c.sub && <div className="text-[10px] text-slate-400">{c.sub}</div>}
+        </div>
+      ))}
     </div>
   );
 }
