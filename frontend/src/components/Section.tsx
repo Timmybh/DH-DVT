@@ -12,9 +12,9 @@ interface SectionProps {
 export default function Section({ title, subtitle, right, children, headerColor }: SectionProps) {
   const hasColor = !!headerColor;
   return (
-    <section className={`relative overflow-hidden border border-slate-200 bg-white p-2 shadow-sm ${hasColor ? "rounded-b-2xl" : "rounded-2xl"}`}>
+    <section className={`relative overflow-hidden border border-slate-200 bg-white p-2 shadow-sm ${hasColor ? "" : "rounded-2xl"}`}>
       {/* Thanh dải màu header: dùng div riêng thay vì border-top vì .dvt-dark .border-slate-200{border-color:...!important} sẽ đè border-top-color.
-          Góc trên bỏ bo (section chỉ bo góc dưới khi có màu) nên dải màu vuông góc khớp khít, không cần né góc cong. */}
+          Có màu thì bỏ bo góc toàn khung (vuông hết) để dải màu sát viền, không cần né góc cong. */}
       {hasColor && <div className="absolute -inset-x-px -top-px h-[4px]" style={{ background: headerColor as string }} aria-hidden />}
       <div className="mb-1.5 flex items-start justify-between gap-1.5 rounded-lg" style={hasColor ? { background: `${headerColor}1a`, padding: "4px 6px", margin: "-4px -6px 2px" } : undefined}>
         <div>
