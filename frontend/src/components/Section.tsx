@@ -15,9 +15,9 @@ export default function Section({ title, subtitle, right, children, headerColor 
   // tuyệt đối, không cần "trừ padding rồi cộng lại" (dễ lệch vài px). Phần đệm cho chữ/nội dung chuyển vào
   // 2 wrapper con (header + body) thay vì đặt trên chính section.
   return (
-    <section className={`relative overflow-hidden border border-slate-200 bg-white shadow-sm ${hasColor ? "" : "rounded-2xl p-2"}`}>
+    <section className={`relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm ${hasColor ? "" : "p-2"}`}>
       {/* Thanh dải màu header: dùng div riêng thay vì border-top vì .dvt-dark .border-slate-200{border-color:...!important} sẽ đè border-top-color.
-          Có màu thì bỏ bo góc toàn khung (vuông hết) để dải màu sát viền, không cần né góc cong. */}
+          Bleed đúng 1px (độ dày border) ra tới border-box; overflow-hidden ở section tự clip theo đúng góc bo rounded-2xl. */}
       {hasColor && <div className="absolute -inset-x-px -top-px h-[4px]" style={{ background: headerColor as string }} aria-hidden />}
       <div
         className={`mb-1.5 flex items-start justify-between gap-1.5 ${hasColor ? "-mx-px -mt-px" : "rounded-lg"}`}
